@@ -6,39 +6,46 @@ esl-speaking-coach は「AI と音声でリアルタイムに英会話練習す�
 
 Anthropic の API にリアルタイム音声（speech-to-speech）のエンドポイントは存在しない（2026-07 時点で再確認済み。Anthropic 自身の Claude アプリの音声モードもターン制の STT → LLM → TTS 構成で、TTS は ElevenLabs 等の外部を利用している）。「リアルタイム双方向音声」は複数の方式で組む必要があり、方式ごとにレイテンシ・コスト・実装量・会話相手のモデルが変わり、机上では決められないので実測して決める。
 
+**2026-07-24 決定**: iPhone 純正の音声系（`SpeechTranscriber` / `AVSpeechSynthesizer`）は STT・TTS とも不採用（理由は旧案 A 参照）。検証には **OpenAI と Gemini を使う**ことを決定し、比較対象は **案 A2（クラウド STT/TTS + Claude）・案 B（OpenAI Realtime）・案 C（Gemini Live）の 3 本柱**とし、すべてプロトタイプして実測比較する。
+
 ## 比較する候補（モデルと会話での使い方の定義）
 
-### 案 A: iOS 内蔵音声 + Claude ストリーミング（ターン制パイプライン）
+### 旧案 A: iOS 内蔵音声 + Claude ストリーミング（**廃止**・2026-07-24）
 
-| 役割 | モデル / API | 使い方 |
+STT を `SpeechTranscriber`（iOS 26）、TTS を `AVSpeechSynthesizer` で組むターン制パイプライン。プロトタイプ実装まで完了したが（下記「旧 Phase 1 実装記録」）、以下の理由で **iPhone 純正の音声系は STT / TTS とも不採用**と判断した。
+
+- STT が初回に数百 MB 規模のモデルダウンロードを要求する
+- シミュレータで検証できない（モデル資産が取得できず、音声入力ユニットの初期化が abort する）
+- `AVSpeechSynthesizer` の合成音声の品質が会話相手として弱い
+
+Claude クライアント・状態機械・UI などプロバイダ非依存の実装資産は案 A2 に流用する。
+
+### 案 A2: クラウド STT / TTS + Claude ストリーミング（ターン制パイプライン）
+
+会話相手を Claude に保ったまま、音声入出力だけ外部 API に置き換える。**追加キーが OpenAI 1 本で済む構成から始める**（Anthropic 公式の Claude アプリ音声モードと同型の構成。Phase 2 の案 B とキーを共用できる）。
+
+| 役割 | 第一候補 | 差し替え候補（付録参照） |
 | --- | --- | --- |
-| STT | `SpeechAnalyzer` + `SpeechTranscriber`（iOS 26 / Speech framework） | `SFSpeechRecognizer` の後継。オンデバイス・AsyncSequence ベース。volatile results で逐次認識し、finalized で確定 |
-| 発話終端・割り込み検知 | `SpeechDetector`（VAD）+ 無音タイマー | 終端判定と barge-in 検知を自前実装 |
-| 会話 LLM | `claude-opus-5` | ストリーミング必須・`effort: low`・`max_tokens` 1024・システムプロンプトは cache_control 付き固定文（CLAUDE.md の規約どおり） |
-| TTS | `AVSpeechSynthesizer` | Claude の SSE を文境界で区切り、確定した文から順に読み上げ |
-| 評価 LLM | `claude-opus-5` | セッション後に transcript を渡す。`effort: high`・`max_tokens` 16000+ |
+| STT | OpenAI `gpt-4o-transcribe`（Realtime API の transcription セッション / WebSocket ストリーミング） | Deepgram Flux（end-of-turn 検知ネイティブ）→ AssemblyAI Universal |
+| 発話終端・割り込み検知 | 無音タイマー + RMS（旧 Phase 1 実装を流用） | Deepgram Flux 採用時はサーバ側検知に置換 |
+| 会話 LLM | `claude-opus-5`（規約どおり: ストリーミング・`effort: low`・`max_tokens` 1024・cache_control 付き固定プロンプト） | — |
+| TTS | OpenAI `gpt-4o-mini-tts`（HTTP ストリーミング。"speak slowly like an ESL teacher" 等の話し方指示可） | Cartesia Sonic（TTFA 40ms）/ ElevenLabs Flash |
+| 評価 LLM | `claude-opus-5`（`effort: high`・`max_tokens` 16000+） | — |
 
-会話 1 ターンの流れ:
+会話 1 ターンの流れは旧案 A と同じ（STT/TTS の実装だけ差し替え）。Claude の SSE を文境界で区切り、確定した文から TTS へ流す。
 
-1. マイク入力 → `SpeechTranscriber` が逐次テキスト化
-2. `SpeechDetector` + 無音時間で発話終端を判定 → 確定テキストを user ターンとして自前の履歴モデル（`role` + テキスト）に追加
-3. Claude へストリーミングリクエスト（raw HTTP + SSE）
-4. 受信テキストを文境界（`.` `?` `!` など）で区切り、確定した文から `AVSpeechSynthesizer` へ流す
-5. AI 発話の再生中にユーザーの発話を検知したら、合成を停止して SSE を中断（barge-in 自前実装）
-
-- コスト目安（10 分・20 ターン + 評価 1 回）: テキストトークンのみで **~$0.2〜0.4 / セッション**
-- 最大の計測ポイント: `claude-opus-5` は thinking が常時オン（規約により無効化しない）のため、`effort: low` で「発話終了 → 最初の文が確定して読み上げ開始」がどこまで縮むか
-- 品質リスク: `AVSpeechSynthesizer` の合成音声の自然さ
-- 派生 **案 A'**: A の TTS だけを差し替える。無料の中間段として Kokoro オンデバイス、外部 API なら gpt-4o-mini-tts / Cartesia を第一候補とする（付録参照）。外部 API 構成は Anthropic 公式の音声モードと同構成。A の TTS 品質が不許容だった場合のみ検証する
+- コスト目安（10 分・20 ターン + 評価 1 回）: STT ~$0.06 + TTS ~$0.075 + Claude ~$0.2〜0.4 ≒ **~$0.35〜0.55 / セッション**
+- 計測ポイント: 旧案 A と同じ分解（無音判定 → STT 確定 → TTFT → 初文 → 発声開始）に加え、STT / TTS のネットワーク往復レイテンシがどれだけ乗るか
+- 品質ポイント: 日本語アクセント英語での `gpt-4o-transcribe` の精度（長尺での精度崩壊報告にも注意）。不満なら Deepgram / AssemblyAI へ
 
 ### 案 B: OpenAI Realtime API（speech-to-speech）
 
-- モデル: `gpt-realtime-2.1`（audio 入力 $32 / 出力 $64 per 1M tokens）。コストが厳しければ `gpt-realtime-2.1-mini`（$10 / $20）
+- モデル: `gpt-realtime-2.1`（audio 入力 $32 / 出力 $64 per 1M tokens）。コストが厳しければ `gpt-realtime-2.1-mini`（$10 / $20）。**案 A2 と同じ OpenAI キーで検証できる**
 - 接続: iOS からは WebRTC 推奨（WebSocket も可）。マイク入出力ごと API に接続する真の双方向音声
 - VAD・発話終端・barge-in はサーバ側ネイティブ。transcript を同時取得して自前の履歴モデルに保存する
 - コスト目安（10 分）: 2.1 で **~$2〜5**、mini で **~$0.6〜1.5**（プロンプトキャッシュの効き方に強く依存）
 - 会話相手は GPT になる（Claude ではない）
-- 同方式の商用代替として **Amazon Nova 2 Sonic**（~$0.015/分、Bedrock・東京リージョンあり）。B のコストが厳しい場合の乗り換え先（付録参照）
+- 同方式の商用代替として **Amazon Nova 2 Sonic**（~$0.015/分、Bedrock・東京リージョンあり）があるが、低コスト側の比較対象は案 C（Gemini Live）を実測するため、Nova は付録の参考情報にとどめる
 
 ### 案 C: Gemini Live API（speech-to-speech）
 
@@ -46,6 +53,7 @@ Anthropic の API にリアルタイム音声（speech-to-speech）のエンド�
 - barge-in・affective dialog（話し方を汲んだ応答）がネイティブ対応。2026 前半に GA 済み
 - コスト目安（10 分）: **~$0.1〜0.2** で候補中最安
 - Swift 公式 SDK はないため WebSocket を自前実装。会話相手は Gemini になる
+- Gemini API キーが必要（Anthropic / OpenAI に続く 3 本目。Keychain `gemini-api-key` + `.secrets/gemini-api-key` シードで同じ仕組みに載せる）
 
 ### 案 D: ハイブリッド（会話 = B or C、評価 = Claude）
 
@@ -55,7 +63,7 @@ Anthropic の API にリアルタイム音声（speech-to-speech）のエンド�
 
 ## 評価軸
 
-1. **応答レイテンシ**: ユーザーの発話終了 → AI の音声が鳴り始めるまでの実測値（ms）。案 A は「Claude の TTFT + 最初の文の確定」まで分解して記録する
+1. **応答レイテンシ**: ユーザーの発話終了 → AI の音声が鳴り始めるまでの実測値（ms）。案 A2 は「STT 確定 → Claude TTFT → 初文確定 → TTS 発声開始」まで分解して記録する
 2. **割り込み（barge-in）**: AI の発話中に話しかけたときに自然に止まるか
 3. **英語認識精度**: 日本語アクセントの英語をどれだけ正しく取れるか
 4. **1 セッション（10 分想定）あたりのコスト**（上記目安を実測で更新する）
@@ -69,23 +77,86 @@ Anthropic の API にリアルタイム音声（speech-to-speech）のエンド�
 
 TTS / STT / 単一モデル speech-to-speech の候補を案 A〜D の枠にとらわれず調査し、付録に記録した。Phase 1 以降のフォールバック順・代替候補はこの調査に基づく。
 
-### Phase 1: 案 A のプロトタイプ
+### 旧 Phase 1: 旧案 A のプロトタイプ（**中止**・記録として保持）
 
-最小構成で「話す → 返ってくる」を成立させ、評価軸 1〜6 を実測する。Claude は raw HTTP + SSE（Swift の公式 SDK なし）。STT は `SpeechAnalyzer`/`SpeechTranscriber` を第一候補とし、実装上の問題があれば `SFSpeechRecognizer`、日本語アクセント英語での精度不足なら WhisperKit（オンデバイス）→ AssemblyAI / Deepgram（クラウド）の順に切り替えて再計測する（付録参照）。
+旧案 A の廃止に伴い、実機実測の前に中止（2026-07-24）。実装資産のうちプロバイダ非依存の部分は Phase 1（案 A2）で流用する:
 
-### Phase 2: 案 B のプロトタイプ
+- 流用する: `VoiceSession` プロトコル境界 / `TurnBasedVoiceSession` の状態機械（無音判定・barge-in・計測）/ `ClaudeMessagesClient`（SSE、実キーで E2E 検証済み）/ `SentenceChunker` / `CoachSystemPrompt` / 会話 UI・計測表示 / デバッグ起動引数
+- 置換・削除する: `UtteranceTranscriber`（SpeechAnalyzer 依存）/ `SentenceSpeaker` の AVSpeechSynthesizer 実装 → 案 A2 実装時にクラウド STT / TTS 実装へ差し替える
 
-同じ評価軸で OpenAI Realtime API（`gpt-realtime-2.1-mini` から）を実測し、案 A と数値で比較する。コストが厳しいと出た場合は Amazon Nova 2 Sonic を同じ評価軸で代替検証する。
+#### 旧 Phase 1 実装記録（2026-07-24: プロトタイプ実装完了、実機実測前に中止）
 
-### Phase 3: 判断と方針確定
+**実装構成**（deployment target を iOS 26.0 に引き上げ）:
 
-計測結果を並べて方式を決め、`CLAUDE.md` の「音声レイヤの方針」を確定版に更新する。案 C は Phase 1/2 で結論が出なかった場合のみ追加調査する。案 A' は案 A の TTS 品質が不許容だった場合のみ検証する。
+| ファイル | 役割 |
+| --- | --- |
+| `Voice/VoiceSession.swift` | 抽象境界。`VoiceSession` プロトコル + `VoiceSessionEvent` + `TurnMetrics`。UI はこれにのみ依存 |
+| `Voice/TurnBasedVoiceSession.swift` | 案 A の状態機械（listening → thinking → speaking → listening）。無音判定・barge-in・レイテンシ計測。インスタンスは使い捨て |
+| `Voice/UtteranceTranscriber.swift` | `SpeechAnalyzer` + `SpeechTranscriber` の 1 発話ラッパ。モデル準備は reserve → assetInstallationRequest |
+| `Voice/MicrophoneCapture.swift` | `AVAudioEngine` タップ + RMS レベル + `AVAudioConverter` で analyzer フォーマットへ変換 |
+| `Voice/SentenceSpeaker.swift` | `AVSpeechSynthesizer` のターン単位キュー。en-US の premium > enhanced > default を自動選択 |
+| `Voice/SentenceChunker.swift` | SSE デルタの文境界分割（"3.5" 非分割・閉じ引用符対応。ユニットテストあり） |
+| `Claude/ClaudeMessagesClient.swift` | raw HTTP + SSE。規約どおり（temperature 等なし・effort low・max_tokens 1024・cache_control）。リクエスト形式はユニットテストで固定 |
+| `Claude/CoachSystemPrompt.swift` | 固定システムプロンプト（512 トークン超、キャッシュ前提） |
+| `Conversation/*` | 会話画面。状態・ライブ文字起こし・RMS 表示・ターンごとの計測値表示 |
+
+**タイムスタンプ分解**（評価軸 1）: 発話終端 → 無音判定(silenceWindow=1.0s 固定) → STT 確定 → リクエスト → TTFT → 初文確定 → 発声開始。各区間 ms を画面に表示（`TurnMetrics`）。
+
+**シミュレータの制限（実測できず。実機必須の根拠）**:
+
+- `SpeechTranscriber` のモデル資産が取得できない（`AssetInventory` が `status=unsupported`、`assetInstallationRequest` は "not subscribed to transcription.en" で失敗）
+- 音声入力ユニットの初期化が CoreAudio の RPC タイムアウトで **abort する**（`AVAudioEngine.inputNode` にアクセスした時点でクラッシュ。アプリ側で捕捉不能）
+- 対応: シミュレータではマイク・STT に触らず、DEBUG 限定のテキスト入力でターンを回す検証モードに劣化させた。Claude SSE・文分割・TTS・状態遷移・エラー復帰はシミュレータで検証済み（ダミーキーで 401 → エラー表示 → listening 復帰まで確認）
+
+**デバッグ用起動引数**（シミュレータ検証用）:
+
+```bash
+xcrun simctl launch booted com.akiraak.EslSpeakingCoach \
+  -start-conversation -send-text "Hello coach"
+# ほか: -seed-anthropic-key <key> / -delete-anthropic-key / -open-conversation
+```
+
+**シミュレータで確認済みの参考値**（実キー・テキスト入力経由の 1 ターン）: Claude TTFT 1905ms（`effort: low`）、初文は最初のデルタに含まれ 0ms、TTS 発声開始 +42ms。TTFT ≈ 2 秒が Claude 側の基礎レイテンシとして乗る前提で案 A2 / 案 B を比較する。
+
+### Phase 1: 案 A2（クラウド STT / TTS + Claude）のプロトタイプと実測
+
+1. **準備**: OpenAI API キーを取得。`KeychainStore` に `openai-api-key` アカウントを追加し、`.secrets/openai-api-key` からのシードに対応（Anthropic キーと同じ仕組み）
+2. **STT**: `gpt-4o-transcribe` の WebSocket ストリーミングを `UtteranceTranscriber` の後継として実装（`VoiceSession` 境界は変えない）。マイクは既存の `MicrophoneCapture` を流用し、16kHz PCM16 へ変換して送る
+3. **TTS**: `gpt-4o-mini-tts` のストリーミング再生を `SentenceSpeaker` の後継として実装。文単位で生成リクエストし、到着順に再生キューへ
+4. **実測**: 実機で評価軸 1〜6 を計測（分解は旧 Phase 1 と同じ + STT / TTS のネットワーク往復）。10 ターン以上の中央値を下表に記録
+5. **差し替え判断**: STT の精度・終端検知に不満があれば Deepgram Flux（end-of-turn 検知で無音タイマー自体を置換できる）、TTS 品質に不満があれば Cartesia へ
+
+**実測記録（実機・中央値）**: ※未計測
+
+| 項目 | 値 (ms) | メモ |
+| --- | --- | --- |
+| 体感（発話終端 → 発声開始） | - | |
+| 無音待ち（silenceWindow） | - | 既定 1000ms 固定 |
+| STT 確定 | - | ネットワーク往復含む |
+| TTFT（Claude） | - | シミュレータ参考値 ~1900ms |
+| 初文確定 | - | |
+| 発声開始（TTS 往復含む） | - | |
+
+### Phase 2: 案 B（OpenAI Realtime speech-to-speech）のプロトタイプと実測
+
+同じ評価軸で OpenAI Realtime API（`gpt-realtime-2.1-mini` から。案 A2 と同じキー）を実測し、案 A2 と数値で比較する。
+
+### Phase 3: 案 C（Gemini Live speech-to-speech）のプロトタイプと実測
+
+1. **準備**: Gemini API キーを取得。`KeychainStore` に `gemini-api-key` アカウントを追加し、`.secrets/gemini-api-key` からのシードに対応（既存 2 キーと同じ仕組み）
+2. **実装**: Live API（WebSocket）を自前実装し、`VoiceSession` の実装として追加する（公式 Swift SDK なし。マイクは `MicrophoneCapture` を流用）。VAD・発話終端・barge-in はサーバ側を使う
+3. **実測**: 同じ評価軸で実機計測。speech-to-speech 同士となる案 B との直接比較（レイテンシ・会話の質・コスト）と、評価フェーズで Claude に渡す transcript の品質を重点的に見る
+
+### Phase 4: 判断と方針確定
+
+案 A2 / 案 B / 案 C の計測結果を並べて方式を決め、`CLAUDE.md` の「音声レイヤの方針」を確定版に更新する。判断の前に「会話中の発音指摘を製品価値とするか」を決める（評価軸 7。案 B / C の単一モデル方式が構造的に有利）。
 
 ## 影響範囲
 
 - 音声入出力の抽象境界（`VoiceSession` 相当のプロトコル）の形が決まる
 - 決定結果に応じて `CLAUDE.md` の技術スタック・方針セクションを更新する
-- Phase 2 以降に進む場合、API キーが 2 つになるため Keychain の扱いを見直す
+- Phase 1 の時点で OpenAI キーが加わり 2 キー管理、Phase 3 で Gemini キーが加わり 3 キー管理になる。`KeychainStore` はアカウント別保存に対応済みなので、`openai-api-key` / `gemini-api-key` アカウントの追加と `.secrets/openai-api-key` / `.secrets/gemini-api-key` からのシード（起動引数の拡張）を行う
+- Apple 依存の実装（`UtteranceTranscriber`・`SentenceSpeaker` の AVSpeech 部分）は案 A2 実装時に削除する
 
 ## 検証方法
 
@@ -95,8 +166,7 @@ TTS / STT / 単一モデル speech-to-speech の候補を案 A〜D の枠にと�
 
 ## 未決事項
 
-- 案 B / C を試すにあたって各サービスのアカウント・API キーを用意するか（用意しない場合は案 A に確定させる）
-- 案 A'（外部 TTS）を検証する場合、どの TTS サービスを使うか（付録の調査より第一候補は gpt-4o-mini-tts / Cartesia。ElevenLabs Flash は品質重視の対抗）
+- ~~案 B / C のアカウント・API キーを用意するか~~ → **OpenAI キー・Gemini キーとも用意する（2026-07-24 確定。OpenAI は案 A2 / 案 B で共用、Gemini は案 C 用）**
 - **会話中の軽い発音指摘を製品価値とするか**。するなら単一モデル方式（案 B / C 系）が構造的に有利なため、評価軸 7 の重み付けとして方式決定（Phase 3）の前に決める
 
 ## 付録: TTS / STT 単体の候補調査（2026-07 時点）
