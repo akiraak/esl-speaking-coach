@@ -31,8 +31,9 @@ struct ClaudeMessagesClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     /// 会話ターン用の設定（ストリーミング必須・effort low・max_tokens は意図的に小さく）。
+    /// 会話ターンのモデルは claude-sonnet-5（2026-07-25 決定。記録: docs/plans/archive/spike-conversation/）。
     struct TurnParameters: Sendable {
-        var model = "claude-opus-5"
+        var model = "claude-sonnet-5"
         var maxTokens = 1024
         var effort = "low"
     }

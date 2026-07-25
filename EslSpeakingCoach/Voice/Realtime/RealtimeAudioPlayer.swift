@@ -21,10 +21,16 @@ final class RealtimeAudioPlayer {
     private var startedThisTurn = false
     /// stopNow 後に届く古いバッファの完了通知を無視するための世代カウンタ。
     private var turnID = 0
+    private var isGraphBuilt = false
 
+    /// 再入可能。割り込み・経路変更で engine が止まった後の再起動にも使う
+    /// （ノードの attach/connect は初回のみ、engine.start は毎回行う）。
     func prepare() throws {
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        if !isGraphBuilt {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
+            isGraphBuilt = true
+        }
         engine.prepare()
         try engine.start()
     }

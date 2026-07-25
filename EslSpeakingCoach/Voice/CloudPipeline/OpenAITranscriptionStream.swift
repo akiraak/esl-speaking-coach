@@ -16,11 +16,14 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
     private var webSocket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var sendTask: Task<Void, Never>?
+    private var pingTask: Task<Void, Never>?
     /// 送信順を保証する直列キュー（session.update → 音声チャンクの順序が入れ替わらないように、
     /// 送信ごとの Task 起動ではなく 1 本のループで送る）。
     private var sendQueue: AsyncStream<Data>.Continuation?
     private var partialTranscript = ""
     private var isStopped = false
+    /// 切断は 1 回だけ通知する（ping 失敗と receive 失敗が両方検知したときの二重通知防止）。
+    private var didReportClose = false
 
     init(configuration: OpenAITranscriptionConfiguration = OpenAITranscriptionConfiguration(), apiKey: String) {
         self.configuration = configuration
@@ -37,6 +40,7 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
         webSocket = task
         task.resume()
         startSender(webSocket: task)
+        startPingLoop(webSocket: task)
 
         receiveTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -73,8 +77,10 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
         isStopped = true
         receiveTask?.cancel()
         sendTask?.cancel()
+        pingTask?.cancel()
         receiveTask = nil
         sendTask = nil
+        pingTask = nil
         sendQueue?.finish()
         sendQueue = nil
         webSocket?.cancel(with: .goingAway, reason: nil)
@@ -100,8 +106,38 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
         }
     }
 
+    /// ネットワーク切替等で receive がエラーも返さず沈黙するケースを検知するための keepalive。
+    /// ping が返らなければ切断扱いにして connectionFailed へ流す（再接続はセッション側が行う）。
+    private func startPingLoop(webSocket: URLSessionWebSocketTask) {
+        pingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                guard let self, !self.isStopped, !Task.isCancelled else { return }
+                do {
+                    try await Self.ping(webSocket)
+                } catch {
+                    self.handleSocketClosed(error)
+                    return
+                }
+            }
+        }
+    }
+
+    private static func ping(_ webSocket: URLSessionWebSocketTask) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            webSocket.sendPing { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     private func handleSocketClosed(_ error: Error) {
-        guard !isStopped else { return }
+        guard !isStopped, !didReportClose else { return }
+        didReportClose = true
         var detail = error.localizedDescription
         if let webSocket, webSocket.closeCode != .invalid {
             let reason = webSocket.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
@@ -141,8 +177,12 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
 
         case .serverError(let message, let ignorable):
             // STT が機能しない状態で会話を続けても仕方がないため、非 ignorable は致命扱いにする
-            eventContinuation.yield(
-                ignorable ? .notice(message) : .connectionFailed("STT API エラー: \(message)"))
+            if ignorable {
+                eventContinuation.yield(.notice(message))
+            } else if !didReportClose {
+                didReportClose = true
+                eventContinuation.yield(.connectionFailed("STT API エラー: \(message)"))
+            }
 
         case .responseCreated, .assistantAudioDelta, .assistantTranscriptDelta,
              .assistantTranscriptDone, .responseDone, .ignored:

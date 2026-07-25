@@ -12,6 +12,10 @@ enum VoiceSessionState: String, Sendable {
     case thinking
     /// AI の音声を再生中
     case speaking
+    /// STT 接続が切れて再接続を試みている（会話履歴は保持）
+    case reconnecting
+    /// オーディオ割り込み（電話等）・バックグラウンド遷移で一時停止中（会話履歴は保持）
+    case suspended
 }
 
 /// セッションから UI へ流すイベント。

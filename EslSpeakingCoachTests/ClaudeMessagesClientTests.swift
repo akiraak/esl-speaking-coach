@@ -46,11 +46,11 @@ final class ClaudeRequestBodyTests: XCTestCase {
         let json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-        XCTAssertEqual(json["model"] as? String, "claude-opus-5")
+        XCTAssertEqual(json["model"] as? String, "claude-sonnet-5")
         XCTAssertEqual(json["stream"] as? Bool, true)
         XCTAssertEqual(json["max_tokens"] as? Int, 1024)
 
-        // claude-opus-5 では 400 になるため送ってはいけないパラメータ（CLAUDE.md の規約）
+        // claude-sonnet-5 / claude-opus-5 では 400 になるため送ってはいけないパラメータ（CLAUDE.md の規約）
         XCTAssertNil(json["temperature"])
         XCTAssertNil(json["top_p"])
         XCTAssertNil(json["top_k"])

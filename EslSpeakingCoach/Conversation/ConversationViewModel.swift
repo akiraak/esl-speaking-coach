@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// ConversationView の状態。VoiceSession のイベントを画面表示用に変換する。
 /// セッションは開始のたびに新規作成する（TurnBasedVoiceSession は使い捨て）。
@@ -92,6 +93,8 @@ final class ConversationViewModel {
             })
         }
         session = newSession
+        // 会話中の放置で画面ロック → バックグラウンド遷移して会話が切れるのを防ぐ
+        UIApplication.shared.isIdleTimerDisabled = true
         eventTask = Task { [weak self] in
             for await event in newSession.events {
                 self?.handle(event)
@@ -108,6 +111,7 @@ final class ConversationViewModel {
     }
 
     private func detachSession() {
+        UIApplication.shared.isIdleTimerDisabled = false
         session = nil
         eventTask = nil
         state = .idle

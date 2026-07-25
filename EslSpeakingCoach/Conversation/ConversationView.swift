@@ -194,6 +194,8 @@ struct ConversationView: View {
         case .listening: return "聞き取り中"
         case .thinking: return "応答待ち"
         case .speaking: return "発話中"
+        case .reconnecting: return "再接続中…"
+        case .suspended: return "一時停止中"
         }
     }
 
@@ -204,6 +206,8 @@ struct ConversationView: View {
         case .listening: return "ear"
         case .thinking: return "ellipsis.circle"
         case .speaking: return "speaker.wave.2.fill"
+        case .reconnecting: return "arrow.triangle.2.circlepath"
+        case .suspended: return "pause.circle.fill"
         }
     }
 
@@ -214,6 +218,8 @@ struct ConversationView: View {
         case .listening: return .green
         case .thinking: return .orange
         case .speaking: return .blue
+        case .reconnecting: return .orange
+        case .suspended: return .secondary
         }
     }
 }

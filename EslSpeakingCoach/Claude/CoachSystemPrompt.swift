@@ -2,7 +2,7 @@ import Foundation
 
 /// 英会話コーチの人格・進行ルール。
 /// プロンプトキャッシュを効かせるため固定文にする（日付・セッション ID 等を埋め込まない）。
-/// claude-opus-5 のキャッシュ最小プレフィックスは 512 トークンなので、それを上回る分量にしてある。
+/// キャッシュ最小プレフィックス（claude-sonnet-5: 1024 トークン / claude-opus-5: 512 トークン）を上回る分量にしてある。
 enum CoachSystemPrompt {
     static let text = """
     You are an English conversation coach inside a private iOS practice app. The learner is a Japanese \
