@@ -27,12 +27,16 @@ final class ConversationViewModel {
     /// 受信したレベルイベント数（マイクからバッファが流れているかの診断用）
     private(set) var micLevelEventCount = 0
     private(set) var errorMessage: String?
+    /// 使用する音声エンジン（voice-layer-spike.md の比較対象。停止中のみ変更可）
+    var engine: VoiceEngine = {
+        #if DEBUG
+        return DebugLaunchArguments.voiceEngineOverride ?? .turnPipeline
+        #else
+        return .turnPipeline
+        #endif
+    }()
 
     private var session: (any VoiceSession)?
-    #if DEBUG
-    /// デバッグ用テキスト入力のために具象型も保持する（本実装ではプロトコル経由のみにする）
-    private var debugTurnSession: TurnBasedVoiceSession?
-    #endif
     private var eventTask: Task<Void, Never>?
     private var streamingAssistantID: UUID?
     #if DEBUG
@@ -54,13 +58,18 @@ final class ConversationViewModel {
         errorMessage = nil
         items = []
         let keychain = KeychainStore()
-        let newSession = TurnBasedVoiceSession(apiKeyProvider: {
-            (try? keychain.read(account: KeychainStore.anthropicAPIKeyAccount)) ?? nil
-        })
+        let newSession: any VoiceSession
+        switch engine {
+        case .turnPipeline:
+            newSession = TurnBasedVoiceSession(apiKeyProvider: {
+                (try? keychain.read(account: KeychainStore.anthropicAPIKeyAccount)) ?? nil
+            })
+        case .openaiRealtime:
+            newSession = RealtimeVoiceSession(apiKeyProvider: {
+                (try? keychain.read(account: KeychainStore.openAIAPIKeyAccount)) ?? nil
+            })
+        }
         session = newSession
-        #if DEBUG
-        debugTurnSession = newSession
-        #endif
         eventTask = Task { [weak self] in
             for await event in newSession.events {
                 self?.handle(event)
@@ -78,9 +87,6 @@ final class ConversationViewModel {
 
     private func detachSession() {
         session = nil
-        #if DEBUG
-        debugTurnSession = nil
-        #endif
         eventTask = nil
         state = .idle
         partialTranscript = ""
@@ -91,7 +97,7 @@ final class ConversationViewModel {
     #if DEBUG
     /// シミュレータで STT が使えないときの代替入力。
     func sendTypedText(_ text: String) {
-        debugTurnSession?.submitTypedUserTurn(text)
+        session?.submitTypedUserTurn(text)
     }
     #endif
 

@@ -14,6 +14,9 @@ final class AudioTapRouter: @unchecked Sendable {
     private var analyzerContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var analyzerFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
+    private var rawContinuation: AsyncStream<Data>.Continuation?
+    private var rawFormat: AVAudioFormat?
+    private var rawConverter: AVAudioConverter?
     private var buffersReceived = 0
 
     /// タップから受け取ったバッファ数の累計（マイクが生きているかの診断用）。
@@ -46,6 +49,25 @@ final class AudioTapRouter: @unchecked Sendable {
         converter = nil
     }
 
+    /// 指定フォーマット（PCM16 mono interleaved 前提）へ変換した生バイト列を流し始める。
+    /// Realtime 系 API（音声チャンクをそのまま送る方式）向け。
+    func attachRawPCM16(format: AVAudioFormat, continuation: AsyncStream<Data>.Continuation) {
+        lock.lock()
+        defer { lock.unlock() }
+        rawContinuation = continuation
+        rawFormat = format
+        rawConverter = nil
+    }
+
+    func detachRaw() {
+        lock.lock()
+        defer { lock.unlock() }
+        rawContinuation?.finish()
+        rawContinuation = nil
+        rawFormat = nil
+        rawConverter = nil
+    }
+
     /// AVAudioEngine のタップブロックとして渡す（オーディオスレッドから呼ばれる）。
     /// メソッド参照で渡すことで MainActor 隔離の推論を避ける（隔離クロージャだと実行時チェックで abort する）。
     func handleTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
@@ -58,12 +80,20 @@ final class AudioTapRouter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         buffersReceived += 1
-        guard let continuation = analyzerContinuation, let format = analyzerFormat else { return }
-        guard let converted = convert(buffer, to: format) else { return }
-        continuation.yield(AnalyzerInput(buffer: converted))
+        if let continuation = analyzerContinuation, let format = analyzerFormat,
+           let converted = convert(buffer, to: format, converter: &converter) {
+            continuation.yield(AnalyzerInput(buffer: converted))
+        }
+        if let continuation = rawContinuation, let format = rawFormat,
+           let converted = convert(buffer, to: format, converter: &rawConverter),
+           let data = Self.pcm16Data(from: converted) {
+            continuation.yield(data)
+        }
     }
 
-    private func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+    private func convert(
+        _ buffer: AVAudioPCMBuffer, to format: AVAudioFormat, converter: inout AVAudioConverter?
+    ) -> AVAudioPCMBuffer? {
         if buffer.format == format { return buffer }
         if converter == nil || converter?.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: format)
@@ -93,6 +123,14 @@ final class AudioTapRouter: @unchecked Sendable {
         }
         guard status != .error, conversionError == nil, output.frameLength > 0 else { return nil }
         return output
+    }
+
+    /// PCM16 mono interleaved バッファの生バイト列を取り出す。
+    private static func pcm16Data(from buffer: AVAudioPCMBuffer) -> Data? {
+        guard let channelData = buffer.int16ChannelData, buffer.frameLength > 0 else { return nil }
+        return Data(
+            bytes: channelData[0],
+            count: Int(buffer.frameLength) * MemoryLayout<Int16>.size)
     }
 
     private static func rmsLevel(of buffer: AVAudioPCMBuffer) -> Float {

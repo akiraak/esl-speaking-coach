@@ -4,14 +4,21 @@ import Foundation
 /// シミュレータでの動作確認用。起動引数で Keychain の API キーを操作する。
 /// 例: xcrun simctl launch booted com.akiraak.EslSpeakingCoach -seed-anthropic-key dummy
 enum DebugLaunchArguments {
+    private static let keyAccounts: [(seedFlag: String, deleteFlag: String, account: String)] = [
+        ("-seed-anthropic-key", "-delete-anthropic-key", KeychainStore.anthropicAPIKeyAccount),
+        ("-seed-openai-key", "-delete-openai-key", KeychainStore.openAIAPIKeyAccount),
+    ]
+
     static func apply() {
         let args = ProcessInfo.processInfo.arguments
         let keychain = KeychainStore()
-        if let index = args.firstIndex(of: "-seed-anthropic-key"), index + 1 < args.count {
-            try? keychain.save(args[index + 1], account: KeychainStore.anthropicAPIKeyAccount)
-        }
-        if args.contains("-delete-anthropic-key") {
-            try? keychain.delete(account: KeychainStore.anthropicAPIKeyAccount)
+        for entry in keyAccounts {
+            if let index = args.firstIndex(of: entry.seedFlag), index + 1 < args.count {
+                try? keychain.save(args[index + 1], account: entry.account)
+            }
+            if args.contains(entry.deleteFlag) {
+                try? keychain.delete(account: entry.account)
+            }
         }
     }
 
@@ -32,6 +39,13 @@ enum DebugLaunchArguments {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-send-text"), index + 1 < args.count else { return nil }
         return args[index + 1]
+    }
+
+    /// 音声エンジンの起動時指定。例: -voice-engine realtime / -voice-engine turn
+    static var voiceEngineOverride: VoiceEngine? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-voice-engine"), index + 1 < args.count else { return nil }
+        return VoiceEngine(rawValue: args[index + 1])
     }
 }
 #endif

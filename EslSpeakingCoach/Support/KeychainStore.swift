@@ -10,6 +10,7 @@ struct KeychainStore {
     }
 
     static let anthropicAPIKeyAccount = "anthropic-api-key"
+    static let openAIAPIKeyAccount = "openai-api-key"
 
     private let service = "com.akiraak.EslSpeakingCoach"
 

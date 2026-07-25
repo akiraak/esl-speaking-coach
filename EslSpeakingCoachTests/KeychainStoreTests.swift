@@ -4,9 +4,11 @@ import XCTest
 final class KeychainStoreTests: XCTestCase {
     private let keychain = KeychainStore()
     private let account = "test-api-key"
+    private let secondAccount = "test-api-key-2"
 
     override func tearDownWithError() throws {
         try keychain.delete(account: account)
+        try keychain.delete(account: secondAccount)
     }
 
     func testReadReturnsNilWhenMissing() throws {
@@ -32,5 +34,15 @@ final class KeychainStoreTests: XCTestCase {
 
     func testDeleteMissingDoesNotThrow() throws {
         XCTAssertNoThrow(try keychain.delete(account: account))
+    }
+
+    func testAccountsAreIsolated() throws {
+        try keychain.save("secret-a", account: account)
+        try keychain.save("secret-b", account: secondAccount)
+        XCTAssertEqual(try keychain.read(account: account), "secret-a")
+        XCTAssertEqual(try keychain.read(account: secondAccount), "secret-b")
+        try keychain.delete(account: account)
+        XCTAssertNil(try keychain.read(account: account))
+        XCTAssertEqual(try keychain.read(account: secondAccount), "secret-b")
     }
 }

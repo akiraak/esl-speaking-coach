@@ -1,6 +1,6 @@
 #!/bin/bash
 # シミュレータへビルド＆インストール＆起動する。
-# .secrets/anthropic-api-key（git 管理外）があれば起動時に Keychain へシードする（DEBUG ビルドのみ有効）。
+# .secrets/ 配下のキーファイル（git 管理外）があれば起動時に Keychain へシードする（DEBUG ビルドのみ有効）。
 # 追加の起動引数はそのまま渡せる: ./run-simulator.sh -start-conversation -send-text "Hello coach"
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -8,16 +8,20 @@ cd "$(dirname "$0")"
 SCHEME=EslSpeakingCoach
 BUNDLE_ID=com.akiraak.EslSpeakingCoach
 SIM_NAME="iPhone 17"
-API_KEY_FILE=.secrets/anthropic-api-key
 
 LAUNCH_ARGS=()
-if [ -f "$API_KEY_FILE" ]; then
-  API_KEY=$(tr -d '[:space:]' < "$API_KEY_FILE")
-  if [ -n "$API_KEY" ]; then
-    LAUNCH_ARGS+=(-seed-anthropic-key "$API_KEY")
-    echo "==> $API_KEY_FILE の API キーを起動時に Keychain へシードします"
+add_seed_arg() {
+  local file=$1 flag=$2 key
+  if [ -f "$file" ]; then
+    key=$(tr -d '[:space:]' < "$file")
+    if [ -n "$key" ]; then
+      LAUNCH_ARGS+=("$flag" "$key")
+      echo "==> $file の API キーを起動時に Keychain へシードします"
+    fi
   fi
-fi
+}
+add_seed_arg .secrets/anthropic-api-key -seed-anthropic-key
+add_seed_arg .secrets/openai-api-key -seed-openai-key
 
 echo "==> Xcode プロジェクトを生成..."
 xcodegen generate

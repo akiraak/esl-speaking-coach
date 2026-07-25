@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 案 A プロトタイプの会話画面。
+/// 音声レイヤ検証の会話画面。エンジン（ターン制+Claude / OpenAI Realtime）を切り替えて比較する。
 /// 状態・ライブ文字起こし・会話ログ・ターンごとのレイテンシ実測値を表示する。
 struct ConversationView: View {
     @State private var model = ConversationViewModel()
@@ -16,7 +16,7 @@ struct ConversationView: View {
             Divider()
             bottomBar
         }
-        .navigationTitle("会話（案 A）")
+        .navigationTitle("会話（\(model.engine.label)）")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             #if DEBUG
@@ -119,6 +119,9 @@ struct ConversationView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
+            if !model.isRunning {
+                enginePicker
+            }
             #if DEBUG
             if model.isRunning, model.state == .listening {
                 HStack {
@@ -150,6 +153,16 @@ struct ConversationView: View {
             .tint(model.isRunning ? .red : .accentColor)
         }
         .padding()
+    }
+
+    private var enginePicker: some View {
+        @Bindable var model = model
+        return Picker("音声エンジン", selection: $model.engine) {
+            ForEach(VoiceEngine.allCases) { engine in
+                Text(engine.label).tag(engine)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     #if DEBUG

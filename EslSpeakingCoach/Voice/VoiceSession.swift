@@ -59,4 +59,25 @@ protocol VoiceSession: AnyObject {
     var events: AsyncStream<VoiceSessionEvent> { get }
     func start() async
     func stop()
+    #if DEBUG
+    /// マイク・STT を経由せず user ターンを投入する（シミュレータでマイクが使えないときの検証用）。
+    func submitTypedUserTurn(_ text: String)
+    #endif
+}
+
+/// 検証中の音声レイヤ実装の選択肢（voice-layer-spike.md の比較対象）。
+enum VoiceEngine: String, CaseIterable, Identifiable, Sendable {
+    /// ターン制パイプライン + Claude（旧案 A → 案 A2）
+    case turnPipeline = "turn"
+    /// 案 B: OpenAI Realtime speech-to-speech
+    case openaiRealtime = "realtime"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .turnPipeline: return "ターン制+Claude"
+        case .openaiRealtime: return "OpenAI Realtime"
+        }
+    }
 }
