@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-25 音声入出力の本実装: スパイクの `TurnBasedVoiceSession`（案 A2）を製品品質に引き上げた [plan](docs/plans/archive/voice-io-production.md)
+  - Phase 1: STT 自動再接続（`ReconnectPolicy` の backoff + 再接続オーケストレーション + ping keepalive、`.reconnecting` state）
+  - Phase 2: バックグラウンド遷移・オーディオ割り込み対応（suspend/resume、経路変更でのエンジン再起動、idle timer 無効化、`.suspended` state）
+  - Phase 3: エラー分類と復帰導線（致命的/回復可能の分離、Claude ターンの 1 回自動リトライ、stop 時のオーディオセッション解放）
+  - 実機での動作確認（電話割り込み・バックグラウンド復帰・機内モード ON/OFF・AirPods 抜き差し）は**スキップと判断し未実施**。問題が出たら都度対応する
 - 2026-07-25 AI の料金がかかる箇所を仕様書 [docs/specs/ai-cost-map.md](docs/specs/ai-cost-map.md) にまとめた [plan](docs/plans/archive/ai-cost-map-spec.md)
   - 操作 → API → 課金単位の対応表（STT / 会話 LLM / TTS / トピック生成 / フィードバック生成 / 検証用エンジン）、2026-07-25 時点の単価、1 セッション約 $0.5 の概算例、課金されないものを整理
   - コスト特性を明記: TTS（Gemini 3.1 Flash TTS ≈ $0.03/生成 1 分）が最大要因、履歴再送で LLM 入力がターン数の 2 乗で逓増、STT は VAD が切り出した発話分のみ課金、barge-in で破棄した生成分も課金

@@ -2,13 +2,8 @@
 
 ## 実装（音声レイヤ: ターン制+Claude + Gemini TTS に決定済み・2026-07-25）
 
-- [ ] 音声入出力の本実装（スパイクの `TurnBasedVoiceSession`（案 A2）を製品品質に引き上げる: STT 接続断からの自動再接続、バックグラウンド遷移・オーディオ割り込み（電話等）対応、エラー時の復帰導線）[plan](docs/plans/voice-io-production.md)
-  - [x] Phase 1: STT 自動再接続（ReconnectPolicy + 再接続オーケストレーション + ping keepalive）
-  - [x] Phase 2: バックグラウンド遷移・オーディオ割り込み対応（suspend/resume、経路変更、idle timer）
-  - [x] Phase 3: エラー分類と復帰導線（致命的/回復可能の分離、Claude ターンの自動リトライ）
-  - [ ] 実機での動作確認（電話割り込みからの復帰・バックグラウンド復帰・機内モード ON/OFF の自動再接続・AirPods 抜き差し）
-- [ ] モデル・パラメータの最終調整（TTS は Gemini Flash TTS 系で確定 — 既定 `gemini-3.1-flash-tts-preview`、必要なら 2.5 系と聞き比べ。voice の微調整（Chobi=Leda / Naruko=Aoede は決定済み）、VAD 無音判定 800ms の実使用チューニング、STT モデルの見直し。会話 LLM は `claude-sonnet-5` に決定済み）
 - [ ] 検証用コードの整理（不採用の案 B: OpenAI Realtime / 案 C: Gemini Live のエンジンと切替 UI を削除。TTS 切替はモデル調整が終わるまで温存）
+- [ ] モデル・パラメータの最終調整（TTS は Gemini Flash TTS 系で確定 — 既定 `gemini-3.1-flash-tts-preview`、必要なら 2.5 系と聞き比べ。voice の微調整（Chobi=Leda / Naruko=Aoede は決定済み）、VAD 無音判定 800ms の実使用チューニング、STT モデルの見直し。会話 LLM は `claude-sonnet-5` に決定済み）
 - [ ] 会話履歴の永続化（SwiftData、端末内のみ。[conversation-design.md](docs/specs/conversation-design.md) の speaker 付き履歴モデルを保存対象にする）
 - [ ] 会話画面の UI（[screen-layout.md](docs/specs/screen-layout.md) と [conversation-design.md](docs/specs/conversation-design.md) に従う）
 - [ ] セッション後のフィードバック生成
