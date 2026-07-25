@@ -18,7 +18,7 @@ struct SessionFeedback: Sendable, Equatable, Decodable {
         let meaning: String
     }
 
-    /// Chobi の総評（英語 2〜3 文）
+    /// Chobi の総評（日本語 2〜3 文。学習者の英語の引用を含み得る）
     let summary: String
     let corrections: [Correction]
     let tryPhrases: [TryPhrase]
@@ -68,13 +68,16 @@ struct SessionFeedbackClient: Sendable {
 
     Rules:
     - Evaluate only the learner's utterances, never the characters'.
+    - Write all explanations in Japanese. Use English only where the English itself is the \
+    content: the learner's quoted words, corrected example sentences, and suggested phrases.
     - The learner's lines come from speech recognition, so they may contain transcription \
     artifacts. Only point out errors that are clearly the learner's own language errors; ignore \
     anything that is likely a mis-transcription, such as odd homophones or dropped words that make \
     no sense in context.
-    - summary: two or three sentences in English, in Chobi's warm, calm voice. Mention something \
-    specific the learner did well in this session, then one theme to work on next. No greetings, \
-    no questions, no markdown, no emoji.
+    - summary: two or three sentences in Japanese, in Chobi's warm, calm voice, using polite \
+    desu-masu style. Mention something specific the learner did well in this session, quoting the \
+    learner's English when it helps, then one theme to work on next. No greetings, no questions, \
+    no markdown, no emoji.
     - corrections: the most useful corrections only, at most five, ordered by usefulness. Prefer \
     errors that hurt understanding or that the learner repeated. original is what the learner \
     said, shortened to the relevant part. improved is a natural way to say it. note is one short \

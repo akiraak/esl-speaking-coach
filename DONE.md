@@ -1,7 +1,7 @@
 # DONE
 
 - 2026-07-25 セッション後のフィードバック生成: 会話全文を `claude-opus-5` で評価してフィードバックカードを投稿する（仕様書 [docs/specs/session-feedback.md](docs/specs/session-feedback.md) を新規作成） [plan](docs/plans/archive/session-feedback.md)
-  - `SessionFeedbackClient` 新規: effort high / max_tokens 16000 / ストリーミング（SSE 蓄積 → JSON パース）+ structured outputs（summary=Chobi の英語総評 / corrections=✗原文・✓改善・日本語ノート最大 5 件 / try_phrases=表現 + 日本語の意味）。refusal は content を読む前に判定
+  - `SessionFeedbackClient` 新規: effort high / max_tokens 16000 / ストリーミング（SSE 蓄積 → JSON パース）+ structured outputs（summary=Chobi の総評 / corrections=✗原文・✓改善・ノート最大 5 件 / try_phrases=表現 + 意味）。refusal は content を読む前に判定。説明文は日本語ベース・英語は引用/例文/提案フレーズのみ（同日修正: 当初の英語総評から変更）
   - セッション正常終了（手動 / goodbye）→ フィードバックカードを生成中表示で即投稿 → 次のトピックカード投稿（生成を待たずに次を選べる）。学習者の発話 2 未満はスキップ通知、失敗時はカード内リトライ
   - 検証用に `-send-text` を複数指定可能にし、listening のたび 1 つずつ自動送信（複数ターン E2E 用）
   - シミュレータ E2E で確認: 2 ターン + goodbye → カード生成（仕込んだ文法エラー buyed/three shirt/very fun を日本語ノート付きで指摘）、goodbye のみの短いセッション → スキップ通知。単体テスト 56 件パス

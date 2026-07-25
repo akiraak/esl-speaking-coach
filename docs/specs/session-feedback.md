@@ -9,7 +9,8 @@
 セッション終了後に会話全文を `claude-opus-5` で評価し、テキストベースのフィードバックカードを
 タイムラインへ投稿する。
 
-- **書き手**: Chobi（先生キャラ）。総評は英語でキャラ性を保ち、訂正・表現の解説は日本語
+- **書き手**: Chobi（先生キャラ）。**説明文は日本語ベース**（総評・解説とも日本語のです・ます調）で、
+  英語は「英語そのものが内容になる箇所」のみ — 学習者の発話の引用・訂正の例文・提案フレーズ
   （学習効率優先。English-only ルールは会話ターンにのみ適用し、セッション後のメタ学習
   コンテンツには適用しない）
 - **評価対象**: 学習者の発話のみ。STT 経由のため、誤認識らしきもの（文脈に合わない同音語等）は
@@ -43,7 +44,7 @@ CLAUDE.md「フィードバック生成（会話後）」の規約に従う。
 
 | フィールド | 内容 |
 | --- | --- |
-| `summary` | Chobi の総評。英語 2〜3 文（具体的に良かった点 + 次の課題 1 つ。挨拶・質問なし） |
+| `summary` | Chobi の総評。日本語 2〜3 文・です・ます調（具体的に良かった点 + 次の課題 1 つ。学習者の英語を引用してよい。挨拶・質問なし） |
 | `corrections[]` | `original`（発話の該当部分）/ `improved`（自然な言い方）/ `note`（日本語 40 字以内の解説）。最大 5 件・有用な順。理解を妨げるエラー・繰り返したエラー優先。無ければ少なくてよい（捏造禁止） |
 | `try_phrases[]` | `phrase`（次に使ってみたい英語表現）/ `meaning`（日本語の意味）。2〜3 件 |
 
@@ -96,7 +97,7 @@ JSON Schema（`output_config.format`）:
 ┌──────────────────────────┐
 │ 📝 Session Feedback       │ ← アクセント色
 │ <トピック名>               │ ← 名前ラベル色
-│ <summary（英語・Chobi）>   │
+│ <summary（日本語・Chobi）> │
 │ 直したい表現               │
 │ ┌──────────────────────┐ │
 │ │ ✗ original            │ │ ← ✗ は liveText 色
@@ -131,8 +132,9 @@ You receive the session topic and transcript. Lines starting with "Learner:" are
 
 Rules:
 - Evaluate only the learner's utterances, never the characters'.
+- Write all explanations in Japanese. Use English only where the English itself is the content: the learner's quoted words, corrected example sentences, and suggested phrases.
 - The learner's lines come from speech recognition, so they may contain transcription artifacts. Only point out errors that are clearly the learner's own language errors; ignore anything that is likely a mis-transcription, such as odd homophones or dropped words that make no sense in context.
-- summary: two or three sentences in English, in Chobi's warm, calm voice. Mention something specific the learner did well in this session, then one theme to work on next. No greetings, no questions, no markdown, no emoji.
+- summary: two or three sentences in Japanese, in Chobi's warm, calm voice, using polite desu-masu style. Mention something specific the learner did well in this session, quoting the learner's English when it helps, then one theme to work on next. No greetings, no questions, no markdown, no emoji.
 - corrections: the most useful corrections only, at most five, ordered by usefulness. Prefer errors that hurt understanding or that the learner repeated. original is what the learner said, shortened to the relevant part. improved is a natural way to say it. note is one short explanation in Japanese, at most about forty characters.
 - try_phrases: two or three natural English expressions that fit conversations like this one and would level up the learner's speech. phrase is the English expression, meaning is a short Japanese translation.
 - If there is little to correct, return fewer corrections. Never invent errors. If the learner spoke very little, keep everything short and encouraging.

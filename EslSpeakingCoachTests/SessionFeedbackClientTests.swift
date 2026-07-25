@@ -37,7 +37,7 @@ final class SessionFeedbackClientTests: XCTestCase {
 
     func testParseResultDecodesFeedback() throws {
         let text = """
-        {"summary":"You spoke a lot today. Next time, watch your past tense.",\
+        {"summary":"今日はたくさん話せましたね。次は過去形を意識してみましょう。",\
         "corrections":[{"original":"I go to Okinawa last month",\
         "improved":"I went to Okinawa last month","note":"過去の話は過去形で"}],\
         "try_phrases":[{"phrase":"It was totally worth it.","meaning":"行く価値があった"}]}
@@ -46,7 +46,7 @@ final class SessionFeedbackClientTests: XCTestCase {
         XCTAssertEqual(feedback.corrections.count, 1)
         XCTAssertEqual(feedback.corrections[0].improved, "I went to Okinawa last month")
         XCTAssertEqual(feedback.tryPhrases[0].meaning, "行く価値があった")
-        XCTAssertTrue(feedback.summary.hasPrefix("You spoke"))
+        XCTAssertTrue(feedback.summary.hasPrefix("今日は"))
     }
 
     /// refusal はテキストを読む前に判定する（CLAUDE.md の規約）。
