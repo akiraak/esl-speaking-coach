@@ -5,6 +5,7 @@ struct ContentView: View {
 
     @State private var isShowingSettings = false
     @State private var hasAPIKey = false
+    @State private var isShowingConversation = false
 
     var body: some View {
         NavigationStack {
@@ -18,6 +19,19 @@ struct ContentView: View {
                       systemImage: hasAPIKey ? "checkmark.circle" : "exclamationmark.triangle")
                     .font(.callout)
                     .foregroundStyle(hasAPIKey ? .green : .orange)
+
+                Button {
+                    isShowingConversation = true
+                } label: {
+                    Label("会話を始める（案 A プロトタイプ）", systemImage: "mic.circle.fill")
+                        .font(.headline)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!hasAPIKey)
+            }
+            .navigationDestination(isPresented: $isShowingConversation) {
+                ConversationView()
             }
             .padding()
             .toolbar {
@@ -35,6 +49,12 @@ struct ContentView: View {
         }
         .onAppear {
             refreshKeyStatus()
+            #if DEBUG
+            if DebugLaunchArguments.shouldOpenConversation {
+                isShowingConversation = true
+                return
+            }
+            #endif
             if !hasAPIKey {
                 isShowingSettings = true
             }

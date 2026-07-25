@@ -2,7 +2,7 @@ name: EslSpeakingCoach
 options:
   bundleIdPrefix: com.akiraak
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 targets:
   EslSpeakingCoach:

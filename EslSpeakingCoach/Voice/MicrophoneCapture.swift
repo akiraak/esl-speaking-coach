@@ -1,0 +1,141 @@
+import Accelerate
+import AVFAudio
+import Foundation
+import Speech
+
+/// マイクのタップから受け取ったバッファを、RMS レベルと（接続中なら）SpeechAnalyzer の
+/// 入力ストリームへ配る。process(buffer:) はオーディオスレッドから呼ばれるため NSLock で守る。
+/// AVAudioConverter 等の非 Sendable な状態はこのクラス内に閉じ込める。
+final class AudioTapRouter: @unchecked Sendable {
+    let levels: AsyncStream<Float>
+
+    private let levelContinuation: AsyncStream<Float>.Continuation
+    private let lock = NSLock()
+    private var analyzerContinuation: AsyncStream<AnalyzerInput>.Continuation?
+    private var analyzerFormat: AVAudioFormat?
+    private var converter: AVAudioConverter?
+    private var buffersReceived = 0
+
+    /// タップから受け取ったバッファ数の累計（マイクが生きているかの診断用）。
+    var bufferCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffersReceived
+    }
+
+    init() {
+        (levels, levelContinuation) = AsyncStream.makeStream(
+            of: Float.self, bufferingPolicy: .bufferingNewest(1))
+    }
+
+    /// 認識対象のトランスクライバへバッファを流し始める。
+    func attach(continuation: AsyncStream<AnalyzerInput>.Continuation, format: AVAudioFormat) {
+        lock.lock()
+        defer { lock.unlock() }
+        analyzerContinuation = continuation
+        analyzerFormat = format
+        converter = nil
+    }
+
+    /// バッファ供給を止める（タップ自体は動き続け、レベルは流れ続ける）。
+    func detach() {
+        lock.lock()
+        defer { lock.unlock() }
+        analyzerContinuation = nil
+        analyzerFormat = nil
+        converter = nil
+    }
+
+    /// AVAudioEngine のタップブロックとして渡す（オーディオスレッドから呼ばれる）。
+    /// メソッド参照で渡すことで MainActor 隔離の推論を避ける（隔離クロージャだと実行時チェックで abort する）。
+    func handleTap(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        process(buffer: buffer)
+    }
+
+    func process(buffer: AVAudioPCMBuffer) {
+        levelContinuation.yield(Self.rmsLevel(of: buffer))
+
+        lock.lock()
+        defer { lock.unlock() }
+        buffersReceived += 1
+        guard let continuation = analyzerContinuation, let format = analyzerFormat else { return }
+        guard let converted = convert(buffer, to: format) else { return }
+        continuation.yield(AnalyzerInput(buffer: converted))
+    }
+
+    private func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        if buffer.format == format { return buffer }
+        if converter == nil || converter?.inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: format)
+        }
+        guard let converter else { return nil }
+
+        let ratio = format.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+
+        // convert の入力ブロックは @Sendable 扱いのため、バッファの受け渡しを箱に閉じ込める
+        // （ブロックは convert 呼び出し中に同期的に実行される）
+        final class InputBox: @unchecked Sendable {
+            var buffer: AVAudioPCMBuffer?
+            init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+        }
+        let box = InputBox(buffer)
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, outStatus in
+            guard let pending = box.buffer else {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            box.buffer = nil
+            outStatus.pointee = .haveData
+            return pending
+        }
+        guard status != .error, conversionError == nil, output.frameLength > 0 else { return nil }
+        return output
+    }
+
+    private static func rmsLevel(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let channelData = buffer.floatChannelData, buffer.frameLength > 0 else { return 0 }
+        var rms: Float = 0
+        vDSP_rmsqv(channelData[0], 1, &rms, vDSP_Length(buffer.frameLength))
+        return rms
+    }
+}
+
+/// AVAudioEngine でマイクを常時タップする。バッファの配送は AudioTapRouter に委譲する。
+/// メインスレッド（TurnBasedVoiceSession）から使う想定。@MainActor は付けない —
+/// 付けるとタップクロージャが MainActor 隔離と推論され、オーディオスレッドからの呼び出しで
+/// 実行時アイソレーション検査により abort する。
+final class MicrophoneCapture {
+    let router = AudioTapRouter()
+
+    private let engine = AVAudioEngine()
+    private var isRunning = false
+    /// 直近の start 時点での入力フォーマット（診断表示用）。
+    private(set) var inputFormatDescription = "-"
+
+    /// - Parameter voiceProcessing: Voice Processing I/O（エコーキャンセル）を有効にするか。
+    ///   TTS 再生中の barge-in 検知に必要。シミュレータ等で失敗しても続行する。
+    func start(voiceProcessing: Bool) throws {
+        guard !isRunning else { return }
+        let input = engine.inputNode
+        // 前回の状態が残らないよう、要求値を常に明示的に設定する
+        try? input.setVoiceProcessingEnabled(voiceProcessing)
+        let format = input.outputFormat(forBus: 0)
+        inputFormatDescription =
+            "\(Int(format.sampleRate))Hz/\(format.channelCount)ch VP=\(input.isVoiceProcessingEnabled ? "on" : "off")"
+        // 非隔離クラスのメソッド参照を渡す（クロージャリテラルだと周囲の隔離を継承してしまう）
+        input.installTap(onBus: 0, bufferSize: 2048, format: format, block: router.handleTap)
+        engine.prepare()
+        try engine.start()
+        isRunning = true
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        isRunning = false
+    }
+}
