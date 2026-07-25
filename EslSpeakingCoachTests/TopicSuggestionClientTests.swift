@@ -68,4 +68,26 @@ final class TopicSuggestionClientTests: XCTestCase {
         ])
         XCTAssertThrowsError(try TopicSuggestionClient.parseResponse(response))
     }
+
+    /// 非ストリーミング応答の usage フィールドを料金記録用にパースする。
+    func testParseUsage() throws {
+        let response = try JSONSerialization.data(withJSONObject: [
+            "content": [["type": "text", "text": "{}"]],
+            "stop_reason": "end_turn",
+            "usage": [
+                "input_tokens": 300, "output_tokens": 120,
+                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+            ],
+        ])
+        let usage = try XCTUnwrap(TopicSuggestionClient.parseUsage(response))
+        XCTAssertEqual(usage.provider, .anthropic)
+        XCTAssertEqual(usage.kind, .topicSuggestion)
+        XCTAssertEqual(usage.inputTokens, 300)
+        XCTAssertEqual(usage.outputTokens, 120)
+
+        let withoutUsage = try JSONSerialization.data(withJSONObject: [
+            "content": [], "stop_reason": "end_turn",
+        ])
+        XCTAssertNil(TopicSuggestionClient.parseUsage(withoutUsage))
+    }
 }

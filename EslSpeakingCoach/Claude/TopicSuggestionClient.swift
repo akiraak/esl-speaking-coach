@@ -55,7 +55,10 @@ struct TopicSuggestionClient: Sendable {
     }()
 
     /// 候補 3 件を生成する。recentTitles には重複回避のため直近トピック + 表示中候補のタイトルを渡す。
-    func suggestTopics(apiKey: String, recentTitles: [String]) async throws -> [TopicCandidate] {
+    /// usage は非ストリーミング応答の usage フィールド（取れなければ nil）。
+    func suggestTopics(
+        apiKey: String, recentTitles: [String]
+    ) async throws -> (topics: [TopicCandidate], usage: AIUsageEvent?) {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
@@ -72,7 +75,7 @@ struct TopicSuggestionClient: Sendable {
                 statusCode: http.statusCode,
                 body: String(data: data, encoding: .utf8) ?? "")
         }
-        return try Self.parseResponse(data)
+        return (try Self.parseResponse(data), Self.parseUsage(data))
     }
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
@@ -132,18 +135,47 @@ struct TopicSuggestionClient: Sendable {
         return result.topics
     }
 
+    /// 応答の usage フィールドから利用量を取り出す（料金記録用。失敗しても nil を返すだけ）。
+    static func parseUsage(_ data: Data) -> AIUsageEvent? {
+        guard let payload = try? JSONDecoder().decode(ResponsePayload.self, from: data),
+              let usage = payload.usage else { return nil }
+        return AIUsageEvent(
+            provider: .anthropic,
+            model: "claude-sonnet-5",
+            kind: .topicSuggestion,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadInputTokens,
+            cacheWriteTokens: usage.cacheCreationInputTokens)
+    }
+
     private struct ResponsePayload: Decodable {
         let content: [ContentBlock]?
         let stopReason: String?
+        let usage: Usage?
 
         enum CodingKeys: String, CodingKey {
-            case content
+            case content, usage
             case stopReason = "stop_reason"
         }
 
         struct ContentBlock: Decodable {
             let type: String?
             let text: String?
+        }
+
+        struct Usage: Decodable {
+            let inputTokens: Int?
+            let outputTokens: Int?
+            let cacheReadInputTokens: Int?
+            let cacheCreationInputTokens: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case inputTokens = "input_tokens"
+                case outputTokens = "output_tokens"
+                case cacheReadInputTokens = "cache_read_input_tokens"
+                case cacheCreationInputTokens = "cache_creation_input_tokens"
+            }
         }
     }
 

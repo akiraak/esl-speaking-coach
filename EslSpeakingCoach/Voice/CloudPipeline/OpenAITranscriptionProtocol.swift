@@ -57,6 +57,33 @@ enum OpenAITranscriptionClientEvent {
     }
 }
 
+/// STT 1 セグメント分の利用量（transcription.completed の usage。料金記録用）。
+/// gpt-4o-transcribe はトークン型（audio/text 入力 + 出力）、whisper 系は秒数型で届く。
+struct STTSegmentUsage: Sendable, Equatable {
+    var audioInputTokens: Int?
+    var textInputTokens: Int?
+    var outputTokens: Int?
+    var audioSeconds: Double?
+
+    /// completed イベントの usage オブジェクトからパースする（形式不明なら nil）。
+    static func parse(_ object: [String: Any]?) -> STTSegmentUsage? {
+        guard let object, let type = object["type"] as? String else { return nil }
+        switch type {
+        case "tokens":
+            let details = object["input_token_details"] as? [String: Any]
+            return STTSegmentUsage(
+                audioInputTokens: details?["audio_tokens"] as? Int,
+                textInputTokens: details?["text_tokens"] as? Int,
+                outputTokens: object["output_tokens"] as? Int)
+        case "duration":
+            guard let seconds = object["seconds"] as? Double else { return nil }
+            return STTSegmentUsage(audioSeconds: seconds)
+        default:
+            return nil
+        }
+    }
+}
+
 /// サーバ → クライアントのイベント。transcription セッションが必要とする最小のみ拾う。
 enum OpenAITranscriptionServerEvent: Sendable, Equatable {
     case sessionCreated
@@ -64,7 +91,7 @@ enum OpenAITranscriptionServerEvent: Sendable, Equatable {
     case speechStarted
     case speechStopped
     case userTranscriptDelta(String)
-    case userTranscriptCompleted(String)
+    case userTranscriptCompleted(String, usage: STTSegmentUsage?)
     /// ユーザー発話セグメントの認識に失敗した（セッション自体は継続する）
     case userTranscriptFailed(String)
     /// ignorable = 実害のない既知のエラー
@@ -91,7 +118,9 @@ enum OpenAITranscriptionServerEvent: Sendable, Equatable {
         case "conversation.item.input_audio_transcription.delta":
             return .userTranscriptDelta(object["delta"] as? String ?? "")
         case "conversation.item.input_audio_transcription.completed":
-            return .userTranscriptCompleted(object["transcript"] as? String ?? "")
+            return .userTranscriptCompleted(
+                object["transcript"] as? String ?? "",
+                usage: STTSegmentUsage.parse(object["usage"] as? [String: Any]))
         case "conversation.item.input_audio_transcription.failed":
             let error = object["error"] as? [String: Any]
             return .userTranscriptFailed(error?["message"] as? String ?? "transcription failed")
@@ -120,6 +149,8 @@ enum STTStreamEvent: Sendable, Equatable {
     case partialTranscript(String)
     /// 1 セグメント分の確定テキスト
     case finalTranscript(String)
+    /// 1 セグメント分の利用量（finalTranscript の直前に届く。料金記録用）
+    case segmentUsage(STTSegmentUsage)
     /// セグメントの認識に失敗した（セッションは継続する）
     case transcriptFailed(String)
     case notice(String)

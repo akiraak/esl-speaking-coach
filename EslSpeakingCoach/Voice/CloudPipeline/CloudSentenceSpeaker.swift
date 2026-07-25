@@ -23,6 +23,8 @@ final class CloudSentenceSpeaker {
     var onUtteranceAudioStarted: ((UUID) -> Void)?
     /// 文単位の取得失敗（その文はスキップして続行する）。
     var onError: ((String) -> Void)?
+    /// TTS 1 リクエスト（1 文）分の利用量（料金記録用）。
+    var onUsage: ((TTSUsage) -> Void)?
 
     private let client: any SentenceTTSClient
     private let apiKeyProvider: @Sendable () -> String?
@@ -109,13 +111,18 @@ final class CloudSentenceSpeaker {
                 var pendingMarker: UUID? =
                     item.utteranceID == self.lastMarkedUtteranceID ? nil : item.utteranceID
                 do {
-                    for try await chunk in self.client.streamPCM(
+                    for try await chunk in self.client.streamAudio(
                         apiKey: apiKey, text: item.text, style: item.style) {
                         guard !Task.isCancelled, self.turnID == startedTurnID else { return }
-                        self.player.enqueue(pcm16Data: chunk, marker: pendingMarker)
-                        if pendingMarker != nil {
-                            self.lastMarkedUtteranceID = item.utteranceID
-                            pendingMarker = nil
+                        switch chunk {
+                        case .pcm(let pcm):
+                            self.player.enqueue(pcm16Data: pcm, marker: pendingMarker)
+                            if pendingMarker != nil {
+                                self.lastMarkedUtteranceID = item.utteranceID
+                                pendingMarker = nil
+                            }
+                        case .usage(let usage):
+                            self.onUsage?(usage)
                         }
                     }
                 } catch is CancellationError {

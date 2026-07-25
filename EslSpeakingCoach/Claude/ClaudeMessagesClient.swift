@@ -5,6 +5,30 @@ enum ClaudeStreamEvent: Sendable, Equatable {
     case textDelta(String)
     /// message_delta で通知される stop_reason（"end_turn" / "max_tokens" / "refusal" など）
     case messageStopped(stopReason: String?)
+    /// usage の更新（message_start で入力側、message_delta で出力側が届く）。
+    /// 呼び出し側は merge で 1 ターン分に積み上げる
+    case usageUpdated(ClaudeTokenUsage)
+}
+
+/// Claude Messages API の usage（管理画面の料金記録用）。
+struct ClaudeTokenUsage: Sendable, Equatable {
+    var inputTokens: Int?
+    var outputTokens: Int?
+    var cacheReadInputTokens: Int?
+    var cacheCreationInputTokens: Int?
+
+    var isEmpty: Bool {
+        inputTokens == nil && outputTokens == nil
+            && cacheReadInputTokens == nil && cacheCreationInputTokens == nil
+    }
+
+    /// 後から届いた値で上書きする（nil は既存値を保持）。
+    mutating func merge(_ other: ClaudeTokenUsage) {
+        inputTokens = other.inputTokens ?? inputTokens
+        outputTokens = other.outputTokens ?? outputTokens
+        cacheReadInputTokens = other.cacheReadInputTokens ?? cacheReadInputTokens
+        cacheCreationInputTokens = other.cacheCreationInputTokens ?? cacheCreationInputTokens
+    }
 }
 
 enum ClaudeClientError: Error, LocalizedError {
@@ -77,7 +101,7 @@ struct ClaudeMessagesClient: Sendable {
                         throw ClaudeClientError.httpError(statusCode: http.statusCode, body: body)
                     }
                     for try await line in bytes.lines {
-                        if let event = try ClaudeSSE.parse(line: line) {
+                        for event in try ClaudeSSE.parse(line: line) {
                             continuation.yield(event)
                         }
                     }
@@ -150,31 +174,43 @@ struct ClaudeMessagesClient: Sendable {
 
 /// SSE の 1 行を Claude のストリームイベントへ変換する。
 enum ClaudeSSE {
-    /// `data: {...}` 以外の行（event 行・空行・ping 等）は nil を返す。
+    /// `data: {...}` 以外の行（event 行・空行・ping 等）は空配列を返す。
     /// API の error イベントは throw する。
-    static func parse(line: String) throws -> ClaudeStreamEvent? {
-        guard line.hasPrefix("data:") else { return nil }
+    /// message_delta は usage → stop の順で 2 イベントになり得る。
+    static func parse(line: String) throws -> [ClaudeStreamEvent] {
+        guard line.hasPrefix("data:") else { return [] }
         let json = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-        guard !json.isEmpty, let data = json.data(using: .utf8) else { return nil }
-        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return nil }
+        guard !json.isEmpty, let data = json.data(using: .utf8) else { return [] }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return [] }
 
         switch payload.type {
         case "content_block_delta":
             // thinking_delta 等は読み上げ対象外。text_delta のみ拾う
-            guard payload.delta?.type == "text_delta", let text = payload.delta?.text else { return nil }
-            return .textDelta(text)
+            guard payload.delta?.type == "text_delta", let text = payload.delta?.text else { return [] }
+            return [.textDelta(text)]
+        case "message_start":
+            // 入力側の usage（input_tokens / cache_*）は message_start に載る
+            guard let usage = payload.message?.usage?.tokenUsage else { return [] }
+            return [.usageUpdated(usage)]
         case "message_delta":
-            return .messageStopped(stopReason: payload.delta?.stopReason)
+            var events: [ClaudeStreamEvent] = []
+            if let usage = payload.usage?.tokenUsage {
+                events.append(.usageUpdated(usage))
+            }
+            events.append(.messageStopped(stopReason: payload.delta?.stopReason))
+            return events
         case "error":
             throw ClaudeClientError.apiError(payload.error?.message ?? "unknown error")
         default:
-            return nil
+            return []
         }
     }
 
     private struct Payload: Decodable {
         let type: String
         let delta: Delta?
+        let message: MessageInfo?
+        let usage: UsageInfo?
         let error: APIError?
 
         struct Delta: Decodable {
@@ -185,6 +221,33 @@ enum ClaudeSSE {
             enum CodingKeys: String, CodingKey {
                 case type, text
                 case stopReason = "stop_reason"
+            }
+        }
+
+        struct MessageInfo: Decodable {
+            let usage: UsageInfo?
+        }
+
+        struct UsageInfo: Decodable {
+            let inputTokens: Int?
+            let outputTokens: Int?
+            let cacheReadInputTokens: Int?
+            let cacheCreationInputTokens: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case inputTokens = "input_tokens"
+                case outputTokens = "output_tokens"
+                case cacheReadInputTokens = "cache_read_input_tokens"
+                case cacheCreationInputTokens = "cache_creation_input_tokens"
+            }
+
+            var tokenUsage: ClaudeTokenUsage? {
+                let usage = ClaudeTokenUsage(
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cacheReadInputTokens: cacheReadInputTokens,
+                    cacheCreationInputTokens: cacheCreationInputTokens)
+                return usage.isEmpty ? nil : usage
             }
         }
 

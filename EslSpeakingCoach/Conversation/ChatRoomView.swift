@@ -4,6 +4,7 @@ import SwiftUI
 struct ChatRoomView: View {
     @State private var store = ChatRoomStore()
     @State private var isShowingSettings = false
+    @State private var isShowingAdmin = false
     @State private var isShowingTopicInput = false
     @State private var customTopicText = ""
     @State private var customTopicCardID: UUID?
@@ -29,6 +30,15 @@ struct ChatRoomView: View {
         .sheet(isPresented: $isShowingSettings) {
             SettingsView()
         }
+        .sheet(isPresented: $isShowingAdmin) {
+            #if DEBUG
+            AdminView(
+                historyStore: store.historyStore, usageStore: store.usageStore,
+                startOnUsage: DebugLaunchArguments.adminOpensOnUsageTab)
+            #else
+            AdminView(historyStore: store.historyStore, usageStore: store.usageStore)
+            #endif
+        }
         .alert("自分でトピックを作る", isPresented: $isShowingTopicInput) {
             TextField("例: My favorite ramen shop", text: $customTopicText)
                 .autocorrectionDisabled()
@@ -42,6 +52,11 @@ struct ChatRoomView: View {
             if store.isAnthropicKeyMissing {
                 isShowingSettings = true
             }
+            #if DEBUG
+            if DebugLaunchArguments.shouldOpenAdmin {
+                isShowingAdmin = true
+            }
+            #endif
         }
     }
 
@@ -65,6 +80,11 @@ struct ChatRoomView: View {
                     Label("トピックを終える", systemImage: "flag.checkered")
                 }
                 .disabled(!store.isSessionActive)
+                Button {
+                    isShowingAdmin = true
+                } label: {
+                    Label("管理画面", systemImage: "chart.bar.doc.horizontal")
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.semibold))

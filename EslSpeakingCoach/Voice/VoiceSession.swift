@@ -31,6 +31,8 @@ enum VoiceSessionEvent: Sendable {
     case assistantUtteranceUpdated(id: UUID, text: String)
     /// 学習者の goodbye（制御行 [end]）を検知した。closing の読み上げ完了後に通知する
     case sessionEndDetected
+    /// AI API 1 呼び出し分の利用量（STT 1 セグメント / Claude 1 ターン / TTS 1 文。料金記録用）
+    case apiUsage(AIUsageEvent)
     /// 1 ターン分のレイテンシ実測値
     case turnMetrics(TurnMetrics)
     /// マイク入力の RMS レベル（音声モードの波形表示用）

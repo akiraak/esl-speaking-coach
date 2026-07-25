@@ -87,7 +87,7 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 ## 会話履歴モデル
 
 - `ConversationMessage` に speaker（`user` / `chobi` / `naruko`）を追加する。assistant の台本はタグでパースして speaker 別のメッセージとして保持・表示し、API へ送るときにタグ付き台本へ再直列化する
-- SwiftData 永続化（別タスク）はこのモデルを保存対象とする
+- SwiftData 永続化は 2026-07-25 実装済み（`Persistence/ChatHistoryModels.swift` の `ChatSessionRecord` / `ChatMessageRecord`。実装プラン: `docs/plans/archive/history-persistence-and-admin.md`）
 
 ## 影響範囲（実装タスクへの反映）
 

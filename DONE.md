@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-07-25 会話履歴の永続化 + 管理画面（会話内容・AI 利用料金） [plan](docs/plans/archive/history-persistence-and-admin.md)
+  - 永続化（SwiftData・端末内のみ）: `ChatSessionRecord` / `ChatMessageRecord`（speaker 付き。conversation-design.md の履歴モデル）+ `ChatHistoryStore`。user 確定・AI 発話開始/ストリーミング更新のたびに保存し、起動時に直近 10 セッション + 保存済みフィードバックをタイムラインへ復元。前回強制終了のセッションは最終発話時刻で閉じ、空セッションは削除。トピック重複回避の直近 20 件も永続化から復元
+  - AI 利用量の記録: 課金 5 経路すべてで API レスポンスの usage を取得（Claude は SSE `message_start`/`message_delta`・非ストリーミングは `usage`、STT は completed イベントの usage（tokens/duration 両対応）、Gemini TTS は `usageMetadata` + PCM バイト数）。`VoiceSessionEvent.apiUsage` で UI 層へ流し `APIUsageRecord` に保存。推定額は**記録時**に `AIPricing`（ai-cost-map.md の単価表 + sonnet-5 導入価格の期限切替）で計算して保存
+  - 管理画面: ヘッダ「…」メニュー →「管理画面」。会話タブ（セッション一覧: 日時・発話数・フィードバック有無・セッション料金 → 詳細で会話全文 + フィードバック。スワイプ削除で usage 記録も削除）/ 料金タブ（今日・今月・累計、種別内訳、日別 30 日）
+  - シミュレータ E2E で確認: 3 ターン会話 + goodbye → フィードバック生成 → 再起動で履歴・フィードバック復元 → 管理画面に 10 発話 $0.073、種別内訳が TTS ＞ フィードバック ＞ 会話 ＞ トピック（ai-cost-map の想定順）。単体テスト 80 件パス
+  - **実機未確認**: STT usage の記録（シミュレータはマイク無効で STT 課金ゼロのため）。TODO に実機確認タスクを追加
+  - デバッグ導線: `-open-admin` / `-open-admin usage` で起動時に管理画面を開ける（表示確認用）
 - 2026-07-25 セッション後のフィードバック生成: 会話全文を `claude-opus-5` で評価してフィードバックカードを投稿する（仕様書 [docs/specs/session-feedback.md](docs/specs/session-feedback.md) を新規作成） [plan](docs/plans/archive/session-feedback.md)
   - `SessionFeedbackClient` 新規: effort high / max_tokens 16000 / ストリーミング（SSE 蓄積 → JSON パース）+ structured outputs（summary=Chobi の総評 / corrections=✗原文・✓改善・ノート最大 5 件 / try_phrases=表現 + 意味）。refusal は content を読む前に判定。説明文は日本語ベース・英語は引用/例文/提案フレーズのみ（同日修正: 当初の英語総評から変更）
   - セッション正常終了（手動 / goodbye）→ フィードバックカードを生成中表示で即投稿 → 次のトピックカード投稿（生成を待たずに次を選べる）。学習者の発話 2 未満はスキップ通知、失敗時はカード内リトライ

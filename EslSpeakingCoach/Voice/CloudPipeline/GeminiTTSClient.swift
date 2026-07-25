@@ -66,7 +66,7 @@ struct GeminiTTSClient: SentenceTTSClient {
         return try JSONSerialization.data(withJSONObject: payload)
     }
 
-    func streamPCM(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<Data, Error> {
+    func streamAudio(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<TTSStreamChunk, Error> {
         let configuration = configuration
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -92,14 +92,30 @@ struct GeminiTTSClient: SentenceTTSClient {
 
                     // サーバのチャンクは 40ms 刻みと細かいため、再生スケジューリング単位へまとめ直す
                     var assembler = PCMChunkAssembler()
+                    var totalPCMBytes = 0
+                    // usageMetadata は累積値で届くため最後のものを採用する
+                    var lastUsage: GeminiTTSSSE.UsageMetadata?
                     for try await line in bytes.lines {
-                        if let pcm = try GeminiTTSSSE.parse(line: line),
-                           let chunk = assembler.append(contentsOf: pcm) {
-                            continuation.yield(chunk)
+                        guard let parsed = try GeminiTTSSSE.parse(line: line) else { continue }
+                        if let usage = parsed.usage {
+                            lastUsage = usage
+                        }
+                        if let pcm = parsed.pcm {
+                            totalPCMBytes += pcm.count
+                            if let chunk = assembler.append(contentsOf: pcm) {
+                                continuation.yield(.pcm(chunk))
+                            }
                         }
                     }
                     if let rest = assembler.flush() {
-                        continuation.yield(rest)
+                        continuation.yield(.pcm(rest))
+                    }
+                    if totalPCMBytes > 0 || lastUsage != nil {
+                        continuation.yield(.usage(TTSUsage(
+                            inputTokens: lastUsage?.promptTokenCount,
+                            outputTokens: lastUsage?.audioOutputTokens,
+                            // 24kHz PCM16 mono = 48,000 bytes/秒
+                            audioSeconds: Double(totalPCMBytes) / 48_000)))
                     }
                     continuation.finish()
                 } catch {
@@ -111,11 +127,32 @@ struct GeminiTTSClient: SentenceTTSClient {
     }
 }
 
-/// streamGenerateContent の SSE 1 行から PCM チャンクを取り出す。
+/// streamGenerateContent の SSE 1 行から PCM チャンクと usageMetadata を取り出す。
 enum GeminiTTSSSE {
-    /// `data: {...}` 以外の行（空行等）と音声を含まないチャンクは nil を返す。
+    struct Parsed: Equatable {
+        var pcm: Data?
+        var usage: UsageMetadata?
+    }
+
+    struct UsageMetadata: Decodable, Equatable {
+        let promptTokenCount: Int?
+        let candidatesTokenCount: Int?
+        let totalTokenCount: Int?
+
+        /// 音声出力トークン。TTS の candidates は音声なので candidatesTokenCount を使い、
+        /// 無ければ total - prompt で補う
+        var audioOutputTokens: Int? {
+            if let candidatesTokenCount { return candidatesTokenCount }
+            if let totalTokenCount, let promptTokenCount {
+                return max(0, totalTokenCount - promptTokenCount)
+            }
+            return nil
+        }
+    }
+
+    /// `data: {...}` 以外の行（空行等）と、音声も usage も含まないチャンクは nil を返す。
     /// エラーイベントは throw する。
-    static func parse(line: String) throws -> Data? {
+    static func parse(line: String) throws -> Parsed? {
         guard line.hasPrefix("data:") else { return nil }
         let json = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
         guard !json.isEmpty, let data = json.data(using: .utf8) else { return nil }
@@ -133,11 +170,13 @@ enum GeminiTTSSSE {
                 }
             }
         }
-        return pcm.isEmpty ? nil : pcm
+        let parsed = Parsed(pcm: pcm.isEmpty ? nil : pcm, usage: payload.usageMetadata)
+        return (parsed.pcm == nil && parsed.usage == nil) ? nil : parsed
     }
 
     private struct Payload: Decodable {
         let candidates: [Candidate]?
+        let usageMetadata: UsageMetadata?
         let error: APIError?
 
         struct Candidate: Decodable {

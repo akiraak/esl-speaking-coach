@@ -130,6 +130,18 @@ final class TurnBasedVoiceSession: VoiceSession {
         speaker.onTurnFinished = { [weak self] in self?.handleTurnFinished() }
         speaker.onUtteranceAudioStarted = { [weak self] id in self?.handleUtteranceAudioStarted(id) }
         speaker.onError = { [weak self] message in self?.eventContinuation.yield(.info(message)) }
+        let ttsProvider: AIUsageEvent.Provider =
+            configuration.ttsProvider == .gemini ? .gemini : .openai
+        let ttsModel = speaker.modelDescription
+        speaker.onUsage = { [weak self] usage in
+            self?.eventContinuation.yield(.apiUsage(AIUsageEvent(
+                provider: ttsProvider,
+                model: ttsModel,
+                kind: .textToSpeech,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                audioSeconds: usage.audioSeconds)))
+        }
     }
 
     // MARK: - VoiceSession
@@ -387,6 +399,16 @@ final class TurnBasedVoiceSession: VoiceSession {
             }
             commitPendingTurnIfReady()
 
+        case .segmentUsage(let usage):
+            eventContinuation.yield(.apiUsage(AIUsageEvent(
+                provider: .openai,
+                model: configuration.transcription.model,
+                kind: .speechToText,
+                inputTokens: usage.textInputTokens,
+                outputTokens: usage.outputTokens,
+                audioInputTokens: usage.audioInputTokens,
+                audioSeconds: usage.audioSeconds)))
+
         case .transcriptFailed(let message):
             pendingSegments = max(0, pendingSegments - 1)
             eventContinuation.yield(.info("認識に失敗したセグメントがあります: \(message)"))
@@ -467,6 +489,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         claudeTask = Task { [weak self] in
             guard let self else { return }
             var chunker = ScriptStreamChunker()
+            var turnUsage = ClaudeTokenUsage()
             self.metrics.requestStartedAt = Date()
 
             do {
@@ -477,6 +500,8 @@ final class TurnBasedVoiceSession: VoiceSession {
                             self.metrics.firstDeltaAt = Date()
                         }
                         self.handleScriptSentences(chunker.consume(delta))
+                    case .usageUpdated(let usage):
+                        turnUsage.merge(usage)
                     case .messageStopped(let stopReason):
                         if let stopReason, stopReason != "end_turn" {
                             self.eventContinuation.yield(.info("stop_reason: \(stopReason)"))
@@ -487,16 +512,32 @@ final class TurnBasedVoiceSession: VoiceSession {
                 if chunker.endDetected {
                     self.scriptEndDetected = true
                 }
+                self.emitClaudeTurnUsage(turnUsage)
                 self.claudeTask = nil
                 self.speaker.endStream()
             } catch is CancellationError {
                 // barge-in / suspend 側で読み上げ済み発話まで履歴確定済み
             } catch {
                 if Task.isCancelled { return }
+                // 途中失敗でも受信済みの usage は記録する（課金は発生している）
+                self.emitClaudeTurnUsage(turnUsage)
                 self.claudeTask = nil
                 self.handleClaudeTurnError(error, attempt: attempt)
             }
         }
+    }
+
+    /// 会話ターン 1 回分の Claude 利用量を通知する（料金記録用）。
+    private func emitClaudeTurnUsage(_ usage: ClaudeTokenUsage) {
+        guard !usage.isEmpty else { return }
+        eventContinuation.yield(.apiUsage(AIUsageEvent(
+            provider: .anthropic,
+            model: client.parameters.model,
+            kind: .conversationTurn,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadInputTokens,
+            cacheWriteTokens: usage.cacheCreationInputTokens)))
     }
 
     /// 台本から切り出された文を発話（吹き出し）へ積み、TTS キューへ流す。

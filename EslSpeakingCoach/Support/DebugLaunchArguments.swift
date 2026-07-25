@@ -52,5 +52,17 @@ enum DebugLaunchArguments {
         guard let index = args.firstIndex(of: "-tts-provider"), index + 1 < args.count else { return nil }
         return TTSProvider(rawValue: args[index + 1])
     }
+
+    /// 起動時に管理画面を開く（シミュレータでの表示確認用）。
+    /// 例: -open-admin / -open-admin usage（料金タブで開く）
+    static var shouldOpenAdmin: Bool {
+        ProcessInfo.processInfo.arguments.contains("-open-admin")
+    }
+
+    static var adminOpensOnUsageTab: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-open-admin"), index + 1 < args.count else { return false }
+        return args[index + 1] == "usage"
+    }
 }
 #endif

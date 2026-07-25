@@ -4,23 +4,45 @@ import XCTest
 final class ClaudeSSEParserTests: XCTestCase {
     func testTextDelta() throws {
         let line = #"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#
-        XCTAssertEqual(try ClaudeSSE.parse(line: line), .textDelta("Hello"))
+        XCTAssertEqual(try ClaudeSSE.parse(line: line), [.textDelta("Hello")])
     }
 
     func testThinkingDeltaIsIgnored() throws {
         let line = #"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#
-        XCTAssertNil(try ClaudeSSE.parse(line: line))
+        XCTAssertEqual(try ClaudeSSE.parse(line: line), [])
     }
 
-    func testMessageDeltaCarriesStopReason() throws {
+    /// message_delta は usage → stop の順で 2 イベントになる（usage を先に積んでから stop を処理する）。
+    func testMessageDeltaCarriesUsageAndStopReason() throws {
         let line = #"data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":12}}"#
-        XCTAssertEqual(try ClaudeSSE.parse(line: line), .messageStopped(stopReason: "end_turn"))
+        XCTAssertEqual(try ClaudeSSE.parse(line: line), [
+            .usageUpdated(ClaudeTokenUsage(outputTokens: 12)),
+            .messageStopped(stopReason: "end_turn"),
+        ])
+    }
+
+    /// 入力側の usage（input_tokens / cache_*）は message_start に載る。
+    func testMessageStartCarriesInputUsage() throws {
+        let line = #"data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1500,"output_tokens":1,"cache_read_input_tokens":2000,"cache_creation_input_tokens":0}}}"#
+        XCTAssertEqual(try ClaudeSSE.parse(line: line), [
+            .usageUpdated(ClaudeTokenUsage(
+                inputTokens: 1500, outputTokens: 1,
+                cacheReadInputTokens: 2000, cacheCreationInputTokens: 0)),
+        ])
+    }
+
+    func testTokenUsageMergeKeepsExistingWhenNil() {
+        var usage = ClaudeTokenUsage(inputTokens: 100, cacheReadInputTokens: 2000)
+        usage.merge(ClaudeTokenUsage(outputTokens: 50))
+        XCTAssertEqual(usage.inputTokens, 100)
+        XCTAssertEqual(usage.outputTokens, 50)
+        XCTAssertEqual(usage.cacheReadInputTokens, 2000)
     }
 
     func testNonDataLinesAreIgnored() throws {
-        XCTAssertNil(try ClaudeSSE.parse(line: "event: content_block_delta"))
-        XCTAssertNil(try ClaudeSSE.parse(line: ""))
-        XCTAssertNil(try ClaudeSSE.parse(line: #"data: {"type":"ping"}"#))
+        XCTAssertEqual(try ClaudeSSE.parse(line: "event: content_block_delta"), [])
+        XCTAssertEqual(try ClaudeSSE.parse(line: ""), [])
+        XCTAssertEqual(try ClaudeSSE.parse(line: #"data: {"type":"ping"}"#), [])
     }
 
     func testErrorEventThrows() {

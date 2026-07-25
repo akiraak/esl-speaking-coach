@@ -15,7 +15,7 @@
 | 1 | 発話の文字起こし（STT） | OpenAI Realtime transcription / `gpt-4o-transcribe` | **ユーザーが実際に話した音声の長さ**（VAD が切り出した発話セグメントのみ。無音・待機中は課金されない） | 会話セッション中、ユーザーが話すたび | 実装済み |
 | 2 | 会話ターン生成（LLM） | Claude Messages / `claude-sonnet-5` | 入力トークン + 出力トークン（**毎ターン履歴全体を再送**） | ユーザー発話が確定するたび 1 回 | 実装済み |
 | 3 | 読み上げ（TTS） | Gemini `gemini-3.1-flash-tts-preview` | テキスト入力トークン + **音声出力トークン（25 トークン/秒）** | AI 発話の **1 文ごと**に 1 リクエスト | 実装済み |
-| 4 | トピック候補生成 | Claude Messages / `claude-sonnet-5` | 入力 + 出力トークン(少量) | 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時 | 未実装（仕様確定） |
+| 4 | トピック候補生成 | Claude Messages / `claude-sonnet-5` | 入力 + 出力トークン(少量) | 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時 | 実装済み |
 | 5 | セッション後フィードバック生成 | Claude Messages / `claude-opus-5` | 入力（会話全文）+ 出力トークン（effort high・max_tokens 16000） | セッション正常終了ごとに 1 回（学習者の発話 2 未満はスキップ。失敗時のリトライも課金） | 実装済み |
 
 ## 単価表（2026-07-25 時点）
@@ -59,8 +59,9 @@
 - **barge-in 時の注意**: 先読みで取得済み・取得中だった未再生の文も生成された分は課金される（`CloudSentenceSpeaker` は再生をキャンセルするだけで、生成済み音声の費用は返らない）
 - モデルは調整中。2.5 Flash TTS に落とすと音声出力が半額（$10 / 1M ≈ $0.015/分）
 
-### 4. トピック候補生成（未実装）
+### 4. トピック候補生成（実装済み）
 
+- 実装: `Claude/TopicSuggestionClient.swift`、呼び出し元 `Conversation/ChatRoomStore.swift`
 - 仕様: [conversation-design.md](conversation-design.md) の「トピック生成」。`claude-sonnet-5` / 非ストリーミング / effort low / structured outputs
 - 呼び出しタイミングは 3 つ: 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時
 - 入力（固定 system prompt + 直近トピック一覧）も出力（タイトル + フック × 3 件）も数百トークン規模で、**1 回 $0.01 未満**。連打されても実害が出にくいが、🔄 は課金操作である点は管理画面で見えるようにする
@@ -96,8 +97,22 @@
 - 毎日 1 セッションで **月 $15 前後**が目安
 - コストの並びは概ね **TTS ＞ 会話 LLM ≧ フィードバック ＞ STT ＞ トピック生成**
 
+## 利用量の記録（2026-07-25 実装）
+
+管理画面「AI 利用料金」のため、5 経路すべてで API レスポンスの usage を記録している
+（実装プラン: `docs/plans/archive/history-persistence-and-admin.md`）。
+
+- 取得元: Claude は SSE の `message_start` / `message_delta`（非ストリーミングは応答の `usage`）、
+  OpenAI STT は transcription completed イベントの usage（tokens 型 / duration 型両対応）、
+  Gemini TTS は SSE の `usageMetadata`（+ 受信 PCM バイト数からの秒数）
+- 記録: `Persistence/UsageStore.swift`（`APIUsageRecord`）。生の usage と、**記録時に** `Usage/AIPricing.swift`
+  の単価表（この文書の単価表と対応。sonnet-5 の導入価格切替も考慮）で計算した推定額を保存する
+- 記録は best effort: barge-in でキャンセルしたターンの usage は取れないことがあり、推定額は実請求より下振れし得る
+
 ## コスト管理上の注意（今後の実装に効く順）
 
 1. **TTS が最大要因**。モデル調整（TODO）で 2.5 Flash TTS と聞き比べる際は「半額」という材料も含めて判断する
-2. 長セッションでは履歴再送の入力トークンが 2 乗で効く。管理画面で「AI 利用料金」を出すなら、各 API レスポンスの usage（Claude は `usage.input_tokens` / `output_tokens` / `cache_read_input_tokens`、Gemini は `usageMetadata`、OpenAI は transcription イベントの usage）をターンごとに記録するのが正確
+2. 長セッションでは履歴再送の入力トークンが 2 乗で効く。会話が長くなってコストが気になったら、
+   直近ターン末尾への `cache_control` 追加（履歴分も 0.1 倍で読める）が次の最適化候補
 3. barge-in で破棄した TTS・キャンセルした Claude 生成分も課金される（仕様上許容。頻発するならセンテンス先読み数の制限を検討）
+4. 単価が改定されたら `Usage/AIPricing.swift` とこの文書の単価表を併せて更新する（保存済みの推定額は書き換えない）

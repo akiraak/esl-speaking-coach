@@ -53,7 +53,8 @@ struct OpenAITTSClient: SentenceTTSClient {
     }
 
     /// 1 文ぶんの音声を PCM16 24kHz mono LE のチャンク列としてストリーミング取得する。
-    func streamPCM(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<Data, Error> {
+    /// usage フィールドが無い API のため、利用量は受信バイト数からの音声秒数のみ通知する。
+    func streamAudio(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<TTSStreamChunk, Error> {
         let configuration = configuration
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -79,13 +80,20 @@ struct OpenAITTSClient: SentenceTTSClient {
                     }
 
                     var assembler = PCMChunkAssembler()
+                    var totalPCMBytes = 0
                     for try await byte in bytes {
+                        totalPCMBytes += 1
                         if let chunk = assembler.append(byte) {
-                            continuation.yield(chunk)
+                            continuation.yield(.pcm(chunk))
                         }
                     }
                     if let rest = assembler.flush() {
-                        continuation.yield(rest)
+                        continuation.yield(.pcm(rest))
+                    }
+                    if totalPCMBytes > 0 {
+                        // 24kHz PCM16 mono = 48,000 bytes/秒
+                        continuation.yield(.usage(TTSUsage(
+                            audioSeconds: Double(totalPCMBytes) / 48_000)))
                     }
                     continuation.finish()
                 } catch {

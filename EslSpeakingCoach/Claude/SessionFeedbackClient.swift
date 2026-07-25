@@ -1,8 +1,9 @@
 import Foundation
 
 /// セッション後フィードバックの内容（structured outputs で固定するスキーマに対応）。
-struct SessionFeedback: Sendable, Equatable, Decodable {
-    struct Correction: Sendable, Equatable, Decodable {
+/// Encodable も付けるのは SwiftData への保存（ChatSessionRecord.feedbackJSON）のため。
+struct SessionFeedback: Sendable, Equatable, Codable {
+    struct Correction: Sendable, Equatable, Codable {
         /// 学習者の発話の該当部分
         let original: String
         /// 自然な言い方
@@ -11,7 +12,7 @@ struct SessionFeedback: Sendable, Equatable, Decodable {
         let note: String
     }
 
-    struct TryPhrase: Sendable, Equatable, Decodable {
+    struct TryPhrase: Sendable, Equatable, Codable {
         /// 次に使ってみたい英語表現
         let phrase: String
         /// 日本語の意味
@@ -97,9 +98,10 @@ struct SessionFeedbackClient: Sendable {
     }()
 
     /// フィードバックを生成する。transcript は話者ラベル付きの会話全文。
+    /// usage は SSE の message_start / message_delta から積み上げた利用量（取れなければ nil）。
     func generateFeedback(
         apiKey: String, topic: String, transcript: String
-    ) async throws -> SessionFeedback {
+    ) async throws -> (feedback: SessionFeedback, usage: AIUsageEvent?) {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
@@ -122,16 +124,29 @@ struct SessionFeedbackClient: Sendable {
 
         var text = ""
         var stopReason: String?
+        var tokenUsage = ClaudeTokenUsage()
         for try await line in bytes.lines {
-            guard let event = try ClaudeSSE.parse(line: line) else { continue }
-            switch event {
-            case .textDelta(let delta):
-                text += delta
-            case .messageStopped(let reason):
-                stopReason = reason
+            for event in try ClaudeSSE.parse(line: line) {
+                switch event {
+                case .textDelta(let delta):
+                    text += delta
+                case .messageStopped(let reason):
+                    stopReason = reason
+                case .usageUpdated(let usage):
+                    tokenUsage.merge(usage)
+                }
             }
         }
-        return try Self.parseResult(text: text, stopReason: stopReason)
+        let feedback = try Self.parseResult(text: text, stopReason: stopReason)
+        let usage: AIUsageEvent? = tokenUsage.isEmpty ? nil : AIUsageEvent(
+            provider: .anthropic,
+            model: "claude-opus-5",
+            kind: .sessionFeedback,
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            cacheReadTokens: tokenUsage.cacheReadInputTokens,
+            cacheWriteTokens: tokenUsage.cacheCreationInputTokens)
+        return (feedback, usage)
     }
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。

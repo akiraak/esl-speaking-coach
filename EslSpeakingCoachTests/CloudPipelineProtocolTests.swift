@@ -70,11 +70,33 @@ final class CloudPipelineProtocolTests: XCTestCase {
         XCTAssertEqual(
             OpenAITranscriptionServerEvent.parse(
                 #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"Hello"}"#),
-            .userTranscriptCompleted("Hello"))
+            .userTranscriptCompleted("Hello", usage: nil))
         XCTAssertEqual(
             OpenAITranscriptionServerEvent.parse(
                 #"{"type":"conversation.item.input_audio_transcription.failed","error":{"type":"transcription_error","message":"audio too noisy"}}"#),
             .userTranscriptFailed("audio too noisy"))
+    }
+
+    /// gpt-4o-transcribe の completed はトークン型 usage を持つ（料金記録用にパースする）。
+    func testTranscriptionParseTokenUsage() {
+        let event = OpenAITranscriptionServerEvent.parse(#"""
+            {"type":"conversation.item.input_audio_transcription.completed","transcript":"Hello",
+             "usage":{"type":"tokens","total_tokens":25,"input_tokens":20,
+                      "input_token_details":{"text_tokens":2,"audio_tokens":18},"output_tokens":5}}
+            """#)
+        XCTAssertEqual(event, .userTranscriptCompleted(
+            "Hello",
+            usage: STTSegmentUsage(audioInputTokens: 18, textInputTokens: 2, outputTokens: 5)))
+    }
+
+    /// whisper 系は秒数型 usage で届く。
+    func testTranscriptionParseDurationUsage() {
+        let event = OpenAITranscriptionServerEvent.parse(#"""
+            {"type":"conversation.item.input_audio_transcription.completed","transcript":"Hi",
+             "usage":{"type":"duration","seconds":3.5}}
+            """#)
+        XCTAssertEqual(event, .userTranscriptCompleted(
+            "Hi", usage: STTSegmentUsage(audioSeconds: 3.5)))
     }
 
     func testTranscriptionParseError() {
@@ -152,10 +174,23 @@ final class CloudPipelineProtocolTests: XCTestCase {
     func testGeminiTTSSSEParseExtractsPCM() throws {
         let pcm = Data([0x01, 0x02, 0x03, 0x04])
         let line = #"data: {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "audio/l16; rate=24000; channels=1","data": "\#(pcm.base64EncodedString())"}}]}}]}"#
-        XCTAssertEqual(try GeminiTTSSSE.parse(line: line), pcm)
-        // 音声を含まない行・SSE 以外の行は nil
+        XCTAssertEqual(try GeminiTTSSSE.parse(line: line), GeminiTTSSSE.Parsed(pcm: pcm))
+        // 音声も usage も含まない行・SSE 以外の行は nil
         XCTAssertNil(try GeminiTTSSSE.parse(line: #"data: {"candidates": [{"content": {"parts": [{"text": "x"}]}}]}"#))
         XCTAssertNil(try GeminiTTSSSE.parse(line: ""))
+    }
+
+    /// usageMetadata を含むチャンクからトークン数を取り出す（料金記録用）。
+    /// candidatesTokenCount（TTS では音声出力）を採用し、無ければ total - prompt で補う。
+    func testGeminiTTSSSEParseExtractsUsageMetadata() throws {
+        let line = #"data: {"usageMetadata": {"promptTokenCount": 30, "candidatesTokenCount": 150, "totalTokenCount": 180}}"#
+        let parsed = try XCTUnwrap(GeminiTTSSSE.parse(line: line))
+        XCTAssertNil(parsed.pcm)
+        XCTAssertEqual(parsed.usage?.promptTokenCount, 30)
+        XCTAssertEqual(parsed.usage?.audioOutputTokens, 150)
+
+        let withoutCandidates = #"data: {"usageMetadata": {"promptTokenCount": 30, "totalTokenCount": 180}}"#
+        XCTAssertEqual(try GeminiTTSSSE.parse(line: withoutCandidates)?.usage?.audioOutputTokens, 150)
     }
 
     func testGeminiTTSSSEParseThrowsOnError() {

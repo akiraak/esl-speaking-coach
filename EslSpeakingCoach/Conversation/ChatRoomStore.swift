@@ -1,11 +1,13 @@
 import Foundation
 import Observation
+import SwiftData
 import UIKit
 
 /// 常設グループトークルームの状態（screen-layout.md）。
 /// タイムライン・トピックカード・アクティブな会話セッション・入力モードを管理する。
 /// トピックごとの会話セッション（VoiceSession）を開始 / 終了しながらタイムラインへ積む。
-/// 永続化（SwiftData）は別タスクで、現状はメモリ内のみ（アプリ再起動でタイムラインは消える）。
+/// 会話履歴（speaker 付きメッセージ + フィードバック）と AI 利用量は SwiftData に永続化し、
+/// 起動時に直近セッションをタイムラインへ復元する。
 @MainActor
 @Observable
 final class ChatRoomStore {
@@ -34,6 +36,8 @@ final class ChatRoomStore {
 
     struct FeedbackCard: Identifiable {
         let id = UUID()
+        /// 保存先セッション（復元カードでは生成済みのため保存には使わない）
+        let sessionID: UUID?
         let topicTitle: String
         /// リトライ用に生成入力（話者ラベル付き会話全文）のスナップショットを保持する
         let transcript: String
@@ -86,18 +90,27 @@ final class ChatRoomStore {
     /// 音声モードの一時停止（⏸）。聞き取りだけを止める
     private(set) var isVoicePaused = false
 
+    /// 会話履歴の永続化（管理画面からも参照する）。
+    let historyStore: ChatHistoryStore
+    /// AI 利用量の記録（管理画面からも参照する）。
+    let usageStore: UsageStore
+
     private var session: (any VoiceSession)?
     private var eventTask: Task<Void, Never>?
     /// 手動終了 / goodbye による正常終了か（events 終了時の分岐用）
     private var isEndingSession = false
     private var didAppear = false
-    /// 重複回避用の直近トピックタイトル（永続化前は起動内メモリ。直近 20 件）
+    /// 永続化中のセッション ID（正常終了まで保持。エラー再開でも引き継ぐ）
+    private var activeSessionID: UUID?
+    /// 重複回避用の直近トピックタイトル（起動時に永続化済みセッションから復元。直近 20 件）
     private var recentTopicTitles: [String] = []
     #if DEBUG
     private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
     #endif
 
-    init() {
+    init(container: ModelContainer = AppModelContainer.shared) {
+        historyStore = ChatHistoryStore(container: container)
+        usageStore = UsageStore(container: container)
         let stored = UserDefaults.standard.string(forKey: Self.inputModeKey)
         inputMode = stored.flatMap(InputMode.init(rawValue:)) ?? .voice
     }
@@ -111,14 +124,42 @@ final class ChatRoomStore {
     func onAppear() {
         guard !didAppear else { return }
         didAppear = true
-        if timeline.isEmpty {
-            postTopicCard()
-        }
+        restoreTimeline()
+        postTopicCard()
         #if DEBUG
         if DebugLaunchArguments.shouldStartConversation {
             startSession(topic: Self.freeTalkCandidate.title, fromCard: nil)
         }
         #endif
+    }
+
+    /// 起動時に直近セッションをタイムラインへ復元する（全履歴は管理画面で閲覧する）。
+    private func restoreTimeline() {
+        historyStore.closeUnfinishedSessions()
+        recentTopicTitles = historyStore.recentTopicTitles(limit: 20)
+        for record in historyStore.recentSessions(limit: 10) {
+            appendItem(.sessionDivider(
+                id: UUID(),
+                text: "\(Self.dividerDateText(for: record.startedAt)) \(record.topicTitle)"))
+            let messages = record.messages.sorted { $0.orderIndex < $1.orderIndex }
+            for message in messages {
+                guard let speaker = message.speaker else { continue }
+                if let character = speaker.character {
+                    appendItem(.aiMessage(AIMessage(
+                        id: message.id, speaker: character, text: message.text)))
+                } else {
+                    appendItem(.userMessage(id: message.id, text: message.text))
+                }
+            }
+            if let data = record.feedbackJSON,
+               let feedback = try? JSONDecoder().decode(SessionFeedback.self, from: data) {
+                var card = FeedbackCard(
+                    sessionID: record.id, topicTitle: record.topicTitle, transcript: "")
+                card.isLoading = false
+                card.feedback = feedback
+                appendItem(.feedbackCard(card))
+            }
+        }
     }
 
     // MARK: - トピックカード
@@ -152,8 +193,11 @@ final class ChatRoomStore {
             return
         }
         do {
-            let topics = try await TopicSuggestionClient().suggestTopics(
+            let (topics, usage) = try await TopicSuggestionClient().suggestTopics(
                 apiKey: apiKey, recentTitles: recentTopicTitles + extraTitles)
+            if let usage {
+                usageStore.record(usage, sessionID: nil)
+            }
             updateCard(cardID) {
                 $0.isLoading = false
                 $0.candidates = topics
@@ -200,7 +244,10 @@ final class ChatRoomStore {
         if recentTopicTitles.count > 20 {
             recentTopicTitles.removeFirst(recentTopicTitles.count - 20)
         }
-        appendItem(.sessionDivider(id: UUID(), text: "\(Self.dividerDateText()) \(trimmed)"))
+        appendItem(.sessionDivider(id: UUID(), text: "\(Self.dividerDateText(for: Date())) \(trimmed)"))
+        let sessionID = UUID()
+        activeSessionID = sessionID
+        historyStore.beginSession(id: sessionID, topicTitle: trimmed)
         launchSession(initialTopic: trimmed, initialHistory: [])
     }
 
@@ -215,6 +262,9 @@ final class ChatRoomStore {
     func resumeSessionAfterFailure() {
         guard session == nil, canResumeAfterFailure, let topic = activeTopicTitle else { return }
         canResumeAfterFailure = false
+        if let activeSessionID {
+            historyStore.resumeSession(id: activeSessionID)
+        }
         launchSession(initialTopic: nil, initialHistory: rebuildHistory(topic: topic))
     }
 
@@ -264,15 +314,19 @@ final class ChatRoomStore {
         speakingUtteranceID = nil
         if wasEnding {
             let endedTopic = activeTopicTitle
+            let endedSessionID = activeSessionID
             activeTopicTitle = nil
+            activeSessionID = nil
+            historyStore.endActiveSession()
             // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
             // フィードバックは生成中表示で即投稿し、完了を待たずに次のトピックを選べるようにする
             if let endedTopic {
-                postFeedbackCard(topic: endedTopic)
+                postFeedbackCard(topic: endedTopic, sessionID: endedSessionID)
             }
             postTopicCard()
         } else {
             // 致命的エラー。タイムラインは残っているので履歴を引き継いで再開できる
+            // （永続化セッションも開いたままにし、再開後の発話を追記する）
             canResumeAfterFailure = activeTopicTitle != nil
         }
     }
@@ -281,13 +335,13 @@ final class ChatRoomStore {
 
     /// セッション正常終了（手動 / goodbye）時に投稿する。
     /// 学習者の発話が 2 未満のセッションはスキップする（docs/specs/session-feedback.md）。
-    private func postFeedbackCard(topic: String) {
+    private func postFeedbackCard(topic: String, sessionID: UUID?) {
         let (transcript, learnerTurnCount) = sessionTranscript()
         guard learnerTurnCount >= 2 else {
             appendItem(.systemNotice(id: UUID(), text: "発話が少なかったためフィードバックは省略しました"))
             return
         }
-        let card = FeedbackCard(topicTitle: topic, transcript: transcript)
+        let card = FeedbackCard(sessionID: sessionID, topicTitle: topic, transcript: transcript)
         let cardID = card.id
         appendItem(.feedbackCard(card))
         Task { await fillFeedbackCard(cardID: cardID) }
@@ -313,8 +367,14 @@ final class ChatRoomStore {
             return
         }
         do {
-            let feedback = try await SessionFeedbackClient().generateFeedback(
+            let (feedback, usage) = try await SessionFeedbackClient().generateFeedback(
                 apiKey: apiKey, topic: card.topicTitle, transcript: card.transcript)
+            if let usage {
+                usageStore.record(usage, sessionID: card.sessionID)
+            }
+            if let sessionID = card.sessionID {
+                historyStore.saveFeedback(sessionID: sessionID, feedback: feedback)
+            }
             updateFeedbackCard(cardID) {
                 $0.isLoading = false
                 $0.feedback = feedback
@@ -443,9 +503,12 @@ final class ChatRoomStore {
             partialTranscript = text
         case .userTurnCommitted(let text):
             partialTranscript = ""
-            appendItem(.userMessage(id: UUID(), text: text))
+            let messageID = UUID()
+            appendItem(.userMessage(id: messageID, text: text))
+            historyStore.appendMessage(id: messageID, speaker: .user, text: text)
         case .assistantUtteranceBegan(let id, let speaker, let text):
             appendItem(.aiMessage(AIMessage(id: id, speaker: speaker, text: text)))
+            historyStore.appendMessage(id: id, speaker: MessageSpeaker(character: speaker), text: text)
             speakingUtteranceID = id
         case .assistantUtteranceUpdated(let id, let text):
             if let index = timeline.lastIndex(where: { $0.id == id }),
@@ -454,6 +517,9 @@ final class ChatRoomStore {
                 timeline[index] = .aiMessage(message)
                 timelineRevision += 1
             }
+            historyStore.updateMessageText(id: id, text: text)
+        case .apiUsage(let usage):
+            usageStore.record(usage, sessionID: activeSessionID)
         case .sessionEndDetected:
             // goodbye 自動終了。手動終了と同じ導線でセッションを閉じる
             isEndingSession = true
@@ -481,11 +547,11 @@ final class ChatRoomStore {
         (try? KeychainStore().read(account: account)) ?? nil
     }
 
-    private static func dividerDateText() -> String {
+    private static func dividerDateText(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "M/d"
-        return formatter.string(from: Date())
+        return formatter.string(from: date)
     }
 }
 

@@ -166,8 +166,11 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
             partialTranscript += delta
             eventContinuation.yield(.partialTranscript(partialTranscript))
 
-        case .userTranscriptCompleted(let transcript):
+        case .userTranscriptCompleted(let transcript, let usage):
             partialTranscript = ""
+            if let usage {
+                eventContinuation.yield(.segmentUsage(usage))
+            }
             eventContinuation.yield(.finalTranscript(transcript))
 
         case .userTranscriptFailed(let message):
