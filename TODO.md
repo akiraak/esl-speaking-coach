@@ -4,8 +4,9 @@
 
 - [ ] 音声レイヤの技術検証と方式決定 [plan](docs/plans/voice-layer-spike.md)
   - [ ] Phase 2: 案 C（Gemini Live、現行モデル Gemini 3.1 Flash Live）のプロトタイプと実測
-    - [ ] Gemini API キーの取得と 3 キー管理対応（Keychain の `gemini-api-key` アカウント・`.secrets/gemini-api-key` シード）
-    - [ ] Live API の WebSocket 自前実装（`VoiceSession` 実装として追加。公式 Swift SDK なし）
+    - [x] Gemini API キーの取得（AI Studio で発行して `.secrets/gemini-api-key` に置く。アプリ側の 3 キー管理対応は実装済み）
+    - [x] Live API の WebSocket 自前実装（`VoiceSession` 実装として追加。公式 Swift SDK なし）
+    - [x] 実キーでのシミュレータ E2E 確認（テキスト入力 → 音声応答）
     - [ ] 実機実測（レイテンシ中央値・barge-in・日本語アクセント英語の認識・transcript 品質）
   - [ ] Phase 3: 案 A2（クラウド STT + Claude + クラウド TTS）のプロトタイプと実測。STT / TTS は代替モデルも含めて比較する
     - [ ] STT: `gpt-4o-transcribe` の WebSocket ストリーミング実装（`UtteranceTranscriber` を置換。Phase 1 の OpenAI キーを共用）

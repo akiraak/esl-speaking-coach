@@ -68,6 +68,10 @@ final class ConversationViewModel {
             newSession = RealtimeVoiceSession(apiKeyProvider: {
                 (try? keychain.read(account: KeychainStore.openAIAPIKeyAccount)) ?? nil
             })
+        case .geminiLive:
+            newSession = GeminiLiveVoiceSession(apiKeyProvider: {
+                (try? keychain.read(account: KeychainStore.geminiAPIKeyAccount)) ?? nil
+            })
         }
         session = newSession
         eventTask = Task { [weak self] in

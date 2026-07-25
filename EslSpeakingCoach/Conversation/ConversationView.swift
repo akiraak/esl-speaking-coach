@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 音声レイヤ検証の会話画面。エンジン（ターン制+Claude / OpenAI Realtime）を切り替えて比較する。
+/// 音声レイヤ検証の会話画面。エンジン（ターン制+Claude / OpenAI Realtime / Gemini Live）を切り替えて比較する。
 /// 状態・ライブ文字起こし・会話ログ・ターンごとのレイテンシ実測値を表示する。
 struct ConversationView: View {
     @State private var model = ConversationViewModel()

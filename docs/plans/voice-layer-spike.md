@@ -149,6 +149,26 @@ xcrun simctl launch booted com.akiraak.EslSpeakingCoach \
 2. **実装**: Live API（WebSocket）を自前実装し、`VoiceSession` の実装として追加する（公式 Swift SDK なし。マイクは `MicrophoneCapture` を流用）。VAD・発話終端・barge-in はサーバ側を使う
 3. **実測**: 同じ評価軸で実機計測。speech-to-speech 同士となる案 B との直接比較（レイテンシ・会話の質・コスト）と、評価フェーズで Claude に渡す transcript の品質を重点的に見る
 
+#### Phase 2 実装記録（2026-07-24: 実装完了。実キー E2E・実機実測は Gemini API キー取得待ち）
+
+**接続方式**: 案 B と同じく WebSocket 自前実装（追加依存ゼロ）。エンドポイントは `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=…`（認証は公式ドキュメントどおり URL クエリの key。2026-07 の公式ドキュメントでイベント形式を確認して実装）。
+
+| ファイル | 役割 |
+| --- | --- |
+| `Voice/GeminiLive/GeminiLiveProtocol.swift` | 設定（モデル・voice）+ クライアントメッセージ JSON 生成 / サーバメッセージのパース。serverContent は複数サブイベントが同居するため parse は配列で返す（transcript → 音声 → interrupted → turnComplete の安全順）。ユニットテストで形式を固定 |
+| `Voice/GeminiLive/GeminiLiveVoiceSession.swift` | `VoiceSession` 実装。setup → setupComplete → listening。barge-in は `serverContent.interrupted` 受信で再生停止（サーバ側が生成を打ち切るためクライアントから cancel を送る必要なし）。音声再生は `RealtimeAudioPlayer` を共用（出力 24kHz PCM16 は案 B と同一形式） |
+
+- 設定: `gemini-3.1-flash-live-preview` / voice `Aoede` / `inputAudioTranscription`・`outputAudioTranscription` とも有効 / `CoachSystemPrompt` を systemInstruction へ
+- マイク: `MicrophoneCapture` + `AudioTapRouter` の生 PCM16 送出パスを共用。送信フォーマットだけ 16kHz（案 B は 24kHz）。VP 無音問題のウォッチドッグも流用
+- **OpenAI Realtime との構造差と実装への影響**（案 B との比較時に注意）:
+  - 発話終端イベント（`speech_stopped` 相当）が**存在しない** → レイテンシ計測の起点はマイク RMS（しきい値 0.02）から推定した「最後に声があった時刻」。**案 C の体感値は推定値**（案 B はサーバ VAD の判定時刻起点なので、同条件比較には注意書きを添えて記録する）
+  - 応答開始イベント（`response.created` 相当）も無い → 最初の音声 / transcript デルタで応答開始とみなし、その時点で溜まっていた user transcript を履歴に確定する（表示順が前後し得るのは案 B と同じ）
+- キー管理: `KeychainStore` に `gemini-api-key` アカウント、`DebugLaunchArguments` に `-seed-gemini-key` / `-delete-gemini-key`、`run-simulator.sh` / `run-install-iphone.sh` に `.secrets/gemini-api-key` シードを追加（3 キー体制）
+- UI: エンジン切替 Picker に「Gemini Live」を追加。起動引数は `-voice-engine gemini`
+- **シミュレータ E2E 確認済み**（2026-07-25、実キー・テキスト入力 → 音声応答）: 接続 → setupComplete → 応答音声（Aoede）の再生 → outputTranscription の表示 → listening 復帰まで動作。英語のみ応答（CoachSystemPrompt の systemInstruction）が効いていることを確認。参考値: 体感 646ms・TTFT（最初の音声デルタ）638ms（案 B の同条件参考値 571ms / 556ms と同水準。※テキスト入力起点のため実機で要実測）
+- 異常系も確認済み: 不正キーではサーバの `close=1007 "API key not valid"` をエラー表示して停止状態へ復帰
+- **実機未確認**: 音声入力起点のレイテンシ・barge-in（interrupted）・日本語アクセント英語の認識・transcript 品質は実機実測で確認する（Phase 4 の比較時）
+
 ### Phase 3: 案 A2（クラウド STT / TTS + Claude）のプロトタイプと実測
 
 STT / TTS は第一候補（OpenAI）で組んで動かした後、代替モデルを同条件で差し替えて実測比較する。

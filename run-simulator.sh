@@ -22,6 +22,7 @@ add_seed_arg() {
 }
 add_seed_arg .secrets/anthropic-api-key -seed-anthropic-key
 add_seed_arg .secrets/openai-api-key -seed-openai-key
+add_seed_arg .secrets/gemini-api-key -seed-gemini-key
 
 echo "==> Xcode プロジェクトを生成..."
 xcodegen generate

@@ -7,6 +7,7 @@ enum DebugLaunchArguments {
     private static let keyAccounts: [(seedFlag: String, deleteFlag: String, account: String)] = [
         ("-seed-anthropic-key", "-delete-anthropic-key", KeychainStore.anthropicAPIKeyAccount),
         ("-seed-openai-key", "-delete-openai-key", KeychainStore.openAIAPIKeyAccount),
+        ("-seed-gemini-key", "-delete-gemini-key", KeychainStore.geminiAPIKeyAccount),
     ]
 
     static func apply() {

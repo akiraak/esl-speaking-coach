@@ -71,6 +71,8 @@ enum VoiceEngine: String, CaseIterable, Identifiable, Sendable {
     case turnPipeline = "turn"
     /// 案 B: OpenAI Realtime speech-to-speech
     case openaiRealtime = "realtime"
+    /// 案 C: Gemini Live speech-to-speech
+    case geminiLive = "gemini"
 
     var id: String { rawValue }
 
@@ -78,6 +80,7 @@ enum VoiceEngine: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .turnPipeline: return "ターン制+Claude"
         case .openaiRealtime: return "OpenAI Realtime"
+        case .geminiLive: return "Gemini Live"
         }
     }
 }
