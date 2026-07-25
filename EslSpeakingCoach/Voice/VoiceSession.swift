@@ -4,7 +4,7 @@ import Foundation
 enum VoiceSessionState: String, Sendable {
     /// 未開始 / 停止済み
     case idle
-    /// 起動処理中（権限・STT モデル準備・マイク起動）
+    /// 起動処理中（権限・接続・マイク起動）
     case preparing
     /// ユーザーの発話を聞き取り中
     case listening
@@ -67,7 +67,7 @@ protocol VoiceSession: AnyObject {
 
 /// 検証中の音声レイヤ実装の選択肢（voice-layer-spike.md の比較対象）。
 enum VoiceEngine: String, CaseIterable, Identifiable, Sendable {
-    /// ターン制パイプライン + Claude（旧案 A → 案 A2）
+    /// 案 A2: ターン制パイプライン（クラウド STT + Claude + クラウド TTS）
     case turnPipeline = "turn"
     /// 案 B: OpenAI Realtime speech-to-speech
     case openaiRealtime = "realtime"

@@ -1,11 +1,23 @@
 # DONE
 
-- 2026-07-24 音声レイヤ検証 Phase 1: 案 B（OpenAI Realtime `gpt-realtime-2.1-mini`）のプロトタイプ実装と実機動作確認 [plan](docs/plans/voice-layer-spike.md)
+- 2026-07-25 音声レイヤの技術検証と方式決定: **ターン制+Claude（案 A2）+ Gemini TTS を採用** [plan](docs/plans/archive/voice-layer-spike.md)
+  - 3 方式（案 A2 / 案 B: OpenAI Realtime / 案 C: Gemini Live）の実機比較の結果、会話相手を Claude に保てる案 A2 で確定。モデル・voice の最終調整は実装フェーズで行う
+  - 未決事項「会話中の発音指摘」は「会話中は行わない（セッション後フィードバックで扱う）」で確定。予定していた 10 ターン中央値の詳細実測と Deepgram Flux / Cartesia Sonic の代替比較は方式決定により中止
+  - `CLAUDE.md` の技術スタック・音声レイヤの方針を確定版に更新し、アプリの既定構成（ターン制 / Gemini TTS）を決定に合わせた。プランは archive へ移動
+- 2026-07-25 音声レイヤ検証 Phase 3: 案 A2（クラウド STT + Claude + クラウド TTS）のプロトタイプ実装 [plan](docs/plans/archive/voice-layer-spike.md)
+  - STT: `gpt-4o-transcribe`（Realtime transcription セッション / WebSocket）。発話終端・barge-in は付属のサーバ VAD に置換（旧無音タイマー + RMS を廃止、案 B と同条件に）。短発話の言語誤判定（"Hello" → 韓国語）対策に language + prompt ヒントと無音判定 800ms を明示指定
+  - TTS: 内部境界 `SentenceTTSClient` で差し替え可能な 2 実装 — `gpt-4o-mini-tts`（HTTP ストリーミング）/ Gemini `gemini-3.1-flash-tts-preview`（streamGenerateContent SSE。LE PCM・40ms チャンクを実測確認）。UI の TTS 切替 Picker と `-tts-provider` を追加
+  - Apple 依存の `UtteranceTranscriber` / `SentenceSpeaker` を削除（Speech フレームワーク依存が消滅）。シミュレータ E2E（両 TTS）と実機での音声会話を確認
+- 2026-07-25 音声レイヤ検証 Phase 2: 案 C（Gemini Live `gemini-3.1-flash-live-preview`）のプロトタイプ実装とシミュレータ E2E 確認 [plan](docs/plans/archive/voice-layer-spike.md)
+  - WebSocket 自前実装（setup → setupComplete → 音声 / transcript / interrupted のパースをテストで固定）+ barge-in は `serverContent.interrupted` で再生停止。音声再生は案 B と共用の `RealtimeAudioPlayer`
+  - Gemini キーを加えた 3 キー管理（Keychain `gemini-api-key`・`.secrets/gemini-api-key` シード・`-seed-gemini-key`）、エンジン切替 Picker に「Gemini Live」を追加
+  - シミュレータ E2E（実キー・テキスト入力 → 音声応答、体感 646ms / TTFT 638ms。案 B の 571ms / 556ms と同水準）と英語のみ応答を確認。実機実測（レイテンシ中央値・barge-in・日本語アクセント英語の認識・transcript 品質）は Phase 4 の比較時に実施
+- 2026-07-24 音声レイヤ検証 Phase 1: 案 B（OpenAI Realtime `gpt-realtime-2.1-mini`）のプロトタイプ実装と実機動作確認 [plan](docs/plans/archive/voice-layer-spike.md)
   - WebSocket 自前実装（GA 形式のイベント仕様をテストで固定）+ 24kHz PCM16 ストリーミング再生 + サーバ VAD / barge-in。会話画面にエンジン切替（ターン制+Claude / OpenAI Realtime）を追加
   - OpenAI キーの 2 キー管理（Keychain `openai-api-key`・`.secrets/openai-api-key` シード・`-seed-openai-key`）
   - シミュレータ E2E（テキスト入力→音声応答、体感 571ms）と実機での音声会話・英語のみ応答を確認。レイテンシ中央値等の詳細計測は Phase 4 の比較時に実施
-- 2026-07-24 音声レイヤ検証 Phase 0: TTS / STT / 単一モデル speech-to-speech 候補の机上調査（プラン付録に記録） [plan](docs/plans/voice-layer-spike.md)
-- 2026-07-24 音声レイヤ検証・旧 Phase 1: iOS 純正音声（SpeechTranscriber + AVSpeechSynthesizer）+ Claude のプロトタイプ実装 → **iPhone 純正不採用の方針転換により実測前に中止** [plan](docs/plans/voice-layer-spike.md)
+- 2026-07-24 音声レイヤ検証 Phase 0: TTS / STT / 単一モデル speech-to-speech 候補の机上調査（プラン付録に記録） [plan](docs/plans/archive/voice-layer-spike.md)
+- 2026-07-24 音声レイヤ検証・旧 Phase 1: iOS 純正音声（SpeechTranscriber + AVSpeechSynthesizer）+ Claude のプロトタイプ実装 → **iPhone 純正不採用の方針転換により実測前に中止** [plan](docs/plans/archive/voice-layer-spike.md)
   - `VoiceSession` 境界・状態機械・Claude SSE クライアント（実キー E2E 検証済み）・会話 UI は案 A2 に流用
   - 中止理由: STT の数百 MB モデル DL、シミュレータ検証不可、AVSpeech の TTS 品質
 - 2026-07-24 API キーを git 管理外のローカルファイル（`.secrets/anthropic-api-key`）から設定できるようにした [plan](docs/plans/archive/api-key-local-file.md)

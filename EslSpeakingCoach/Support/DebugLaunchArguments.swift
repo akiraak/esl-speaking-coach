@@ -48,5 +48,12 @@ enum DebugLaunchArguments {
         guard let index = args.firstIndex(of: "-voice-engine"), index + 1 < args.count else { return nil }
         return VoiceEngine(rawValue: args[index + 1])
     }
+
+    /// ターン制エンジンの TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai
+    static var ttsProviderOverride: TTSProvider? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-tts-provider"), index + 1 < args.count else { return nil }
+        return TTSProvider(rawValue: args[index + 1])
+    }
 }
 #endif

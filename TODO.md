@@ -1,25 +1,10 @@
 # TODO
 
-## 1. 方針決定 / 調査
+## 実装（音声レイヤ: ターン制+Claude + Gemini TTS に決定済み・2026-07-25）
 
-- [ ] 音声レイヤの技術検証と方式決定 [plan](docs/plans/voice-layer-spike.md)
-  - [ ] Phase 2: 案 C（Gemini Live、現行モデル Gemini 3.1 Flash Live）のプロトタイプと実測
-    - [x] Gemini API キーの取得（AI Studio で発行して `.secrets/gemini-api-key` に置く。アプリ側の 3 キー管理対応は実装済み）
-    - [x] Live API の WebSocket 自前実装（`VoiceSession` 実装として追加。公式 Swift SDK なし）
-    - [x] 実キーでのシミュレータ E2E 確認（テキスト入力 → 音声応答）
-    - [ ] 実機実測（レイテンシ中央値・barge-in・日本語アクセント英語の認識・transcript 品質）
-  - [ ] Phase 3: 案 A2（クラウド STT + Claude + クラウド TTS）のプロトタイプと実測。STT / TTS は代替モデルも含めて比較する
-    - [ ] STT: `gpt-4o-transcribe` の WebSocket ストリーミング実装（`UtteranceTranscriber` を置換。Phase 1 の OpenAI キーを共用）
-    - [ ] TTS: `gpt-4o-mini-tts` のストリーミング再生実装（`SentenceSpeaker` の AVSpeech 実装を置換）
-    - [ ] STT 代替: Deepgram Flux を同条件で実測比較（end-of-turn 検知ネイティブ。要 Deepgram キー）
-    - [ ] TTS 代替: Cartesia Sonic を同条件で実測比較（TTFA 40ms。要 Cartesia キー）
-    - [ ] 実機実測（レイテンシ中央値・barge-in・日本語アクセント英語の STT 精度・TTS 品質。STT / TTS の組み合わせごとに記録）
-  - [ ] Phase 4: 案 A2 / 案 B / 案 C の実測比較で方式を決定し `CLAUDE.md` を更新
-    - 事前に「会話中の発音指摘を製品価値とするか」を決める（単一モデル方式（案 B / C）が構造的に有利なため判断に効く）
-
-## 2. 実装（音声レイヤの方式決定後）
-
-- [ ] 音声入出力の本実装（スパイクの `VoiceSession` 実装を製品品質に引き上げる）
+- [ ] 音声入出力の本実装（スパイクの `TurnBasedVoiceSession`（案 A2）を製品品質に引き上げる: STT 接続断からの自動再接続、バックグラウンド遷移・オーディオ割り込み（電話等）対応、エラー時の復帰導線）
+- [ ] モデル・パラメータの最終調整（TTS は Gemini Flash TTS 系で確定 — 既定 `gemini-3.1-flash-tts-preview`、必要なら 2.5 系と聞き比べ。voice 選定、VAD 無音判定 800ms の実使用チューニング、STT / LLM モデルの見直し）
+- [ ] 検証用コードの整理（不採用の案 B: OpenAI Realtime / 案 C: Gemini Live のエンジンと切替 UI を削除。TTS 切替はモデル調整が終わるまで温存）
 - [ ] 会話履歴の永続化（SwiftData、端末内のみ）
 - [ ] 会話画面の UI
 - [ ] セッション後のフィードバック生成

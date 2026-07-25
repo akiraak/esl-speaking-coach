@@ -249,6 +249,10 @@ final class RealtimeVoiceSession: VoiceSession {
             appendUserMessage(trimmed)
             eventContinuation.yield(.userTurnCommitted(trimmed))
 
+        case .userTranscriptFailed(let message):
+            userPartialTranscript = ""
+            eventContinuation.yield(.info("ユーザー発話の認識に失敗: \(message)"))
+
         case .responseCreated:
             isResponseActive = true
             assistantTranscript = ""

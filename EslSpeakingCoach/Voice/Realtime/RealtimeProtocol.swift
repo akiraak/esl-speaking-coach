@@ -76,6 +76,8 @@ enum RealtimeServerEvent: Sendable, Equatable {
     case speechStopped
     case userTranscriptDelta(String)
     case userTranscriptCompleted(String)
+    /// ユーザー発話セグメントの認識に失敗した（セッション自体は継続する）
+    case userTranscriptFailed(String)
     case responseCreated
     /// base64 デコード済みの PCM16 24kHz mono チャンク
     case assistantAudioDelta(Data)
@@ -107,6 +109,9 @@ enum RealtimeServerEvent: Sendable, Equatable {
             return .userTranscriptDelta(object["delta"] as? String ?? "")
         case "conversation.item.input_audio_transcription.completed":
             return .userTranscriptCompleted(object["transcript"] as? String ?? "")
+        case "conversation.item.input_audio_transcription.failed":
+            let error = object["error"] as? [String: Any]
+            return .userTranscriptFailed(error?["message"] as? String ?? "transcription failed")
         case "response.created":
             return .responseCreated
         case "response.output_audio.delta":

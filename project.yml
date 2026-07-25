@@ -14,7 +14,6 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "英会話練習であなたの発話を取得するためにマイクを使用します。"
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "発話を文字起こしして会話するために音声認識を使用します。"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         SWIFT_VERSION: "6.0"

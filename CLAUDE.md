@@ -13,24 +13,29 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | 領域 | 選択 | 備考 |
 | --- | --- | --- |
 | プラットフォーム | iOS ネイティブ / Swift + SwiftUI | Android は対象外 |
-| 音声レイヤ | **未決定**（検証中） | 下記「音声レイヤの方針」参照 |
+| 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-4o-transcribe`、TTS: Gemini Flash TTS。下記「音声レイヤの方針」参照 |
 | 会話・評価の LLM | Claude API（`claude-opus-5`） | アプリから直接呼ぶ |
 | データ保存 | 端末内（SwiftData） | サーバーなし。iCloud 同期もしない |
 | バックエンド | **なし** | 自分専用前提でアプリから API を直叩きする |
 
 ## 音声レイヤの方針
 
-Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。Claude はテキスト入出力（ストリーミング可）なので、「リアルタイム双方向音声」は以下のいずれかで組む必要があり、**どれを採るかは検証で決める**。
+**2026-07-25 決定**: 3 方式（クラウド STT/TTS + Claude / OpenAI Realtime / Gemini Live）をプロトタイプして実機比較した結果、**クラウド STT / TTS + Claude ストリーミングのターン制パイプライン**を採用した。会話相手を Claude に保てることが決め手。個々のモデル・voice・パラメータは実装フェーズで調整する。
 
-**前提（2026-07 決定）**: iPhone 純正の音声系（`SpeechTranscriber` / `AVSpeechSynthesizer`）は STT・TTS とも**不採用**（STT が数百 MB のモデル DL を要する・シミュレータで検証不可・TTS 品質が理由）。
+| 役割 | 採用 | 備考 |
+| --- | --- | --- |
+| STT | OpenAI `gpt-4o-transcribe`（Realtime API の transcription セッション / WebSocket） | `language: en` + prompt ヒントで英語固定（短い発話の言語誤判定対策） |
+| 発話終端・barge-in | transcription セッションのサーバ VAD | 無音判定 800ms を明示指定（既定 200ms は ESL 学習者に短すぎる） |
+| 会話 LLM | `claude-opus-5`（下記規約どおりストリーミング + 文単位 TTS） | |
+| TTS | Gemini Flash TTS（現行 `gemini-3.1-flash-tts-preview`。`streamGenerateContent` SSE、24kHz PCM16 LE） | モデル・voice は調整中。聞き比べ用に `gpt-4o-mini-tts` へ切替可 |
 
-- **A. クラウド STT / TTS + Claude ストリーミング**: OpenAI `gpt-4o-transcribe` で逐次認識 → Claude のストリーム応答を文単位で `gpt-4o-mini-tts` に流す（ターン制。Anthropic 公式の音声モードと同型）。会話相手は Claude のまま。追加キーは OpenAI 1 本
-- **B. 他社のリアルタイム音声 API**（OpenAI Realtime / Gemini Live）: 真の双方向音声。ただし会話相手が Claude ではなくなる
-- **C. ハイブリッド**: 会話は B、セッション後の評価・フィードバックは Claude
+- Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。この構成は Anthropic 公式の Claude アプリ音声モードと同型
+- 不採用にしたもの: iPhone 純正音声系（STT のモデル DL・シミュレータ検証不可・TTS 品質）、OpenAI Realtime / Gemini Live の speech-to-speech（会話相手が Claude でなくなる）。検証記録は `docs/plans/archive/voice-layer-spike.md`
+- ターン制のため会話中の音声レベルの発音指摘はしない（発音・表現のフィードバックはセッション後にテキストベースで行う）
 
-**設計上の制約（重要）**: どれに決まっても差し替えられるよう、音声入出力は 1 つのプロトコル境界の裏に隠す。UI と会話ロジックが特定の音声 API に直接依存してはいけない。
+**設計上の制約（引き続き有効）**: 音声入出力はプロトコル境界の裏に隠す。UI と会話ロジックが特定の音声 API に直接依存してはいけない。
 
-- 発話取得 / 読み上げ / 割り込み検知を `VoiceSession` 相当のプロトコルとして定義し、実装を差し替え可能にする
+- 発話取得 / 読み上げ / 割り込み検知は `VoiceSession` プロトコルの裏に隠す。さらに STT / TTS 単体も内部境界（`StreamingSpeechTranscriber` / `SentenceTTSClient`）で個別に差し替え可能に保つ
 - 会話履歴はプロバイダ非依存の自前モデル（`role` + テキスト）で保持し、API のリクエスト型をそのまま永続化しない
 
 ## Claude API の使い方（このプロジェクトの規約）
@@ -72,7 +77,7 @@ Anthropic の API に**リアルタイム音声（speech-to-speech）のエン�
 
 - API キーは **Keychain** に保存する。`UserDefaults`・plist・ソースコードに書かない
 - **API キーをリポジトリにコミットしない。** `.gitignore` と、コミット前の確認を徹底する
-- ローカル開発では `.secrets/<provider>-api-key`（git 管理外、1 行のプレーンテキスト。現在は `anthropic-api-key` / `openai-api-key`）にキーを置くと、`./run-install-iphone.sh` / `./run-simulator.sh` が起動引数 `-seed-<provider>-key` で Keychain へ流し込む（DEBUG ビルドのみ有効）。設定画面からの手入力は不要になる
+- ローカル開発では `.secrets/<provider>-api-key`（git 管理外、1 行のプレーンテキスト。現在は `anthropic-api-key` / `openai-api-key` / `gemini-api-key`）にキーを置くと、`./run-install-iphone.sh` / `./run-simulator.sh` が起動引数 `-seed-<provider>-key` で Keychain へ流し込む（DEBUG ビルドのみ有効）。設定画面からの手入力は不要になる
 - 会話履歴は端末内のみ。外部に送信するのは音声・会話系 API（Claude / 検証中の音声プロバイダ）へのリクエストだけ
 
 <!-- vibeboard:begin -->

@@ -1,19 +1,15 @@
 import Accelerate
 import AVFAudio
 import Foundation
-import Speech
 
-/// マイクのタップから受け取ったバッファを、RMS レベルと（接続中なら）SpeechAnalyzer の
-/// 入力ストリームへ配る。process(buffer:) はオーディオスレッドから呼ばれるため NSLock で守る。
+/// マイクのタップから受け取ったバッファを、RMS レベルと（接続中なら）PCM16 の生バイト列へ配る。
+/// process(buffer:) はオーディオスレッドから呼ばれるため NSLock で守る。
 /// AVAudioConverter 等の非 Sendable な状態はこのクラス内に閉じ込める。
 final class AudioTapRouter: @unchecked Sendable {
     let levels: AsyncStream<Float>
 
     private let levelContinuation: AsyncStream<Float>.Continuation
     private let lock = NSLock()
-    private var analyzerContinuation: AsyncStream<AnalyzerInput>.Continuation?
-    private var analyzerFormat: AVAudioFormat?
-    private var converter: AVAudioConverter?
     private var rawContinuation: AsyncStream<Data>.Continuation?
     private var rawFormat: AVAudioFormat?
     private var rawConverter: AVAudioConverter?
@@ -29,24 +25,6 @@ final class AudioTapRouter: @unchecked Sendable {
     init() {
         (levels, levelContinuation) = AsyncStream.makeStream(
             of: Float.self, bufferingPolicy: .bufferingNewest(1))
-    }
-
-    /// 認識対象のトランスクライバへバッファを流し始める。
-    func attach(continuation: AsyncStream<AnalyzerInput>.Continuation, format: AVAudioFormat) {
-        lock.lock()
-        defer { lock.unlock() }
-        analyzerContinuation = continuation
-        analyzerFormat = format
-        converter = nil
-    }
-
-    /// バッファ供給を止める（タップ自体は動き続け、レベルは流れ続ける）。
-    func detach() {
-        lock.lock()
-        defer { lock.unlock() }
-        analyzerContinuation = nil
-        analyzerFormat = nil
-        converter = nil
     }
 
     /// 指定フォーマット（PCM16 mono interleaved 前提）へ変換した生バイト列を流し始める。
@@ -80,10 +58,6 @@ final class AudioTapRouter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         buffersReceived += 1
-        if let continuation = analyzerContinuation, let format = analyzerFormat,
-           let converted = convert(buffer, to: format, converter: &converter) {
-            continuation.yield(AnalyzerInput(buffer: converted))
-        }
         if let continuation = rawContinuation, let format = rawFormat,
            let converted = convert(buffer, to: format, converter: &rawConverter),
            let data = Self.pcm16Data(from: converted) {

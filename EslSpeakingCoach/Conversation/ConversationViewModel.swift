@@ -35,6 +35,14 @@ final class ConversationViewModel {
         return .turnPipeline
         #endif
     }()
+    /// ターン制エンジンの TTS プロバイダ（採用は Gemini TTS。聞き比べ用に切替可・停止中のみ変更可）
+    var ttsProvider: TTSProvider = {
+        #if DEBUG
+        return DebugLaunchArguments.ttsProviderOverride ?? .gemini
+        #else
+        return .gemini
+        #endif
+    }()
 
     private var session: (any VoiceSession)?
     private var eventTask: Task<Void, Never>?
@@ -61,9 +69,19 @@ final class ConversationViewModel {
         let newSession: any VoiceSession
         switch engine {
         case .turnPipeline:
-            newSession = TurnBasedVoiceSession(apiKeyProvider: {
-                (try? keychain.read(account: KeychainStore.anthropicAPIKeyAccount)) ?? nil
-            })
+            var configuration = TurnBasedVoiceSession.Configuration()
+            configuration.ttsProvider = ttsProvider
+            newSession = TurnBasedVoiceSession(
+                configuration: configuration,
+                claudeKeyProvider: {
+                    (try? keychain.read(account: KeychainStore.anthropicAPIKeyAccount)) ?? nil
+                },
+                openAIKeyProvider: {
+                    (try? keychain.read(account: KeychainStore.openAIAPIKeyAccount)) ?? nil
+                },
+                geminiKeyProvider: {
+                    (try? keychain.read(account: KeychainStore.geminiAPIKeyAccount)) ?? nil
+                })
         case .openaiRealtime:
             newSession = RealtimeVoiceSession(apiKeyProvider: {
                 (try? keychain.read(account: KeychainStore.openAIAPIKeyAccount)) ?? nil

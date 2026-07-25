@@ -121,6 +121,9 @@ struct ConversationView: View {
         VStack(spacing: 8) {
             if !model.isRunning {
                 enginePicker
+                if model.engine == .turnPipeline {
+                    ttsPicker
+                }
             }
             #if DEBUG
             if model.isRunning, model.state == .listening {
@@ -160,6 +163,17 @@ struct ConversationView: View {
         return Picker("音声エンジン", selection: $model.engine) {
             ForEach(VoiceEngine.allCases) { engine in
                 Text(engine.label).tag(engine)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    /// ターン制エンジンの TTS 差し替え比較用（Phase 3）。
+    private var ttsPicker: some View {
+        @Bindable var model = model
+        return Picker("TTS", selection: $model.ttsProvider) {
+            ForEach(TTSProvider.allCases) { provider in
+                Text(provider.label).tag(provider)
             }
         }
         .pickerStyle(.segmented)

@@ -29,9 +29,9 @@ Claude クライアント・状態機械・UI などプロバイダ非依存の�
 | 役割 | 第一候補 | 比較する代替モデル（付録参照） |
 | --- | --- | --- |
 | STT | OpenAI `gpt-4o-transcribe`（Realtime API の transcription セッション / WebSocket ストリーミング） | Deepgram Flux（end-of-turn 検知ネイティブ）。さらに不満なら AssemblyAI Universal |
-| 発話終端・割り込み検知 | 無音タイマー + RMS（旧 Phase 1 実装を流用） | Deepgram Flux 採用時はサーバ側検知に置換 |
+| 発話終端・割り込み検知 | transcription セッション付属のサーバ VAD（2026-07-25 変更。当初案の無音タイマー + RMS は不採用 → Phase 3 実装記録） | Deepgram Flux 採用時は end-of-turn 検知に置換 |
 | 会話 LLM | `claude-opus-5`（規約どおり: ストリーミング・`effort: low`・`max_tokens` 1024・cache_control 付き固定プロンプト） | — |
-| TTS | OpenAI `gpt-4o-mini-tts`（HTTP ストリーミング。"speak slowly like an ESL teacher" 等の話し方指示可） | Cartesia Sonic（TTFA 40ms）。さらに不満なら ElevenLabs Flash |
+| TTS | OpenAI `gpt-4o-mini-tts`（HTTP ストリーミング。"speak slowly like an ESL teacher" 等の話し方指示可） | Gemini TTS（既存キーで実装済み・2026-07-25）・Cartesia Sonic（TTFA 40ms）。さらに不満なら ElevenLabs Flash |
 | 評価 LLM | `claude-opus-5`（`effort: high`・`max_tokens` 16000+） | — |
 
 会話 1 ターンの流れは旧案 A と同じ（STT/TTS の実装だけ差し替え）。Claude の SSE を文境界で区切り、確定した文から TTS へ流す。
@@ -177,22 +177,70 @@ STT / TTS は第一候補（OpenAI）で組んで動かした後、代替モデ�
 2. **TTS**: `gpt-4o-mini-tts` のストリーミング再生を `SentenceSpeaker` の後継として実装。文単位で生成リクエストし、到着順に再生キューへ
 3. **実測**: 実機で評価軸 1〜6 を計測（分解は旧 Phase 1 と同じ + STT / TTS のネットワーク往復）。10 ターン以上の中央値を下表に記録
 4. **STT 代替比較**: Deepgram Flux を同条件で実測する（end-of-turn 検知ネイティブで無音タイマー自体を置換できる。Deepgram キーを Keychain / `.secrets` の同じ仕組みに追加）。さらに不満なら AssemblyAI Universal
-5. **TTS 代替比較**: Cartesia Sonic を同条件で実測する（Cartesia キーも同じ仕組みに追加）。さらに不満なら ElevenLabs Flash
+5. **TTS 代替比較**: Gemini TTS（既存キーで先行実装済み・下記記録参照）と Cartesia Sonic（Cartesia キーを同じ仕組みに追加）を同条件で実測する。さらに不満なら ElevenLabs Flash
+
+#### Phase 3 実装記録（2026-07-25: OpenAI 構成の実装完了・シミュレータ E2E 確認済み。実機実測と Deepgram / Cartesia 代替比較は未実施）
+
+**構成の要点**:
+
+- STT は Realtime API の **transcription セッション**（`wss://api.openai.com/v1/realtime?intent=transcription`、GA 形式）。サーバイベントが案 B と同一体系のため `RealtimeServerEvent` のパーサを共用する
+- **発話終端・barge-in は当初案の「無音タイマー + RMS」ではなくサーバ VAD に置換**。理由: (1) transcription セッションに VAD が付属し追加実装が不要 (2) ネットワーク遅延で届く transcript 更新時刻ベースの無音タイマーは不正確 (3) 案 B と同じ判定になり Phase 4 のレイテンシ比較条件が揃う。`TurnMetrics` の計測起点も案 B と同じ `speech_stopped` 受信時刻（VAD の無音待ち自体は体感値に含まれない）
+- TTS は `/v1/audio/speech` を `response_format: pcm` で HTTP ストリーミングし、24kHz PCM16 を案 B/C と共用の `RealtimeAudioPlayer` へ流す。文単位に 1 リクエストし、前の文の取得完了後すぐ次の文を取得する（再生中に次のダウンロードが進む）。voice `coral` + ESL コーチ向けの話し方 instructions
+
+| ファイル | 役割 |
+| --- | --- |
+| `Voice/CloudPipeline/OpenAITranscriptionProtocol.swift` | transcription セッションの設定 + session.update 生成（ユニットテストで GA 形式を固定）。STT の内部境界 `StreamingSpeechTranscriber` / `STTStreamEvent` を定義（Deepgram Flux はここに差す） |
+| `Voice/CloudPipeline/OpenAITranscriptionStream.swift` | STT の WebSocket 実装。session.update → 音声 append の送信順を直列キューで保証。audio append の JSON は案 B の `RealtimeClientEvent` を共用 |
+| `Voice/CloudPipeline/OpenAITTSClient.swift` | `/v1/audio/speech` の PCM ストリーミング + `PCMChunkAssembler`（偶数バイト境界・100ms チャンク。ユニットテストあり） |
+| `Voice/CloudPipeline/CloudSentenceSpeaker.swift` | 文キューのターン単位ストリーミング再生。通知形（onTurnAudioStarted / onTurnFinished）は旧 SentenceSpeaker と同じ |
+| `Voice/TurnBasedVoiceSession.swift` | 案 A2 の状態機械へ書き換え。サーバ VAD イベント駆動で、短いポーズでセグメントが割れた発話は結合して 1 ターンにする。barge-in は生成中（thinking）でも再生中（speaking）でも Claude キャンセル + TTS 停止 |
+
+- 削除: `UtteranceTranscriber.swift` / `SentenceSpeaker.swift`（Apple 依存の STT / TTS）。`AudioTapRouter` の SpeechAnalyzer 経路と `NSSpeechRecognitionUsageDescription` も削除し、Speech フレームワーク依存が消えた
+- 共有パーサに `conversation.item.input_audio_transcription.failed` のパースを追加（案 B 側でも認識失敗が通知されるようになった）
+- キー: Claude 用 Anthropic キーと STT / TTS 用 OpenAI キーの 2 本を使う（`TurnBasedVoiceSession` の init が 2 プロバイダ受け取りに変更）
+- **シミュレータ E2E 確認済み**（2026-07-25、実キー・テキスト入力 → 音声応答）: transcription セッション接続（session.created → update → updated）→ テキストターン → Claude SSE → TTS（coral）再生 → listening 復帰まで動作。参考値: 体感 3705ms・TTFT（Claude）1348ms・初文確定 +1098ms・TTS 発声開始 +1164ms。※テキスト入力起点のため STT 区間は含まない。TTS の 1164ms は初回リクエストの TLS ハンドシェイク込みとみられ、接続ウォームアップ（事前の HEAD 等）で削れる余地がある
+- **実機未確認**: 音声入力起点のレイテンシ・サーバ VAD の barge-in・日本語アクセント英語の STT 精度・VP エコーキャンセルとの相性は実機実測で確認する（Phase 4 の比較時）
+- **未実施**: Deepgram Flux / Cartesia Sonic の代替比較（各社キーの取得待ち。STT は `StreamingSpeechTranscriber`、TTS は `SentenceTTSClient` の実装追加で対応する）
+
+**STT の言語誤判定対策（2026-07-25 追記）**
+
+実機で "Hello" が韓国語として認識される事象が発生（`language: "en"` 指定済みでも、1 秒未満の短い発話は言語判定が不安定という Whisper 系の既知の弱点）。対策として transcription 設定に 2 点を追加した:
+
+- `prompt`: 「話者は英語を練習する日本人成人、音声は常に英語」というバイアス用ヒント（language 指定と併用）
+- `turn_detection.silence_duration_ms: 800` を明示指定。REST の client_secrets で設定エコーを検証した際に、transcription セッションの server_vad **既定が 200ms** と判明（考えながら話す ESL 学習者には短すぎ、発話が途中で切れやすい）。`language` / `prompt` が実際に受理・適用されることも同じ検証で確認済み
+- 実キーの WebSocket でも session.update が受理されること（接続完了 → ターン一巡）をシミュレータで確認済み。誤認識が実際に減るかは実機で再確認する
+
+**TTS 代替: Gemini TTS（2026-07-25 追加実装・シミュレータ E2E 確認済み）**
+
+既存の Gemini キーで使えるため Cartesia より先に実装した。なお **Gemini API にストリーミング STT は存在しない**（Live API は会話モデルで STT 単体ではなく、Google の STT は別サービスの Google Cloud Speech で認証体系も別）ため、STT の Gemini 版は作らない。STT 代替は引き続き Deepgram Flux。
+
+- 文単位 TTS の内部境界 `SentenceTTSClient` を導入し、`CloudSentenceSpeaker` のクライアントを差し替え可能にした（OpenAI ⇔ Gemini。Cartesia もここに差す）。会話画面にターン制選択時のみ表示される TTS 切替 Picker と、起動引数 `-tts-provider openai|gemini` を追加
+- `Voice/CloudPipeline/GeminiTTSClient.swift`: `gemini-3.1-flash-tts-preview`（2026-07 時点の現行。models エンドポイントで確認）の `streamGenerateContent?alt=sse` を HTTP ストリーミング。voice は案 C と同じ `Aoede` にして音色を揃えた。話し方は独立フィールドが無いためテキスト先頭の自然文指示で制御。ユニットテストでリクエスト形式・SSE パースを固定
+- 実キーの事前検証（curl）で確認した事実: models リストの `supportedGenerationMethods` に `streamGenerateContent` が**載っていないが実際は SSE ストリーミング可能** / 出力は `audio/l16; rate=24000; channels=1` で**リトルエンディアン PCM16**（波形解析で確認。`RealtimeAudioPlayer` にそのまま流せる）/ チャンクは 40ms（1920 バイト）刻みで、3.56 秒分の音声が計 1.87 秒で到着
+- **シミュレータ E2E 確認済み**（2026-07-25、実キー・テキスト入力 → 音声応答）: 接続 → Claude SSE → Gemini TTS（Aoede）再生 → listening 復帰まで動作。参考値: TTS 発声開始 798ms（OpenAI TTS の同条件参考値 1164ms より速い。いずれも 1 サンプル・初回 TLS ハンドシェイク込み）。この回の Claude TTFT は 3196ms とばらつきが大きく、TTFT の比較は実機での複数回計測に委ねる
 
 **実測記録（実機・中央値。STT / TTS の組み合わせごとに記録する）**: ※未計測
 
 | 項目 | 値 (ms) | メモ |
 | --- | --- | --- |
-| 体感（発話終端 → 発声開始） | - | |
-| 無音待ち（silenceWindow） | - | 既定 1000ms 固定。Deepgram Flux 構成では end-of-turn 検知に置換 |
+| 体感（発話終端 → 発声開始） | - | 起点はサーバ VAD の speech_stopped（案 B と同条件） |
+| 無音待ち | - | サーバ VAD に置換したため計測上は 0（silence_duration_ms=800 を明示指定。既定 200ms は短すぎ）。Deepgram Flux 構成では end-of-turn 検知に置換 |
 | STT 確定 | - | ネットワーク往復含む |
-| TTFT（Claude） | - | シミュレータ参考値 ~1900ms |
-| 初文確定 | - | |
-| 発声開始（TTS 往復含む） | - | |
+| TTFT（Claude） | - | シミュレータ参考値 1348ms（effort: low） |
+| 初文確定 | - | シミュレータ参考値 +1098ms |
+| 発声開始（TTS 往復含む） | - | シミュレータ参考値 +1164ms |
 
 ### Phase 4: 判断と方針確定
 
 案 A2 / 案 B / 案 C の計測結果を並べて方式を決め、`CLAUDE.md` の「音声レイヤの方針」を確定版に更新する。判断の前に「会話中の発音指摘を製品価値とするか」を決める（評価軸 7。案 B / C の単一モデル方式が構造的に有利）。
+
+#### 決定（2026-07-25）
+
+**案 A2（ターン制+Claude）を採用。TTS は Gemini Flash TTS。** 3 方式を実機で体感比較した結果の判断で、会話相手を Claude に保てることが決め手。モデル・voice・パラメータの最終調整は実装フェーズで行う（既定: STT `gpt-4o-transcribe` / LLM `claude-opus-5` / TTS `gemini-3.1-flash-tts-preview`）。
+
+- 単一モデル方式（案 B / C）は会話相手が Claude でなくなるため不採用。これに伴い未決事項「会話中の発音指摘を製品価値とするか」は「会話中は行わない（セッション後のフィードバックでテキストベースに扱う）」で確定
+- 予定していた 10 ターン中央値の詳細実測と、Deepgram Flux / Cartesia Sonic の代替比較は方式決定により中止
+- `CLAUDE.md` の技術スタック・音声レイヤの方針を確定版に更新し、アプリの既定構成（エンジン: ターン制 / TTS: Gemini）もこれに合わせた。本プランはアーカイブへ移動
 
 ## 影響範囲
 
@@ -210,7 +258,7 @@ STT / TTS は第一候補（OpenAI）で組んで動かした後、代替モデ�
 ## 未決事項
 
 - ~~案 B / C のアカウント・API キーを用意するか~~ → **OpenAI キー・Gemini キーとも用意する（2026-07-24 確定。OpenAI は案 A2 / 案 B で共用、Gemini は案 C 用）**
-- **会話中の軽い発音指摘を製品価値とするか**。するなら単一モデル方式（案 B / C 系）が構造的に有利なため、評価軸 7 の重み付けとして方式決定（Phase 4）の前に決める
+- ~~会話中の軽い発音指摘を製品価値とするか~~ → **会話中は行わない（2026-07-25 確定。案 A2 採用に伴い、発音・表現のフィードバックはセッション後にテキストベースで扱う）**
 
 ## 付録: TTS / STT 単体の候補調査（2026-07 時点）
 

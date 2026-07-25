@@ -84,6 +84,10 @@ final class RealtimeProtocolTests: XCTestCase {
             .userTranscriptCompleted("Hello"))
         XCTAssertEqual(
             RealtimeServerEvent.parse(
+                #"{"type":"conversation.item.input_audio_transcription.failed","error":{"type":"transcription_error","message":"audio too noisy"}}"#),
+            .userTranscriptFailed("audio too noisy"))
+        XCTAssertEqual(
+            RealtimeServerEvent.parse(
                 #"{"type":"response.output_audio_transcript.delta","delta":"Hi "}"#),
             .assistantTranscriptDelta("Hi "))
         XCTAssertEqual(
