@@ -14,7 +14,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | --- | --- | --- |
 | プラットフォーム | iOS ネイティブ / Swift + SwiftUI | Android は対象外 |
 | 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-4o-transcribe`、TTS: Gemini Flash TTS。下記「音声レイヤの方針」参照 |
-| 会話・評価の LLM | Claude API（`claude-opus-5`） | アプリから直接呼ぶ |
+| 会話・評価の LLM | Claude API（会話・トピック生成: `claude-sonnet-5` / 評価: `claude-opus-5`） | アプリから直接呼ぶ |
 | データ保存 | 端末内（SwiftData） | サーバーなし。iCloud 同期もしない |
 | バックエンド | **なし** | 自分専用前提でアプリから API を直叩きする |
 
@@ -26,7 +26,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | --- | --- | --- |
 | STT | OpenAI `gpt-4o-transcribe`（Realtime API の transcription セッション / WebSocket） | `language: en` + prompt ヒントで英語固定（短い発話の言語誤判定対策） |
 | 発話終端・barge-in | transcription セッションのサーバ VAD | 無音判定 800ms を明示指定（既定 200ms は ESL 学習者に短すぎる） |
-| 会話 LLM | `claude-opus-5`（下記規約どおりストリーミング + 文単位 TTS） | |
+| 会話 LLM | `claude-sonnet-5`（下記規約どおりストリーミング + 文単位 TTS） | 2026-07-25 に opus-5 / sonnet-5 / haiku-4-5 を比較して決定（記録: `docs/plans/archive/spike-conversation/`） |
 | TTS | Gemini Flash TTS（現行 `gemini-3.1-flash-tts-preview`。`streamGenerateContent` SSE、24kHz PCM16 LE） | モデル・voice は調整中。聞き比べ用に `gpt-4o-mini-tts` へ切替可 |
 
 - Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。この構成は Anthropic 公式の Claude アプリ音声モードと同型
@@ -44,16 +44,16 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 - エンドポイント: `POST https://api.anthropic.com/v1/messages`
 - 必須ヘッダ: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
-- モデルは **`claude-opus-5`** を使う。日付サフィックスは付けない
-- **`temperature` / `top_p` / `top_k` は送ってはいけない**（`claude-opus-5` では 400 になる）
+- モデルは会話ターン・トピック生成が **`claude-sonnet-5`**、会話後のフィードバック生成が **`claude-opus-5`**。日付サフィックスは付けない
+- **`temperature` / `top_p` / `top_k` は送ってはいけない**（`claude-sonnet-5` / `claude-opus-5` とも 400 になる）
 - **assistant prefill（末尾に assistant ターンを置く手法）は使えない**（400）。出力形式を固定したいときは `output_config.format` の structured outputs を使う
 
 ### 会話ターン（低レイテンシ優先）
 
 - **ストリーミング必須**（`"stream": true`）。文が確定するたびに読み上げに流す
-- `output_config: {"effort": "low"}` を使う。**thinking は無効化しない** — `claude-opus-5` で `thinking: {"type": "disabled"}` にすると `<thinking>` タグが本文に漏れる等の副作用があるため、effort を下げる方で調整する
+- `output_config: {"effort": "low"}` を使う。**thinking は無効化しない** — 無効化すると `<thinking>` タグが本文に漏れる等の副作用がある。`claude-sonnet-5` は thinking 未指定で adaptive が既定なのでそのままにし、effort を下げる方で調整する
 - `max_tokens` は会話ターンでは意図的に小さく（1024 程度）。長広舌は会話練習として逆効果
-- システムプロンプト（コーチの人格・進行ルール）は固定文にして `cache_control: {"type": "ephemeral"}` を付ける。`claude-opus-5` のキャッシュ最小プレフィックスは 512 トークン
+- システムプロンプト（コーチの人格・進行ルール）は固定文にして `cache_control: {"type": "ephemeral"}` を付ける。キャッシュ最小プレフィックスは `claude-sonnet-5` が 1024 トークン（`claude-opus-5` は 512）。2 キャラ台本の system prompt は約 2,000 トークンなので満たす
 - **システムプロンプトに日付やセッション ID を埋め込まない** — プレフィックスが毎回変わりキャッシュが効かなくなる
 
 ### フィードバック生成（会話後）

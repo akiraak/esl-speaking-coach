@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-07-25 会話の流れと生成方法を決定: キャラ・ターン進行・トピック生成・セッション進行を確定し、仕様書 [docs/specs/conversation-design.md](docs/specs/conversation-design.md) を作成 [plan](docs/plans/archive/conversation-flow-design.md)
+  - キャラは claude-code-manager の ちょビ / なるこ を英語会話用に翻案: **Chobi**（先生・Leda・ピンク）/ **Naruko**（仲間の生徒・Aoede・薄い緑）。voice とスタイル指示文は英語読み上げを試聴して確定
+  - ターン進行は**台本方式**（1 呼び出しで行頭 `Chobi:` / `Naruko:` タグ付き台本。通常 1〜2 発話・最終行 = 学習者への唯一の質問）。ストリーミング speaker タグパース・Gemini TTS の発話ごと voice 切替・トピック生成（structured outputs、タイトル + フック 1 文）・goodbye 自動終了 `[end]` を実 API スパイクで検証（記録: [docs/plans/archive/spike-conversation/](docs/plans/archive/spike-conversation/)）
+  - `screen-layout.md` の未決事項（ターン進行方式・キャラ具体値）を解消し、トピックカードへのフック文追加とアバター色（Naruko = 薄い緑）を反映
+- 2026-07-25 会話生成モデルを Opus 5 / Sonnet 5 / Haiku 4.5 で比較し、会話・トピック生成を **`claude-sonnet-5`** に決定（フィードバック生成は `claude-opus-5` のまま）
+  - 最初の文確定まで opus 約 2 秒 / sonnet 約 1.7 秒 / haiku 0.85 秒。haiku はペルソナ表出が消え不採用。sonnet の逸脱（チャットスラング・質問配置）は system prompt 強化で解消し 5/5 ターン合格（記録: [docs/plans/archive/spike-conversation/model-compare-transcripts.md](docs/plans/archive/spike-conversation/model-compare-transcripts.md)）
+  - `CLAUDE.md` の技術スタック・音声レイヤ・API 規約（モデル、サンプリング禁止、thinking、キャッシュ最小プレフィックス 1024）を更新
 - 2026-07-25 画面ビジュアルデザインを決定: **案 D「ポップ・スタディ」を採用** [plan](docs/plans/archive/screen-visual-design.md)
   - 4 案（LINE クラシック / iOS ミニマル / ダークフォーカス / ポップ・スタディ）の HTML モックアップ比較から選定。モックアップは [docs/specs/screen-design-mockups.html](docs/specs/screen-design-mockups.html) に保存
   - カラーパレット・形状・タイポグラフィを [docs/specs/screen-layout.md](docs/specs/screen-layout.md) の「ビジュアルデザイン」節に追記。ダークモード配色は暖色トーンを保った再設計とし実装フェーズで決める（未決事項に追加）

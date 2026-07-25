@@ -1,0 +1,36 @@
+
+################ claude-sonnet-5 ################
+
+--- opening: Planning a trip [first=2.55s total=3.19s out=90 stop=end_turn]
+  >>> User: [New topic: Planning a trip]
+      Chobi: I have been wanting to plan a mystery-novel tour, visiting places from my favorite books.
+      Naruko: I just want a trip with good ramen and karaoke, honestly.
+      Chobi: If you could plan a trip anywhere right now, where would you go?
+
+--- recast テスト [first=1.49s total=1.90s out=59 stop=end_turn]
+  >>> User: I want to go to Okinawa this summer. I go there last year with my family and it was very fun.
+      Chobi: Nice, so you went there last year with your family and had a great time.
+      Chobi: What made it so fun?
+
+--- opening: Food you can't quit [first=1.25s total=2.14s out=69 stop=end_turn]
+  >>> User: [New topic: Food you can't quit]
+      Chobi: For me it's coffee, I really can't quit my morning cup.
+      Naruko: Mine is ramen, I could eat it every single day, no joke.
+      Chobi: What food can you just never quit?
+
+--- 短文回答 [first=1.83s total=1.85s out=50 stop=end_turn]
+  >>> User: I like ramen.
+      Chobi: Nice, a fellow ramen lover!
+      Chobi: What kind do you usually get, like miso or shoyu?
+
+--- 詰まり救済 [first=1.55s total=2.60s out=104 stop=end_turn]
+  >>> User: Hmm... I don't know.
+      Chobi: No worries, let's think about it together.
+      Chobi: Naruko, what does your favorite ramen shop serve?
+      Naruko: Mine is a spicy miso ramen place near my house, so good.
+      Naruko: What about you, do you like your ramen spicy or mild?
+
+================ サマリ ================
+model                first_sentence avg    total avg   out_tokens avg
+claude-sonnet-5                  1.73s       2.34s               74
+                     per-turn first: 2.55 1.49 1.25 1.83 1.55
