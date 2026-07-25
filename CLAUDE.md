@@ -22,7 +22,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。Claude はテキスト入出力（ストリーミング可）なので、「リアルタイム双方向音声」は以下のいずれかで組む必要があり、**どれを採るかは検証で決める**。
 
-- **A. iOS 内蔵音声 + Claude ストリーミング**: `SFSpeechRecognizer` で逐次認識 → Claude のストリーム応答を文単位で `AVSpeechSynthesizer` に流す。外部 SDK 不要、API キーは 1 つ、割り込みも自前実装
+- **A. iOS 内蔵音声 + Claude ストリーミング**: `SpeechAnalyzer`/`SpeechTranscriber`（iOS 26。`SFSpeechRecognizer` の後継）で逐次認識 → Claude のストリーム応答を文単位で `AVSpeechSynthesizer` に流す。外部 SDK 不要、API キーは 1 つ、割り込みも自前実装
 - **B. 他社のリアルタイム音声 API**（OpenAI Realtime / Gemini Live）: 真の双方向音声。ただし会話相手が Claude ではなくなる
 - **C. ハイブリッド**: 会話は B、セッション後の評価・フィードバックは Claude
 
