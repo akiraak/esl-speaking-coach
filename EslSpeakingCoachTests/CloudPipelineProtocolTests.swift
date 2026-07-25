@@ -40,6 +40,62 @@ final class CloudPipelineProtocolTests: XCTestCase {
         XCTAssertEqual(url.absoluteString, "wss://api.openai.com/v1/realtime?intent=transcription")
     }
 
+    func testTranscriptionInputAudioAppend() throws {
+        let data = try OpenAITranscriptionClientEvent.inputAudioAppend(base64Audio: "QUJD")
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["type"] as? String, "input_audio_buffer.append")
+        XCTAssertEqual(object["audio"] as? String, "QUJD")
+    }
+
+    // MARK: - STT のサーバイベントのパース
+
+    func testTranscriptionParseLifecycleEvents() {
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(#"{"type":"session.created"}"#), .sessionCreated)
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(#"{"type":"session.updated"}"#), .sessionUpdated)
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(#"{"type":"input_audio_buffer.speech_started"}"#),
+            .speechStarted)
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(#"{"type":"input_audio_buffer.speech_stopped"}"#),
+            .speechStopped)
+    }
+
+    func testTranscriptionParseTranscripts() {
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(
+                #"{"type":"conversation.item.input_audio_transcription.delta","delta":"Hel"}"#),
+            .userTranscriptDelta("Hel"))
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(
+                #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"Hello"}"#),
+            .userTranscriptCompleted("Hello"))
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(
+                #"{"type":"conversation.item.input_audio_transcription.failed","error":{"type":"transcription_error","message":"audio too noisy"}}"#),
+            .userTranscriptFailed("audio too noisy"))
+    }
+
+    func testTranscriptionParseError() {
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(
+                #"{"type":"error","error":{"code":"rate_limit","message":"slow down"}}"#),
+            .serverError(message: "slow down", ignorable: false))
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(
+                #"{"type":"error","error":{"code":"response_cancel_not_active","message":"Cancellation failed"}}"#),
+            .serverError(message: "Cancellation failed", ignorable: true))
+    }
+
+    func testTranscriptionParseUnknownTypeIsIgnored() {
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(#"{"type":"rate_limits.updated"}"#),
+            .ignored(type: "rate_limits.updated"))
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse("not json"), .ignored(type: "(unparsable)"))
+    }
+
     // MARK: - TTS のリクエスト
 
     /// /v1/audio/speech のボディ形式を固定する（response_format=pcm で 24kHz PCM16 が返る前提）。

@@ -1,10 +1,10 @@
 import Foundation
 
-/// Gemini TTS（案 A2 の TTS 代替候補）の設定。
+/// Gemini TTS（採用 TTS）の設定。
 struct GeminiTTSConfiguration: Sendable {
     /// 2026-07 時点の現行 TTS モデル（models エンドポイントで確認済み）
     var model = "gemini-3.1-flash-tts-preview"
-    /// 案 C（Gemini Live）と同じ声にして音色を揃える
+    /// voice はモデル・パラメータ調整タスクで確定する（2 キャラ化で Chobi=Leda / Naruko=Aoede）
     var voice = "Aoede"
     /// Gemini TTS は独立した instructions フィールドが無く、テキスト先頭の自然文指示で話し方を制御する
     var styleInstruction = """
@@ -12,7 +12,7 @@ struct GeminiTTSConfiguration: Sendable {
         conversation coach:
         """
 
-    /// 認証は Gemini Live と同じく URL クエリの key。
+    /// 認証は URL クエリの key。
     func endpoint(apiKey: String) -> URL {
         URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse&key=\(apiKey)")!
     }
@@ -36,7 +36,7 @@ enum GeminiTTSError: Error, LocalizedError {
 }
 
 /// streamGenerateContent（SSE）で音声を取得する。出力は audio/l16 rate=24000 mono で、
-/// 実測でリトルエンディアン PCM16 と確認済み（RealtimeAudioPlayer にそのまま流せる）。
+/// 実測でリトルエンディアン PCM16 と確認済み（StreamingAudioPlayer にそのまま流せる）。
 struct GeminiTTSClient: SentenceTTSClient {
     var configuration = GeminiTTSConfiguration()
 

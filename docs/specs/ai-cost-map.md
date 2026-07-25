@@ -13,13 +13,10 @@
 | # | 操作 | API / モデル | 課金単位 | 発生タイミング | 実装状況 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 発話の文字起こし（STT） | OpenAI Realtime transcription / `gpt-4o-transcribe` | **ユーザーが実際に話した音声の長さ**（VAD が切り出した発話セグメントのみ。無音・待機中は課金されない） | 会話セッション中、ユーザーが話すたび | 実装済み |
-| 2 | 会話ターン生成（LLM） | Claude Messages / 決定: `claude-sonnet-5` ※ | 入力トークン + 出力トークン（**毎ターン履歴全体を再送**） | ユーザー発話が確定するたび 1 回 | 実装済み |
+| 2 | 会話ターン生成（LLM） | Claude Messages / `claude-sonnet-5` | 入力トークン + 出力トークン（**毎ターン履歴全体を再送**） | ユーザー発話が確定するたび 1 回 | 実装済み |
 | 3 | 読み上げ（TTS） | Gemini `gemini-3.1-flash-tts-preview` | テキスト入力トークン + **音声出力トークン（25 トークン/秒）** | AI 発話の **1 文ごと**に 1 リクエスト | 実装済み |
 | 4 | トピック候補生成 | Claude Messages / `claude-sonnet-5` | 入力 + 出力トークン(少量) | 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時 | 未実装（仕様確定） |
 | 5 | セッション後フィードバック生成 | Claude Messages / `claude-opus-5` | 入力（会話全文）+ 出力トークン（effort high・max_tokens 16000+） | セッション終了ごとに 1 回 | 未実装 |
-| 6 | （検証用）案 B / 案 C エンジン | OpenAI Realtime speech-to-speech / Gemini Live | 音声入出力トークン（高単価） | エンジン切替で選んだ場合のみ | 削除予定 |
-
-※ **注意: 現在のコードは会話ターンも `claude-opus-5` のまま**（`EslSpeakingCoach/Claude/ClaudeMessagesClient.swift` の `TurnParameters.model`）。`claude-sonnet-5` への変更は決定済みだが未実施（TODO「会話画面の UI」等の影響範囲に含まれる）。それまでは会話ターンが決定構成の約 1.7 倍の単価で動いている。
 
 ## 単価表（2026-07-25 時点）
 
@@ -74,12 +71,6 @@
 - 入力に**会話全文**を渡すため、セッションが長いほど入力コストが増える。出力も数千トークン規模になり得る
 - **単発の API 呼び出しとしてはアプリ内で最も高額**（opus 単価 × 長文入出力）。ただしセッションごとに 1 回だけ
 
-### 6. 検証用エンジン（削除予定）
-
-- `Voice/Realtime/`（案 B: OpenAI Realtime `gpt-realtime-2.1-mini`）と `Voice/GeminiLive/`（案 C: Gemini Live）が切替可能な状態で残っている
-- どちらも speech-to-speech で、**音声入力・音声出力の両方がトークン課金され、採用構成より大幅に高い**。既定エンジンは `turnPipeline` なので通常は発生しないが、切替 UI で選ぶと課金される
-- TODO「検証用コードの整理」で削除予定
-
 ## 課金されないもの
 
 - 音声の再生・マイクキャプチャ・VAD 待ち（クライアント処理。STT は発話セグメント分のみ）
@@ -102,13 +93,11 @@
 | トピック生成 | — | $0.01 未満 |
 | **合計** | | **約 $0.5 / セッション** |
 
-- 会話 LLM が現状の `claude-opus-5` のままだと LLM 分が約 1.7 倍（合計 約 $0.65）
 - 毎日 1 セッションで **月 $15 前後**が目安
 - コストの並びは概ね **TTS ＞ 会話 LLM ≧ フィードバック ＞ STT ＞ トピック生成**
 
 ## コスト管理上の注意（今後の実装に効く順）
 
-1. **会話モデルを決定どおり `claude-sonnet-5` に変更する**（現状 opus-5 のまま。LLM 分が約 1.7 倍高い）
-2. **TTS が最大要因**。モデル調整（TODO）で 2.5 Flash TTS と聞き比べる際は「半額」という材料も含めて判断する
-3. 長セッションでは履歴再送の入力トークンが 2 乗で効く。管理画面で「AI 利用料金」を出すなら、各 API レスポンスの usage（Claude は `usage.input_tokens` / `output_tokens` / `cache_read_input_tokens`、Gemini は `usageMetadata`、OpenAI は transcription イベントの usage）をターンごとに記録するのが正確
-4. barge-in で破棄した TTS・キャンセルした Claude 生成分も課金される（仕様上許容。頻発するならセンテンス先読み数の制限を検討）
+1. **TTS が最大要因**。モデル調整（TODO）で 2.5 Flash TTS と聞き比べる際は「半額」という材料も含めて判断する
+2. 長セッションでは履歴再送の入力トークンが 2 乗で効く。管理画面で「AI 利用料金」を出すなら、各 API レスポンスの usage（Claude は `usage.input_tokens` / `output_tokens` / `cache_read_input_tokens`、Gemini は `usageMetadata`、OpenAI は transcription イベントの usage）をターンごとに記録するのが正確
+3. barge-in で破棄した TTS・キャンセルした Claude 生成分も課金される（仕様上許容。頻発するならセンテンス先読み数の制限を検討）

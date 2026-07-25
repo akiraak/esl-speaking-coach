@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 音声レイヤ検証の会話画面。エンジン（ターン制+Claude / OpenAI Realtime / Gemini Live）を切り替えて比較する。
+/// 会話画面（ターン制+Claude パイプライン）。
 /// 状態・ライブ文字起こし・会話ログ・ターンごとのレイテンシ実測値を表示する。
 struct ConversationView: View {
     @State private var model = ConversationViewModel()
@@ -16,7 +16,7 @@ struct ConversationView: View {
             Divider()
             bottomBar
         }
-        .navigationTitle("会話（\(model.engine.label)）")
+        .navigationTitle("会話")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             #if DEBUG
@@ -120,10 +120,7 @@ struct ConversationView: View {
     private var bottomBar: some View {
         VStack(spacing: 8) {
             if !model.isRunning {
-                enginePicker
-                if model.engine == .turnPipeline {
-                    ttsPicker
-                }
+                ttsPicker
             }
             #if DEBUG
             if model.isRunning, model.state == .listening {
@@ -158,17 +155,7 @@ struct ConversationView: View {
         .padding()
     }
 
-    private var enginePicker: some View {
-        @Bindable var model = model
-        return Picker("音声エンジン", selection: $model.engine) {
-            ForEach(VoiceEngine.allCases) { engine in
-                Text(engine.label).tag(engine)
-            }
-        }
-        .pickerStyle(.segmented)
-    }
-
-    /// ターン制エンジンの TTS 差し替え比較用（Phase 3）。
+    /// TTS の聞き比べ用（モデル調整が終わるまで温存）。
     private var ttsPicker: some View {
         @Bindable var model = model
         return Picker("TTS", selection: $model.ttsProvider) {

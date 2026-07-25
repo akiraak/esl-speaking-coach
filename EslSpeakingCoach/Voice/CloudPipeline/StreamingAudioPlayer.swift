@@ -1,11 +1,11 @@
 import AVFAudio
 import Foundation
 
-/// Realtime API から届く 24kHz PCM16 mono チャンクを到着順に再生する。
+/// クラウド TTS から届く 24kHz PCM16 mono チャンクを到着順に再生する。
 /// AVAudioPlayerNode に Float32 変換したバッファをスケジュールし、
-/// ターン内の最初の再生開始と、ストリーム終了後の読み切りを通知する（SentenceSpeaker と同じ通知形）。
+/// ターン内の最初の再生開始と、ストリーム終了後の読み切りを通知する。
 @MainActor
-final class RealtimeAudioPlayer {
+final class StreamingAudioPlayer {
     /// ターン内で最初のバッファ再生を開始した（レイテンシ計測点）。
     var onTurnAudioStarted: (() -> Void)?
     /// endStream 済み かつ スケジュールしたバッファを全部再生し終えた。

@@ -56,7 +56,6 @@ struct TurnMetrics: Sendable, Equatable {
 }
 
 /// 音声入出力の抽象境界。UI と会話ロジックはこのプロトコルにのみ依存する（CLAUDE.md の設計制約）。
-/// 案 A（ターン制パイプライン）でも案 B/C（speech-to-speech）でも同じ形で差し替えられるよう、
 /// 発話取得・読み上げ・割り込み検知はすべてこの裏に隠す。
 @MainActor
 protocol VoiceSession: AnyObject {
@@ -67,24 +66,4 @@ protocol VoiceSession: AnyObject {
     /// マイク・STT を経由せず user ターンを投入する（シミュレータでマイクが使えないときの検証用）。
     func submitTypedUserTurn(_ text: String)
     #endif
-}
-
-/// 検証中の音声レイヤ実装の選択肢（voice-layer-spike.md の比較対象）。
-enum VoiceEngine: String, CaseIterable, Identifiable, Sendable {
-    /// 案 A2: ターン制パイプライン（クラウド STT + Claude + クラウド TTS）
-    case turnPipeline = "turn"
-    /// 案 B: OpenAI Realtime speech-to-speech
-    case openaiRealtime = "realtime"
-    /// 案 C: Gemini Live speech-to-speech
-    case geminiLive = "gemini"
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .turnPipeline: return "ターン制+Claude"
-        case .openaiRealtime: return "OpenAI Realtime"
-        case .geminiLive: return "Gemini Live"
-        }
-    }
 }

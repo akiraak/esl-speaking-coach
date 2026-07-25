@@ -2,7 +2,7 @@ import Foundation
 
 /// クラウド TTS のターン単位ストリーミング再生（旧 SentenceSpeaker の AVSpeech 実装を置換）。
 /// SentenceChunker が切り出した文を enqueue した順に 1 文ずつ HTTP ストリーミングで取得し、
-/// 案 B/C と共用の RealtimeAudioPlayer（24kHz PCM16）へ流す。TTS プロバイダは
+/// StreamingAudioPlayer（24kHz PCM16）へ流す。TTS プロバイダは
 /// SentenceTTSClient の実装（OpenAI / Gemini）を差し替えて比較する。
 /// 前の文の取得が終わり次第すぐ次の文の取得を始めるので、再生中に次の文のダウンロードが進む。
 /// 通知の形（onTurnAudioStarted / onTurnFinished）は旧 SentenceSpeaker と同じ。
@@ -17,7 +17,7 @@ final class CloudSentenceSpeaker {
 
     private let client: any SentenceTTSClient
     private let apiKeyProvider: @Sendable () -> String?
-    private let player = RealtimeAudioPlayer()
+    private let player = StreamingAudioPlayer()
 
     private var sentenceQueue: [String] = []
     private var fetchTask: Task<Void, Never>?

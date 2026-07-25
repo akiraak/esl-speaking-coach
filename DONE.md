@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-07-25 検証用コードの整理: 不採用の案 B（OpenAI Realtime）/ 案 C（Gemini Live）のエンジンとエンジン切替 UI を削除 [plan](docs/plans/archive/cleanup-spike-engines.md)
+  - 削除: `Voice/Realtime/`（プロトコル・セッション）、`Voice/GeminiLive/`、`VoiceEngine` enum、エンジン切替 Picker、`-voice-engine` 起動引数、対応テスト 2 ファイル
+  - STT が案 B と共用していたイベントパーサ・`inputAudioAppend` は transcription 専用型（`OpenAITranscriptionServerEvent` / `OpenAITranscriptionClientEvent`）として `CloudPipeline` へ移し、パーサテストも `CloudPipelineProtocolTests` に移植
+  - 共用だった `RealtimeAudioPlayer` は採用パイプラインが使うため `CloudPipeline/StreamingAudioPlayer` に移動・リネーム。TTS 切替（Gemini / OpenAI Picker と `-tts-provider`）はモデル調整が終わるまで温存
+  - `ai-cost-map.md` から検証用エンジンの行・セクションを削除し、「会話モデルが opus-5 のまま」という古い注記も解消（コードは `claude-sonnet-5` 済みだった）
+  - シミュレータ E2E で会話フロー（STT 接続 → テキスト送信 → Claude 応答 → TTS 発声）の退行なしを確認
 - 2026-07-25 音声入出力の本実装: スパイクの `TurnBasedVoiceSession`（案 A2）を製品品質に引き上げた [plan](docs/plans/archive/voice-io-production.md)
   - Phase 1: STT 自動再接続（`ReconnectPolicy` の backoff + 再接続オーケストレーション + ping keepalive、`.reconnecting` state）
   - Phase 2: バックグラウンド遷移・オーディオ割り込み対応（suspend/resume、経路変更でのエンジン再起動、idle timer 無効化、`.suspended` state）

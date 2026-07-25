@@ -292,7 +292,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
         case .speechStopped:
             // サーバ VAD が発話終端を判定した。ここから応答音声の再生開始までが体感レイテンシ
-            // （VAD の無音待ち自体は計測に含まれない。案 B と同じ条件）
+            // （VAD の無音待ち自体は計測に含まれない）
             isUserSpeaking = false
             pendingSegments += 1
             metrics = TurnMetricsBuilder()
@@ -676,7 +676,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         }
     }
 
-    /// マイクからバッファが届いているか監視する（案 B と同じ既知問題への対処）。
+    /// マイクからバッファが届いているか監視する。
     /// Voice Processing 有効時に入力が無音になる端末があるため、2 秒間ゼロなら VP を切って再起動する。
     /// VP なしはエコーキャンセルが効かず、AI の再生音でサーバ VAD が誤発火し得る点に注意。
     private func startMicWatchdog() {

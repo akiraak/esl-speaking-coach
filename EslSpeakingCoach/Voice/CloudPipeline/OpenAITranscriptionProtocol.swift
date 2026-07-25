@@ -1,7 +1,7 @@
 import Foundation
 
-/// OpenAI Realtime API の transcription セッション（案 A2 の STT）の設定。
-/// 案 B と同じ GA 形式のイベント体系で、audio.input のみを構成する。
+/// OpenAI Realtime API の transcription セッション（STT）の設定。
+/// GA 形式のイベント体系で、audio.input のみを構成する。
 struct OpenAITranscriptionConfiguration: Sendable {
     /// STT モデル（voice-layer-spike.md Phase 3 の第一候補）
     var model = "gpt-4o-transcribe"
@@ -23,8 +23,14 @@ struct OpenAITranscriptionConfiguration: Sendable {
 }
 
 /// クライアント → サーバのイベント JSON を生成する。テストから直接検証できるよう純関数にする。
-/// 音声チャンクの append は案 B の RealtimeClientEvent.inputAudioAppend を共用する。
 enum OpenAITranscriptionClientEvent {
+    static func inputAudioAppend(base64Audio: String) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "type": "input_audio_buffer.append",
+            "audio": base64Audio,
+        ])
+    }
+
     static func sessionUpdate(configuration: OpenAITranscriptionConfiguration) throws -> Data {
         let payload: [String: Any] = [
             "type": "session.update",
@@ -48,6 +54,57 @@ enum OpenAITranscriptionClientEvent {
             ],
         ]
         return try JSONSerialization.data(withJSONObject: payload)
+    }
+}
+
+/// サーバ → クライアントのイベント。transcription セッションが必要とする最小のみ拾う。
+enum OpenAITranscriptionServerEvent: Sendable, Equatable {
+    case sessionCreated
+    case sessionUpdated
+    case speechStarted
+    case speechStopped
+    case userTranscriptDelta(String)
+    case userTranscriptCompleted(String)
+    /// ユーザー発話セグメントの認識に失敗した（セッション自体は継続する）
+    case userTranscriptFailed(String)
+    /// ignorable = 実害のない既知のエラー
+    case serverError(message: String, ignorable: Bool)
+    case ignored(type: String)
+
+    static func parse(_ text: String) -> OpenAITranscriptionServerEvent {
+        guard let data = text.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let type = object["type"] as? String
+        else {
+            return .ignored(type: "(unparsable)")
+        }
+
+        switch type {
+        case "session.created":
+            return .sessionCreated
+        case "session.updated":
+            return .sessionUpdated
+        case "input_audio_buffer.speech_started":
+            return .speechStarted
+        case "input_audio_buffer.speech_stopped":
+            return .speechStopped
+        case "conversation.item.input_audio_transcription.delta":
+            return .userTranscriptDelta(object["delta"] as? String ?? "")
+        case "conversation.item.input_audio_transcription.completed":
+            return .userTranscriptCompleted(object["transcript"] as? String ?? "")
+        case "conversation.item.input_audio_transcription.failed":
+            let error = object["error"] as? [String: Any]
+            return .userTranscriptFailed(error?["message"] as? String ?? "transcription failed")
+        case "error":
+            let error = object["error"] as? [String: Any]
+            let code = error?["code"] as? String ?? ""
+            let message = error?["message"] as? String ?? "unknown error"
+            let ignorable = code == "response_cancel_not_active"
+                || message.lowercased().contains("no active response")
+            return .serverError(message: message, ignorable: ignorable)
+        default:
+            return .ignored(type: type)
+        }
     }
 }
 

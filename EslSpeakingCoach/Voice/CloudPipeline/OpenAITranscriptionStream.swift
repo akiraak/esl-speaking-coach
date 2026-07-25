@@ -1,7 +1,6 @@
 import Foundation
 
 /// gpt-4o-transcribe の WebSocket ストリーミング実装（OpenAI Realtime API の transcription セッション）。
-/// サーバイベントは案 B と同じ GA 形式のため RealtimeServerEvent のパーサを共用する。
 /// インスタンスは使い捨て（connect → stop。再接続は作り直す）。
 @MainActor
 final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
@@ -55,7 +54,7 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
                     @unknown default: text = nil
                     }
                     if let text {
-                        self.handle(RealtimeServerEvent.parse(text))
+                        self.handle(OpenAITranscriptionServerEvent.parse(text))
                     }
                 } catch {
                     self?.handleSocketClosed(error)
@@ -67,7 +66,7 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
 
     func sendAudio(_ chunk: Data) {
         guard !isStopped else { return }
-        guard let data = try? RealtimeClientEvent.inputAudioAppend(
+        guard let data = try? OpenAITranscriptionClientEvent.inputAudioAppend(
             base64Audio: chunk.base64EncodedString()) else { return }
         sendQueue?.yield(data)
     }
@@ -146,7 +145,7 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
         eventContinuation.yield(.connectionFailed("STT 接続が切れました: \(detail)"))
     }
 
-    private func handle(_ event: RealtimeServerEvent) {
+    private func handle(_ event: OpenAITranscriptionServerEvent) {
         switch event {
         case .sessionCreated:
             if let data = try? OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration) {
@@ -184,9 +183,7 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
                 eventContinuation.yield(.connectionFailed("STT API エラー: \(message)"))
             }
 
-        case .responseCreated, .assistantAudioDelta, .assistantTranscriptDelta,
-             .assistantTranscriptDone, .responseDone, .ignored:
-            // transcription セッションでは response 系イベントは来ない
+        case .ignored:
             break
         }
     }

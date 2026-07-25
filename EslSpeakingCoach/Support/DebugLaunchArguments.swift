@@ -42,14 +42,7 @@ enum DebugLaunchArguments {
         return args[index + 1]
     }
 
-    /// 音声エンジンの起動時指定。例: -voice-engine realtime / -voice-engine turn
-    static var voiceEngineOverride: VoiceEngine? {
-        let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of: "-voice-engine"), index + 1 < args.count else { return nil }
-        return VoiceEngine(rawValue: args[index + 1])
-    }
-
-    /// ターン制エンジンの TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai
+    /// TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai
     static var ttsProviderOverride: TTSProvider? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-tts-provider"), index + 1 < args.count else { return nil }
