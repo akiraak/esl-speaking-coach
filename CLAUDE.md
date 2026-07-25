@@ -62,6 +62,7 @@ Anthropic の API に**リアルタイム音声（speech-to-speech）のエン�
 - コードを変更したら `xcodebuild` でビルドが通ることを確認してから完了とする
 - Xcode プロジェクトは XcodeGen で管理する。`project.yml` が正で、`.xcodeproj` は生成物（`xcodegen generate` で再生成、git 管理外）
 - 実機でしか検証できないこと（マイク実測、レイテンシ計測、音声認識精度）は実機で確認する。実機未確認の場合はその旨を明示する
+- 実機へのビルド＆インストール＆起動は `./run-install-iphone.sh`（無線接続で可）
 
 ## セキュリティ
 
