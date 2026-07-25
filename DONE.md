@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-07-25 AI の料金がかかる箇所を仕様書 [docs/specs/ai-cost-map.md](docs/specs/ai-cost-map.md) にまとめた [plan](docs/plans/archive/ai-cost-map-spec.md)
+  - 操作 → API → 課金単位の対応表（STT / 会話 LLM / TTS / トピック生成 / フィードバック生成 / 検証用エンジン）、2026-07-25 時点の単価、1 セッション約 $0.5 の概算例、課金されないものを整理
+  - コスト特性を明記: TTS（Gemini 3.1 Flash TTS ≈ $0.03/生成 1 分）が最大要因、履歴再送で LLM 入力がターン数の 2 乗で逓増、STT は VAD が切り出した発話分のみ課金、barge-in で破棄した生成分も課金
+  - 発見: 会話モデルが決定（`claude-sonnet-5`）に反しコード上 `claude-opus-5` のまま（`ClaudeMessagesClient.swift`。変更は既存 TODO の影響範囲に含まれる）
 - 2026-07-25 会話の流れと生成方法を決定: キャラ・ターン進行・トピック生成・セッション進行を確定し、仕様書 [docs/specs/conversation-design.md](docs/specs/conversation-design.md) を作成 [plan](docs/plans/archive/conversation-flow-design.md)
   - キャラは claude-code-manager の ちょビ / なるこ を英語会話用に翻案: **Chobi**（先生・Leda・ピンク）/ **Naruko**（仲間の生徒・Aoede・薄い緑）。voice とスタイル指示文は英語読み上げを試聴して確定
   - ターン進行は**台本方式**（1 呼び出しで行頭 `Chobi:` / `Naruko:` タグ付き台本。通常 1〜2 発話・最終行 = 学習者への唯一の質問）。ストリーミング speaker タグパース・Gemini TTS の発話ごと voice 切替・トピック生成（structured outputs、タイトル + フック 1 文）・goodbye 自動終了 `[end]` を実 API スパイクで検証（記録: [docs/plans/archive/spike-conversation/](docs/plans/archive/spike-conversation/)）
