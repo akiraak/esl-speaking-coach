@@ -1,2 +1,14 @@
 vibeboard/dist/
 vibeboard/node_modules/
+
+# Xcode (XcodeGen 生成物・ローカル状態)
+*.xcodeproj
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+.DS_Store
+
+# ローカル設定・秘密情報
+*.xcconfig.local
+.env*

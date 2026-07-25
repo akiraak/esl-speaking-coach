@@ -2,7 +2,7 @@
 
 ## 目的・背景
 
-- 音声レイヤ検証([voice-layer-spike](voice-layer-spike.md))を含む全タスクの前提となる Xcode プロジェクトがまだ存在しない
+- 音声レイヤ検証([voice-layer-spike](../voice-layer-spike.md))を含む全タスクの前提となる Xcode プロジェクトがまだ存在しない
 - 開発環境が WSL から Mac に変わり、`CLAUDE.md` の「開発環境の制約」が実態と乖離している。現環境は **Mac + Xcode 26.5 + iOS 26.5 シミュレータ**で、ローカルでビルド・シミュレータ確認まで完結できる
 - スパイクで Claude API を叩く前に、API キーを安全に保管する仕組み(Keychain)が必要
 
