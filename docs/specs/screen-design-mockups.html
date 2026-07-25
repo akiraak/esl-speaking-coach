@@ -1,0 +1,663 @@
+<title>ESL Speaking Coach — トーク画面デザイン案</title>
+<style>
+  :root {
+    --bg: #f2f4f7;
+    --card: #ffffff;
+    --ink: #1c1f26;
+    --muted: #5b6472;
+    --hairline: #e2e6ec;
+    --chip-a: #3fae4a;
+    --chip-b: #0a84ff;
+    --chip-c: #14b8a6;
+    --chip-d: #f0642f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card: #1d2026;
+      --ink: #e8eaee;
+      --muted: #9aa3b0;
+      --hairline: #2c313a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a;
+    --card: #1d2026;
+    --ink: #e8eaee;
+    --muted: #9aa3b0;
+    --hairline: #2c313a;
+  }
+  :root[data-theme="light"] {
+    --bg: #f2f4f7;
+    --card: #ffffff;
+    --ink: #1c1f26;
+    --muted: #5b6472;
+    --hairline: #e2e6ec;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Hiragino Sans", "Avenir Next", "Helvetica Neue", sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 48px 24px 72px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  .eyebrow {
+    font-family: "Avenir Next", "Hiragino Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Avenir Next", "Hiragino Sans", sans-serif;
+    font-size: clamp(24px, 3.4vw, 34px);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .lede {
+    max-width: 40em;
+    color: var(--muted);
+    font-size: 14.5px;
+    margin: 0 0 44px;
+  }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 40px 32px;
+  }
+
+  .variant {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .caption {
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+  }
+  .caption-head { display: flex; align-items: baseline; gap: 10px; }
+  .chip {
+    font-family: "Avenir Next", sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #fff;
+    border-radius: 999px;
+    padding: 3px 10px;
+    white-space: nowrap;
+  }
+  .v-name { font-size: 16px; font-weight: 700; }
+  .v-concept { font-size: 13px; color: var(--muted); margin: 0; }
+  .v-notes {
+    margin: 4px 0 0;
+    padding: 0 0 0 1.2em;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .v-notes li { margin: 3px 0; }
+  .v-notes b { color: var(--ink); font-weight: 600; }
+
+  .phone-slot { display: flex; justify-content: center; }
+
+  /* ============ phone frame（共通構造） ============ */
+  .phone {
+    width: 312px;
+    border-radius: 42px;
+    padding: 10px;
+    background: #0b0c0f;
+    box-shadow: 0 18px 40px rgba(10, 14, 24, 0.28);
+    flex-shrink: 0;
+  }
+  .screen {
+    border-radius: 33px;
+    overflow: hidden;
+    height: 618px;
+    display: flex;
+    flex-direction: column;
+    background: var(--chat-bg);
+    font-family: -apple-system, "SF Pro Text", "Hiragino Sans", "Helvetica Neue", sans-serif;
+  }
+
+  .p-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 16px 10px;
+    background: var(--hdr-bg);
+    color: var(--hdr-ink);
+    border-bottom: 1px solid var(--hdr-line);
+    flex-shrink: 0;
+  }
+  .p-title { font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
+  .p-count { font-size: 13px; opacity: 0.55; font-weight: 500; }
+  .p-gear { margin-left: auto; font-size: 15px; opacity: 0.6; }
+
+  .p-timeline {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 12px 14px;
+    overflow: hidden;
+    justify-content: flex-end;
+  }
+
+  .sysmsg {
+    align-self: center;
+    font-size: 10.5px;
+    color: var(--sys-ink);
+    background: var(--sys-bg);
+    border-radius: 999px;
+    padding: 3px 12px;
+    letter-spacing: 0.02em;
+  }
+
+  .fb-card, .topic-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--card-radius);
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--card-ink);
+  }
+  .fb-card { opacity: 0.82; }
+  .fb-title, .topic-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--card-title);
+    margin-bottom: 4px;
+  }
+  .fb-line { opacity: 0.75; font-size: 11.5px; }
+
+  .topic-card.selected { opacity: 0.88; }
+  .topic-opt {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 9px;
+    margin-top: 5px;
+    border-radius: var(--opt-radius);
+    background: var(--opt-bg);
+    color: var(--opt-ink);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .topic-opt.picked {
+    background: var(--opt-picked-bg);
+    color: var(--opt-picked-ink);
+    font-weight: 600;
+  }
+  .topic-opt.dim { opacity: 0.5; }
+  .topic-foot {
+    display: flex;
+    gap: 8px;
+    margin-top: 7px;
+    font-size: 10.5px;
+    color: var(--card-title);
+    opacity: 0.75;
+  }
+
+  .msg-row { display: flex; gap: 8px; align-items: flex-end; }
+  .msg-row.user { justify-content: flex-end; }
+  .avatar {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: #fff;
+    flex-shrink: 0;
+  }
+  .msg-col { display: flex; flex-direction: column; gap: 3px; max-width: 200px; }
+  .msg-name {
+    font-size: 10px;
+    color: var(--name-ink);
+    padding-left: 4px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .bubble {
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    border-radius: var(--bub-radius);
+    border-bottom-left-radius: var(--bub-tail);
+    background: var(--ai-bubble);
+    color: var(--ai-ink);
+    width: fit-content;
+    box-shadow: var(--bub-shadow);
+  }
+  .msg-row.user .bubble {
+    background: var(--user-bubble);
+    color: var(--user-ink);
+    border-radius: var(--bub-radius);
+    border-bottom-right-radius: var(--bub-tail);
+    max-width: 210px;
+  }
+  .msg-row.user .bubble.live {
+    background: var(--live-bubble);
+    color: var(--live-ink);
+    font-style: italic;
+    box-shadow: none;
+  }
+  .speaking {
+    font-size: 10px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .p-inputbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px 22px;
+    background: var(--bar-bg);
+    border-top: 1px solid var(--hdr-line);
+    flex-shrink: 0;
+  }
+  .bar-icon { font-size: 17px; color: var(--bar-icon); width: 24px; text-align: center; }
+  .wave {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 30px;
+  }
+  .wave i {
+    width: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    animation: wv 1.1s ease-in-out infinite;
+  }
+  .wave i:nth-child(1) { height: 8px;  animation-delay: 0s; }
+  .wave i:nth-child(2) { height: 16px; animation-delay: 0.12s; }
+  .wave i:nth-child(3) { height: 22px; animation-delay: 0.24s; }
+  .wave i:nth-child(4) { height: 12px; animation-delay: 0.36s; }
+  .wave i:nth-child(5) { height: 19px; animation-delay: 0.48s; }
+  .wave i:nth-child(6) { height: 9px;  animation-delay: 0.6s; }
+  .wave i:nth-child(7) { height: 15px; animation-delay: 0.72s; }
+  .wave i:nth-child(8) { height: 21px; animation-delay: 0.84s; }
+  .wave i:nth-child(9) { height: 11px; animation-delay: 0.96s; }
+  @keyframes wv { 0%, 100% { transform: scaleY(0.55); } 50% { transform: scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .wave i { animation: none; } }
+
+  .textbar-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 292px;
+    margin: 0 auto;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--bar-bg);
+    border: 1px solid var(--card-border);
+    font-family: -apple-system, "SF Pro Text", "Hiragino Sans", sans-serif;
+  }
+  .textbar-preview .bar-icon { flex-shrink: 0; }
+  .tb-field {
+    flex: 1;
+    background: var(--field-bg);
+    color: var(--field-ink);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .tb-send {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--send-ink);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .tb-label {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    font-family: "Hiragino Sans", sans-serif;
+  }
+
+  /* ============ 案 A: LINE クラシック ============ */
+  .skin-line {
+    --chat-bg: #8cabd8;
+    --hdr-bg: #f7f8fa;
+    --hdr-ink: #1c1f26;
+    --hdr-line: rgba(0, 0, 0, 0.08);
+    --sys-bg: rgba(30, 50, 80, 0.28);
+    --sys-ink: #f2f6fc;
+    --card-bg: #ffffff;
+    --card-border: rgba(0, 0, 0, 0.04);
+    --card-radius: 14px;
+    --card-ink: #333a45;
+    --card-title: #3fae4a;
+    --opt-bg: #f1f4f8;
+    --opt-ink: #333a45;
+    --opt-picked-bg: #e2f6df;
+    --opt-picked-ink: #257a2e;
+    --opt-radius: 9px;
+    --ai-bubble: #ffffff;
+    --ai-ink: #22262e;
+    --user-bubble: #7de35b;
+    --user-ink: #14300c;
+    --live-bubble: rgba(125, 227, 91, 0.4);
+    --live-ink: #1d3d13;
+    --name-ink: #eef3fa;
+    --bub-radius: 15px;
+    --bub-tail: 4px;
+    --bub-shadow: 0 1px 1px rgba(20, 35, 60, 0.12);
+    --accent: #3fae4a;
+    --bar-bg: #f7f8fa;
+    --bar-icon: #7d8694;
+    --field-bg: #eceff3;
+    --field-ink: #8a93a1;
+    --send-ink: #ffffff;
+    --mia-av: #e46a8f;
+    --leo-av: #4a7fd4;
+  }
+
+  /* ============ 案 B: iOS ミニマル ============ */
+  .skin-ios {
+    --chat-bg: #ffffff;
+    --hdr-bg: rgba(249, 249, 251, 0.97);
+    --hdr-ink: #101114;
+    --hdr-line: rgba(0, 0, 0, 0.09);
+    --sys-bg: transparent;
+    --sys-ink: #8e939b;
+    --card-bg: #f4f4f6;
+    --card-border: rgba(0, 0, 0, 0.05);
+    --card-radius: 16px;
+    --card-ink: #33363c;
+    --card-title: #0a84ff;
+    --opt-bg: #ffffff;
+    --opt-ink: #33363c;
+    --opt-picked-bg: #e4f0ff;
+    --opt-picked-ink: #0a6ad0;
+    --opt-radius: 10px;
+    --ai-bubble: #e9e9eb;
+    --ai-ink: #16181c;
+    --user-bubble: #0a84ff;
+    --user-ink: #ffffff;
+    --live-bubble: rgba(10, 132, 255, 0.16);
+    --live-ink: #0a6ad0;
+    --name-ink: #8e939b;
+    --bub-radius: 18px;
+    --bub-tail: 5px;
+    --bub-shadow: none;
+    --accent: #0a84ff;
+    --bar-bg: #f9f9fb;
+    --bar-icon: #9298a2;
+    --field-bg: #ececee;
+    --field-ink: #9298a2;
+    --send-ink: #ffffff;
+    --mia-av: #b06fd8;
+    --leo-av: #2f9e8f;
+  }
+
+  /* ============ 案 C: ダークフォーカス ============ */
+  .skin-dark {
+    --chat-bg: #10131a;
+    --hdr-bg: #171b23;
+    --hdr-ink: #e6eaf1;
+    --hdr-line: rgba(255, 255, 255, 0.07);
+    --sys-bg: rgba(255, 255, 255, 0.06);
+    --sys-ink: #7d8794;
+    --card-bg: #181d26;
+    --card-border: rgba(45, 212, 191, 0.18);
+    --card-radius: 14px;
+    --card-ink: #c5ccd6;
+    --card-title: #2dd4bf;
+    --opt-bg: #212835;
+    --opt-ink: #c5ccd6;
+    --opt-picked-bg: rgba(45, 212, 191, 0.16);
+    --opt-picked-ink: #5fe6d3;
+    --opt-radius: 9px;
+    --ai-bubble: #232936;
+    --ai-ink: #e2e7ee;
+    --user-bubble: #0f7e70;
+    --user-ink: #ecfffb;
+    --live-bubble: rgba(15, 126, 112, 0.35);
+    --live-ink: #8adfd2;
+    --name-ink: #7d8794;
+    --bub-radius: 14px;
+    --bub-tail: 4px;
+    --bub-shadow: none;
+    --accent: #2dd4bf;
+    --bar-bg: #171b23;
+    --bar-icon: #6a7482;
+    --field-bg: #232936;
+    --field-ink: #6a7482;
+    --send-ink: #06231f;
+    --mia-av: #d4699a;
+    --leo-av: #5a8fdd;
+  }
+
+  /* ============ 案 D: ポップ・スタディ ============ */
+  .skin-pop {
+    --chat-bg: #fdf3e3;
+    --hdr-bg: #ffffff;
+    --hdr-ink: #4a2f1c;
+    --hdr-line: rgba(120, 80, 40, 0.12);
+    --sys-bg: rgba(120, 80, 40, 0.1);
+    --sys-ink: #96775c;
+    --card-bg: #ffffff;
+    --card-border: rgba(120, 80, 40, 0.12);
+    --card-radius: 20px;
+    --card-ink: #5a4633;
+    --card-title: #f0642f;
+    --opt-bg: #fbeedd;
+    --opt-ink: #5a4633;
+    --opt-picked-bg: #ffe1d2;
+    --opt-picked-ink: #cf4a17;
+    --opt-radius: 999px;
+    --ai-bubble: #ffffff;
+    --ai-ink: #45351f;
+    --user-bubble: #f0642f;
+    --user-ink: #fff6ef;
+    --live-bubble: rgba(240, 100, 47, 0.2);
+    --live-ink: #b5502a;
+    --name-ink: #a08464;
+    --bub-radius: 20px;
+    --bub-tail: 6px;
+    --bub-shadow: 0 1px 2px rgba(120, 80, 40, 0.1);
+    --accent: #f0642f;
+    --bar-bg: #ffffff;
+    --bar-icon: #b39a7c;
+    --field-bg: #f7ecdc;
+    --field-ink: #a08464;
+    --send-ink: #ffffff;
+    --mia-av: #ef5da8;
+    --leo-av: #3d9be9;
+  }
+  .skin-pop .p-title { font-weight: 800; }
+  .skin-pop .bubble { font-weight: 500; }
+  .skin-pop .avatar { border: 2px solid #ffffff; box-shadow: 0 1px 3px rgba(120, 80, 40, 0.2); }
+
+  .howto {
+    margin-top: 52px;
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 20px 24px;
+    max-width: 46em;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .howto h2 { font-size: 14px; color: var(--ink); margin: 0 0 8px; }
+  .howto p { margin: 6px 0; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">ESL SPEAKING COACH</p>
+  <h1>トーク画面 デザイン案 — 4 方向の比較</h1>
+  <p class="lede">
+    レイアウトは仕様書（<strong>docs/specs/screen-layout.md</strong>）どおり 4 案とも共通です。表示している要素も同一
+    — 選択済みトピックカード / セッション区切り / AI 2 キャラ（Mia・Leo）の吹き出し / ユーザー吹き出し /
+    発話中のライブ文字起こし / 音声モードの入力バー — で、<strong>配色とトーンだけ</strong>を変えています。
+  </p>
+
+  <div class="grid">
+
+    <div class="variant" data-skin="skin-line">
+      <div class="caption">
+        <div class="caption-head">
+          <span class="chip" style="background:var(--chip-a)">案 A</span>
+          <span class="v-name">LINE クラシック</span>
+        </div>
+        <p class="v-concept">LINE の既視感をそのまま再現する案。青グレー背景 + 白吹き出し + 緑のユーザー吹き出し。</p>
+        <ul class="v-notes">
+          <li><b>迷わない</b>: 毎日使う LINE と同じ操作感覚で会話に集中できる</li>
+          <li>名前ラベルは背景上に白文字（LINE グループ準拠）</li>
+          <li>ダークモード時は背景を紺系に落とす想定</li>
+        </ul>
+      </div>
+      <div class="phone-slot"></div>
+    </div>
+
+    <div class="variant" data-skin="skin-ios">
+      <div class="caption">
+        <div class="caption-head">
+          <span class="chip" style="background:var(--chip-b)">案 B</span>
+          <span class="v-name">iOS ミニマル</span>
+        </div>
+        <p class="v-concept">iMessage 系の純正トーン。白背景 + グレー/ブルー吹き出しで、標準アプリのように静か。</p>
+        <ul class="v-notes">
+          <li><b>実装が最も素直</b>: システム色ベースでライト/ダーク対応がほぼ自動</li>
+          <li>装飾が少ないぶん英文テキストの可読性が最も高い</li>
+          <li>個性は薄め。キャラ感はアバター色だけで出す</li>
+        </ul>
+      </div>
+      <div class="phone-slot"></div>
+    </div>
+
+    <div class="variant" data-skin="skin-dark">
+      <div class="caption">
+        <div class="caption-head">
+          <span class="chip" style="background:var(--chip-c)">案 C</span>
+          <span class="v-name">ダークフォーカス</span>
+        </div>
+        <p class="v-concept">ダーク常用前提の集中モード。ティールのアクセントで「録音中」の状態を主役にする。</p>
+        <ul class="v-notes">
+          <li><b>夜の練習・長時間セッション向き</b>。波形と状態表示が最も映える</li>
+          <li>ダークが基本形。ライトモードは補助として用意</li>
+          <li>SNS 感より「トレーニングツール」感が強い</li>
+        </ul>
+      </div>
+      <div class="phone-slot"></div>
+    </div>
+
+    <div class="variant" data-skin="skin-pop">
+      <div class="caption">
+        <div class="caption-head">
+          <span class="chip" style="background:var(--chip-d)">案 D</span>
+          <span class="v-name">ポップ・スタディ</span>
+        </div>
+        <p class="v-concept">語学アプリ寄りの明るいトーン。暖色地 + 大きめの角丸で、キャラの存在感を最大化。</p>
+        <ul class="v-notes">
+          <li><b>続けたくなる楽しさ</b>重視。2 キャラの「相手感」が最も強い</li>
+          <li>トピック候補はピル型で押しやすさを演出</li>
+          <li>好みが分かれる方向。ダーク対応は配色の再設計が必要</li>
+        </ul>
+      </div>
+      <div class="phone-slot"></div>
+    </div>
+
+  </div>
+
+  <div class="howto">
+    <h2>選び方</h2>
+    <p>1 案そのまま採用でも、「案 B のベースに案 C のダークを重ねる」「案 A の配色でカードだけ案 D 風」のような組み合わせ・調整指示でも OK です。決定後、選定内容を仕様書に「ビジュアルデザイン」節として追記します。</p>
+  </div>
+</div>
+
+<template id="phone-tpl">
+  <div class="phone">
+    <div class="screen">
+      <div class="p-header">
+        <span class="p-title">ESL Group</span>
+        <span class="p-count">(3)</span>
+        <span class="p-gear">⚙</span>
+      </div>
+      <div class="p-timeline">
+        <div class="fb-card">
+          <div class="fb-title">📝 SESSION FEEDBACK · JUL 24</div>
+          <div class="fb-line">3 suggestions on phrasing — tap to view</div>
+        </div>
+        <div class="topic-card selected">
+          <div class="topic-title">📌 TODAY'S TOPICS</div>
+          <div class="topic-opt picked"><span>Planning a trip</span><span>✓</span></div>
+          <div class="topic-opt dim"><span>Food you can't quit</span></div>
+          <div class="topic-opt dim"><span>Free talk</span></div>
+          <div class="topic-foot"><span>🔄 他の候補</span><span>＋ 自分で作る</span></div>
+        </div>
+        <div class="sysmsg">Jul 25 · Planning a trip</div>
+        <div class="msg-row">
+          <div class="avatar avatar-mia">M</div>
+          <div class="msg-col">
+            <div class="msg-name">Mia</div>
+            <div class="bubble">Trip planning! If you had a whole week off, where would you go?</div>
+          </div>
+        </div>
+        <div class="msg-row user">
+          <div class="bubble">I'd go to Peru. I really want to see Machu Picchu.</div>
+        </div>
+        <div class="msg-row">
+          <div class="avatar avatar-leo">L</div>
+          <div class="msg-col">
+            <div class="msg-name">Leo <span class="speaking">🔊 speaking</span></div>
+            <div class="bubble">Great choice. Have you thought about the altitude, though?</div>
+          </div>
+        </div>
+        <div class="msg-row user">
+          <div class="bubble live">Yeah, I heard about that, so…</div>
+        </div>
+      </div>
+      <div class="p-inputbar">
+        <span class="bar-icon">⌨</span>
+        <div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <span class="bar-icon">⏸</span>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="textbar-preview">
+      <span class="bar-icon">🎤</span>
+      <span class="tb-field">Aa  Message…</span>
+      <span class="tb-send">↑</span>
+    </div>
+    <div class="tb-label">テキストモード時の入力バー</div>
+  </div>
+</template>
+
+<script>
+  const tpl = document.getElementById("phone-tpl");
+  document.querySelectorAll(".variant").forEach((variant) => {
+    const slot = variant.querySelector(".phone-slot");
+    const clone = tpl.content.cloneNode(true);
+    const wrapper = document.createElement("div");
+    wrapper.className = variant.dataset.skin;
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.gap = "12px";
+    wrapper.appendChild(clone);
+    wrapper.querySelector(".avatar-mia").style.background = "var(--mia-av)";
+    wrapper.querySelector(".avatar-leo").style.background = "var(--leo-av)";
+    slot.appendChild(wrapper);
+  });
+</script>

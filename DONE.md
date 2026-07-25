@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-07-25 画面ビジュアルデザインを決定: **案 D「ポップ・スタディ」を採用** [plan](docs/plans/archive/screen-visual-design.md)
+  - 4 案（LINE クラシック / iOS ミニマル / ダークフォーカス / ポップ・スタディ）の HTML モックアップ比較から選定。モックアップは [docs/specs/screen-design-mockups.html](docs/specs/screen-design-mockups.html) に保存
+  - カラーパレット・形状・タイポグラフィを [docs/specs/screen-layout.md](docs/specs/screen-layout.md) の「ビジュアルデザイン」節に追記。ダークモード配色は暖色トーンを保った再設計とし実装フェーズで決める（未決事項に追加）
+- 2026-07-25 画面レイアウトと仕様を決定: 仕様書 [docs/specs/screen-layout.md](docs/specs/screen-layout.md) を作成 [plan](docs/plans/archive/screen-layout-spec.md)
+  - LINE 風グループチャット（AI 2 キャラ）。トップ画面は常設トークルーム（起動で即チャット、トーク一覧なし）
+  - トピックはチャット内カードから選択 or 自作入力で開始。入力はマイクボタンで音声（ハンズフリー連続）⇔テキストを切替
+  - AI 2 キャラのターン進行方式（台本方式 / キャラ別呼び出し / メイン+相槌）は未決とし「会話画面の UI」実装時に決める
 - 2026-07-25 音声レイヤの技術検証と方式決定: **ターン制+Claude（案 A2）+ Gemini TTS を採用** [plan](docs/plans/archive/voice-layer-spike.md)
   - 3 方式（案 A2 / 案 B: OpenAI Realtime / 案 C: Gemini Live）の実機比較の結果、会話相手を Claude に保てる案 A2 で確定。モデル・voice の最終調整は実装フェーズで行う
   - 未決事項「会話中の発音指摘」は「会話中は行わない（セッション後フィードバックで扱う）」で確定。予定していた 10 ターン中央値の詳細実測と Deepgram Flux / Cartesia Sonic の代替比較は方式決定により中止
