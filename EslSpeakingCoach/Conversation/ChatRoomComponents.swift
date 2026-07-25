@@ -256,6 +256,119 @@ struct TopicCardView: View {
     }
 }
 
+// MARK: - フィードバックカード
+
+/// セッション終了時に投稿されるフィードバック（docs/specs/session-feedback.md）。
+/// 生成中表示で即投稿され、生成完了で内容に置き換わる。失敗時はリトライ可。
+struct FeedbackCardView: View {
+    let card: ChatRoomStore.FeedbackCard
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("📝 Session Feedback")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(ChatTheme.accent)
+            Text(card.topicTitle)
+                .font(.caption)
+                .foregroundStyle(ChatTheme.nameLabel)
+
+            if card.isLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Chobi がフィードバックを書いています…")
+                        .font(.caption)
+                        .foregroundStyle(ChatTheme.systemText)
+                }
+                .padding(.vertical, 8)
+            } else if let feedback = card.feedback {
+                feedbackBody(feedback)
+            } else if let errorText = card.errorText {
+                Text(errorText)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                Button(action: onRetry) {
+                    Label("もう一度生成", systemImage: "arrow.clockwise")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .tint(ChatTheme.accent)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            ChatTheme.barBackground,
+            in: RoundedRectangle(cornerRadius: ChatTheme.cardRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: ChatTheme.cardRadius)
+                .strokeBorder(ChatTheme.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+    }
+
+    @ViewBuilder
+    private func feedbackBody(_ feedback: SessionFeedback) -> some View {
+        Text(feedback.summary)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(ChatTheme.aiText)
+
+        if !feedback.corrections.isEmpty {
+            sectionHeader("直したい表現")
+            ForEach(Array(feedback.corrections.enumerated()), id: \.offset) { _, correction in
+                VStack(alignment: .leading, spacing: 3) {
+                    correctionLine(mark: "✗", text: correction.original, color: ChatTheme.liveText)
+                    correctionLine(mark: "✓", text: correction.improved, color: ChatTheme.feedbackGood)
+                    Text(correction.note)
+                        .font(.caption2)
+                        .foregroundStyle(ChatTheme.systemText)
+                        .padding(.leading, 18)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ChatTheme.topicPill, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+
+        if !feedback.tryPhrases.isEmpty {
+            sectionHeader("使ってみたい表現")
+            ForEach(Array(feedback.tryPhrases.enumerated()), id: \.offset) { _, tryPhrase in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tryPhrase.phrase)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ChatTheme.aiText)
+                    Text(tryPhrase.meaning)
+                        .font(.caption2)
+                        .foregroundStyle(ChatTheme.systemText)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ChatTheme.topicPill, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(ChatTheme.nameLabel)
+            .padding(.top, 2)
+    }
+
+    private func correctionLine(mark: String, text: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(mark)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(color)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(ChatTheme.aiText)
+        }
+    }
+}
+
 // MARK: - 入力バー
 
 /// LINE 風入力バー。マイクボタンで音声モードへ変形し、キーボードボタンでテキストモードへ戻る。

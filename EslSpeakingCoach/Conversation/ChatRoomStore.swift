@@ -32,12 +32,23 @@ final class ChatRoomStore {
         var isUsed = false
     }
 
+    struct FeedbackCard: Identifiable {
+        let id = UUID()
+        let topicTitle: String
+        /// リトライ用に生成入力（話者ラベル付き会話全文）のスナップショットを保持する
+        let transcript: String
+        var isLoading = true
+        var errorText: String?
+        var feedback: SessionFeedback?
+    }
+
     enum TimelineItem: Identifiable {
         /// セッション区切り（日付 + トピック名）
         case sessionDivider(id: UUID, text: String)
         case aiMessage(AIMessage)
         case userMessage(id: UUID, text: String)
         case topicCard(TopicCard)
+        case feedbackCard(FeedbackCard)
         case systemNotice(id: UUID, text: String)
 
         var id: UUID {
@@ -46,6 +57,7 @@ final class ChatRoomStore {
             case .aiMessage(let message): return message.id
             case .userMessage(let id, _): return id
             case .topicCard(let card): return card.id
+            case .feedbackCard(let card): return card.id
             case .systemNotice(let id, _): return id
             }
         }
@@ -82,7 +94,7 @@ final class ChatRoomStore {
     /// 重複回避用の直近トピックタイトル（永続化前は起動内メモリ。直近 20 件）
     private var recentTopicTitles: [String] = []
     #if DEBUG
-    private var pendingAutoText = DebugLaunchArguments.autoSendText
+    private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
     #endif
 
     init() {
@@ -251,14 +263,107 @@ final class ChatRoomStore {
         micLevel = 0
         speakingUtteranceID = nil
         if wasEnding {
+            let endedTopic = activeTopicTitle
             activeTopicTitle = nil
-            // フィードバックカードは「セッション後のフィードバック生成」タスクで追加する。
-            // 終了直後に次のトピックカードを自動投稿する（screen-layout.md のセッションの流れ）
+            // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
+            // フィードバックは生成中表示で即投稿し、完了を待たずに次のトピックを選べるようにする
+            if let endedTopic {
+                postFeedbackCard(topic: endedTopic)
+            }
             postTopicCard()
         } else {
             // 致命的エラー。タイムラインは残っているので履歴を引き継いで再開できる
             canResumeAfterFailure = activeTopicTitle != nil
         }
+    }
+
+    // MARK: - フィードバックカード
+
+    /// セッション正常終了（手動 / goodbye）時に投稿する。
+    /// 学習者の発話が 2 未満のセッションはスキップする（docs/specs/session-feedback.md）。
+    private func postFeedbackCard(topic: String) {
+        let (transcript, learnerTurnCount) = sessionTranscript()
+        guard learnerTurnCount >= 2 else {
+            appendItem(.systemNotice(id: UUID(), text: "発話が少なかったためフィードバックは省略しました"))
+            return
+        }
+        let card = FeedbackCard(topicTitle: topic, transcript: transcript)
+        let cardID = card.id
+        appendItem(.feedbackCard(card))
+        Task { await fillFeedbackCard(cardID: cardID) }
+    }
+
+    /// 生成失敗時のリトライ（カード内ボタンから）。
+    func retryFeedback(cardID: UUID) {
+        guard let card = findFeedbackCard(cardID), !card.isLoading, card.feedback == nil else { return }
+        updateFeedbackCard(cardID) {
+            $0.isLoading = true
+            $0.errorText = nil
+        }
+        Task { await fillFeedbackCard(cardID: cardID) }
+    }
+
+    private func fillFeedbackCard(cardID: UUID) async {
+        guard let card = findFeedbackCard(cardID) else { return }
+        guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else {
+            updateFeedbackCard(cardID) {
+                $0.isLoading = false
+                $0.errorText = "Anthropic API キーが未設定です。設定画面から保存してください。"
+            }
+            return
+        }
+        do {
+            let feedback = try await SessionFeedbackClient().generateFeedback(
+                apiKey: apiKey, topic: card.topicTitle, transcript: card.transcript)
+            updateFeedbackCard(cardID) {
+                $0.isLoading = false
+                $0.feedback = feedback
+                $0.errorText = nil
+            }
+        } catch {
+            updateFeedbackCard(cardID) {
+                $0.isLoading = false
+                $0.errorText = "フィードバックの生成に失敗しました: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func findFeedbackCard(_ cardID: UUID) -> FeedbackCard? {
+        for item in timeline.reversed() {
+            if case .feedbackCard(let card) = item, card.id == cardID { return card }
+        }
+        return nil
+    }
+
+    private func updateFeedbackCard(_ cardID: UUID, _ mutate: (inout FeedbackCard) -> Void) {
+        guard let index = timeline.lastIndex(where: { $0.id == cardID }),
+              case .feedbackCard(var card) = timeline[index] else { return }
+        mutate(&card)
+        timeline[index] = .feedbackCard(card)
+        timelineRevision += 1
+    }
+
+    /// 現在セッション区間（最後の区切り以降）の話者ラベル付きトランスクリプトと学習者の発話数。
+    private func sessionTranscript() -> (transcript: String, learnerTurnCount: Int) {
+        var sessionItems: [TimelineItem] = []
+        for item in timeline.reversed() {
+            if case .sessionDivider = item { break }
+            sessionItems.append(item)
+        }
+        var lines: [String] = []
+        var learnerTurnCount = 0
+        for item in sessionItems.reversed() {
+            switch item {
+            case .userMessage(_, let text):
+                lines.append("Learner: " + text)
+                learnerTurnCount += 1
+            case .aiMessage(let message):
+                lines.append(message.speaker.displayName + ": " + message.text)
+            default:
+                break
+            }
+        }
+        return (lines.joined(separator: "\n"), learnerTurnCount)
     }
 
     /// タイムラインの現在セッション区間（最後の区切り以降）から API 用の会話履歴を組み立てる。
@@ -330,9 +435,8 @@ final class ChatRoomStore {
                 speakingUtteranceID = nil
             }
             #if DEBUG
-            if newState == .listening, let text = pendingAutoText {
-                pendingAutoText = nil
-                sendText(text)
+            if newState == .listening, !pendingAutoTexts.isEmpty {
+                sendText(pendingAutoTexts.removeFirst())
             }
             #endif
         case .userPartialTranscript(let text):

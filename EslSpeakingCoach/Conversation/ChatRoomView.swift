@@ -162,6 +162,10 @@ struct ChatRoomView: View {
                     customTopicText = ""
                     isShowingTopicInput = true
                 })
+        case .feedbackCard(let card):
+            FeedbackCardView(
+                card: card,
+                onRetry: { store.retryFeedback(cardID: card.id) })
         case .systemNotice(_, let text):
             SystemPillRow(text: text, emphasized: false)
         }

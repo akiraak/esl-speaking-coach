@@ -26,6 +26,8 @@ enum ChatTheme {
     static let nameLabel = Color(rgb: 0xA08464)
     static let inputField = Color(rgb: 0xF7ECDC)
     static let bubbleShadow = Color(rgb: 0x785028).opacity(0.1)
+    /// フィードバックカードの ✓（改善例）。✗ 側は liveText を使う
+    static let feedbackGood = Color(rgb: 0x3E9B63)
 
     /// 吹き出しの角丸（しっぽ側のみ 6pt）
     static let bubbleRadius: CGFloat = 20

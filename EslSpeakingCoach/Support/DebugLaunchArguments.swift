@@ -28,12 +28,22 @@ enum DebugLaunchArguments {
         ProcessInfo.processInfo.arguments.contains("-start-conversation")
     }
 
-    /// セッションが listening になったら、この文字列を user ターンとして自動送信する。
-    /// 例: -start-conversation -send-text "Hello coach"
-    static var autoSendText: String? {
+    /// セッションが listening になるたびに、指定順で 1 つずつ user ターンとして自動送信する。
+    /// 複数指定で複数ターンの会話を自動再現できる（フィードバック生成の E2E 確認用）。
+    /// 例: -start-conversation -send-text "Hello" -send-text "Goodbye, see you!"
+    static var autoSendTexts: [String] {
         let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of: "-send-text"), index + 1 < args.count else { return nil }
-        return args[index + 1]
+        var texts: [String] = []
+        var index = 0
+        while index < args.count {
+            if args[index] == "-send-text", index + 1 < args.count {
+                texts.append(args[index + 1])
+                index += 2
+            } else {
+                index += 1
+            }
+        }
+        return texts
     }
 
     /// TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai
