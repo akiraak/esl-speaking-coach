@@ -6,6 +6,17 @@ cd "$(dirname "$0")"
 
 SCHEME=EslSpeakingCoach
 BUNDLE_ID=com.akiraak.EslSpeakingCoach
+API_KEY_FILE=.secrets/anthropic-api-key
+
+# git 管理外のローカルファイルにキーがあれば、起動引数で Keychain へシードする（DEBUG ビルドのみ有効）
+LAUNCH_ARGS=()
+if [ -f "$API_KEY_FILE" ]; then
+  API_KEY=$(tr -d '[:space:]' < "$API_KEY_FILE")
+  if [ -n "$API_KEY" ]; then
+    LAUNCH_ARGS+=(-seed-anthropic-key "$API_KEY")
+    echo "==> $API_KEY_FILE の API キーを起動時に Keychain へシードします"
+  fi
+fi
 
 echo "==> デバイスを探しています..."
 DEVICE_ID=$(xcrun devicectl list devices \
@@ -39,5 +50,7 @@ echo "==> インストール: $APP_PATH"
 xcrun devicectl device install app --device "$DEVICE_ID" "$APP_PATH"
 
 echo "==> 起動..."
-xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID"
+# アプリへの起動引数は "--" 以降に置く（devicectl 自身のオプションと区別するため）
+xcrun devicectl device process launch --terminate-existing --device "$DEVICE_ID" "$BUNDLE_ID" \
+  -- ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"}
 echo "==> 完了"

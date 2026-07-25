@@ -70,6 +70,7 @@ Anthropic の API に**リアルタイム音声（speech-to-speech）のエン�
 
 - API キーは **Keychain** に保存する。`UserDefaults`・plist・ソースコードに書かない
 - **API キーをリポジトリにコミットしない。** `.gitignore` と、コミット前の確認を徹底する
+- ローカル開発では `.secrets/anthropic-api-key`（git 管理外、1 行のプレーンテキスト）にキーを置くと、`./run-install-iphone.sh` / `./run-simulator.sh` が起動引数 `-seed-anthropic-key` で Keychain へ流し込む（DEBUG ビルドのみ有効）。設定画面からの手入力は不要になる
 - 会話履歴は端末内のみ。外部に送信するのは Claude API へのリクエストだけ
 
 <!-- vibeboard:begin -->

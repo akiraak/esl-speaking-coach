@@ -12,3 +12,4 @@ build/
 # ローカル設定・秘密情報
 *.xcconfig.local
 .env*
+.secrets/
