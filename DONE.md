@@ -1,5 +1,14 @@
 # DONE
 
+- 2026-07-25 会話画面 UI の実機確認: 音声モードの波形・partial transcript・barge-in・テキスト⇔音声モード切替・トピックカードのタップ操作（候補選択 / 🔄 / 自作入力）を実機で確認
+- 2026-07-25 会話画面の UI: 常設グループトークルーム + Chobi / Naruko の 2 キャラ台本方式を実装（[screen-layout.md](docs/specs/screen-layout.md) / [conversation-design.md](docs/specs/conversation-design.md) 準拠） [plan](docs/plans/archive/conversation-screen-ui.md)
+  - 会話コア: `CoachSystemPrompt` を 2 キャラ台本プロンプト（付録 A）へ全面置き換え。`ScriptStreamChunker`（行頭タグ・デルタ分割吸収・タグ無しフォールバック・`[end]` 検知）を新設し、TTS を発話ごとの voice / スタイル切替（Chobi=Leda / Naruko=Aoede）に対応
+  - セッションエンジン: 履歴確定を SSE 完了時から再生完了 / barge-in 時へ移動（読み上げ開始済み発話まで確定・未読分は破棄）。テキスト⇔音声の入力モード切替（`setVoiceInputEnabled`）、`[New topic: X]` による AI 側からの開始ターン、goodbye `[end]` の自動終了を追加
+  - トピック生成: `TopicSuggestionClient`（`claude-sonnet-5` / structured outputs / 直近タイトルで重複回避）。「Free talk」はアプリ側固定候補
+  - UI: `ChatRoomView` / `ChatRoomStore` を新設し旧プロトタイプ画面（`ConversationView` 等）を削除。案 D「ポップ・スタディ」パレット、トピックカード（選択 / 🔄 / 自作・選択済みグレーアウト）、LINE 風入力バー（波形・⏸）、入力中インジケータ・読み上げ中 🔊・手動スクロール検知付き自動スクロール。ダークモードは未決のため当面ライト固定
+  - シミュレータ E2E で確認: 起動即ルーム表示 → トピックカード自動投稿 → セッション開始 → 2 キャラの発話分離表示と読み上げ → goodbye で `[end]` 自動終了 → 次カード投稿。単体テスト 52 件パス
+  - **実機未確認**: 音声モード（マイク波形・partial transcript・barge-in）・モード切替タップ操作は TODO に実機確認タスクを追加
+  - おまけ: `run-simulator.sh` / `run-install-iphone.sh` がビルド失敗を握りつぶして古いアプリをインストールする問題を修正（失敗時に中断）
 - 2026-07-25 検証用コードの整理: 不採用の案 B（OpenAI Realtime）/ 案 C（Gemini Live）のエンジンとエンジン切替 UI を削除 [plan](docs/plans/archive/cleanup-spike-engines.md)
   - 削除: `Voice/Realtime/`（プロトコル・セッション）、`Voice/GeminiLive/`、`VoiceEngine` enum、エンジン切替 Picker、`-voice-engine` 起動引数、対応テスト 2 ファイル
   - STT が案 B と共用していたイベントパーサ・`inputAudioAppend` は transcription 専用型（`OpenAITranscriptionServerEvent` / `OpenAITranscriptionClientEvent`）として `CloudPipeline` へ移し、パーサテストも `CloudPipelineProtocolTests` に移植

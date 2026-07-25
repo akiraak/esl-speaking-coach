@@ -1,16 +1,10 @@
 import Foundation
 
-/// Gemini TTS（採用 TTS）の設定。
+/// Gemini TTS（採用 TTS）の設定。voice / スタイル前置文は発話ごとに SpeechStyle で受け取る
+/// （2 キャラの voice 切替。ChatCharacter.speechStyle が渡ってくる）。
 struct GeminiTTSConfiguration: Sendable {
     /// 2026-07 時点の現行 TTS モデル（models エンドポイントで確認済み）
     var model = "gemini-3.1-flash-tts-preview"
-    /// voice はモデル・パラメータ調整タスクで確定する（2 キャラ化で Chobi=Leda / Naruko=Aoede）
-    var voice = "Aoede"
-    /// Gemini TTS は独立した instructions フィールドが無く、テキスト先頭の自然文指示で話し方を制御する
-    var styleInstruction = """
-        Read aloud in a warm, clear, slightly unhurried voice, like a friendly English \
-        conversation coach:
-        """
 
     /// 認証は URL クエリの key。
     func endpoint(apiKey: String) -> URL {
@@ -47,21 +41,24 @@ struct GeminiTTSClient: SentenceTTSClient {
         return URLSession(configuration: configuration)
     }()
 
-    var voiceDescription: String {
-        "\(configuration.model) (\(configuration.voice))"
+    var modelDescription: String {
+        configuration.model
     }
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
-    static func makeRequestBody(configuration: GeminiTTSConfiguration, text: String) throws -> Data {
+    /// Gemini TTS は独立した instructions フィールドが無く、テキスト先頭の自然文指示で話し方を制御する。
+    static func makeRequestBody(
+        configuration: GeminiTTSConfiguration, text: String, style: SpeechStyle
+    ) throws -> Data {
         let payload: [String: Any] = [
             "contents": [
-                ["parts": [["text": configuration.styleInstruction + "\n" + text]]]
+                ["parts": [["text": style.styleInstruction + "\n" + text]]]
             ],
             "generationConfig": [
                 "responseModalities": ["AUDIO"],
                 "speechConfig": [
                     "voiceConfig": [
-                        "prebuiltVoiceConfig": ["voiceName": configuration.voice]
+                        "prebuiltVoiceConfig": ["voiceName": style.voice]
                     ]
                 ],
             ],
@@ -69,7 +66,7 @@ struct GeminiTTSClient: SentenceTTSClient {
         return try JSONSerialization.data(withJSONObject: payload)
     }
 
-    func streamPCM(apiKey: String, text: String) -> AsyncThrowingStream<Data, Error> {
+    func streamPCM(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<Data, Error> {
         let configuration = configuration
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -77,7 +74,8 @@ struct GeminiTTSClient: SentenceTTSClient {
                     var request = URLRequest(url: configuration.endpoint(apiKey: apiKey))
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.httpBody = try Self.makeRequestBody(configuration: configuration, text: text)
+                    request.httpBody = try Self.makeRequestBody(
+                        configuration: configuration, text: text, style: style)
 
                     let (bytes, response) = try await Self.session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {

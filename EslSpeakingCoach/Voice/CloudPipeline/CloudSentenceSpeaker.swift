@@ -1,17 +1,26 @@
 import Foundation
 
-/// クラウド TTS のターン単位ストリーミング再生（旧 SentenceSpeaker の AVSpeech 実装を置換）。
-/// SentenceChunker が切り出した文を enqueue した順に 1 文ずつ HTTP ストリーミングで取得し、
-/// StreamingAudioPlayer（24kHz PCM16）へ流す。TTS プロバイダは
-/// SentenceTTSClient の実装（OpenAI / Gemini）を差し替えて比較する。
+/// 読み上げキューに積む 1 文。utteranceID は発話（= 吹き出し）単位で共有する。
+struct SpeechItem: Sendable {
+    let utteranceID: UUID
+    let text: String
+    let style: SpeechStyle
+}
+
+/// クラウド TTS のターン単位ストリーミング再生。
+/// ScriptStreamChunker が切り出した文を enqueue した順に 1 文ずつ HTTP ストリーミングで取得し、
+/// StreamingAudioPlayer（24kHz PCM16）へ流す。発話ごとに SpeechStyle（voice / スタイル前置文）を
+/// 切り替え、発話の音声が実際に再生開始されたタイミングを onUtteranceAudioStarted で通知する
+/// （吹き出しを読み上げ開始時に表示するため）。
 /// 前の文の取得が終わり次第すぐ次の文の取得を始めるので、再生中に次の文のダウンロードが進む。
-/// 通知の形（onTurnAudioStarted / onTurnFinished）は旧 SentenceSpeaker と同じ。
 @MainActor
 final class CloudSentenceSpeaker {
     /// ターン内で最初のバッファ再生を開始した（レイテンシ計測点）。
     var onTurnAudioStarted: (() -> Void)?
     /// endStream 済み かつ キューの文を全部再生し終えた。
     var onTurnFinished: (() -> Void)?
+    /// 発話の音声再生が実際に始まった。
+    var onUtteranceAudioStarted: ((UUID) -> Void)?
     /// 文単位の取得失敗（その文はスキップして続行する）。
     var onError: ((String) -> Void)?
 
@@ -19,9 +28,11 @@ final class CloudSentenceSpeaker {
     private let apiKeyProvider: @Sendable () -> String?
     private let player = StreamingAudioPlayer()
 
-    private var sentenceQueue: [String] = []
+    private var sentenceQueue: [SpeechItem] = []
     private var fetchTask: Task<Void, Never>?
     private var streamEnded = false
+    /// 直前にマーカーを積んだ発話。同一発話の 2 文目以降にはマーカーを付けない
+    private var lastMarkedUtteranceID: UUID?
     /// stopNow 後に取得途中の古い音声を積まないための世代カウンタ。
     private var turnID = 0
 
@@ -30,10 +41,11 @@ final class CloudSentenceSpeaker {
         self.apiKeyProvider = apiKeyProvider
         player.onTurnAudioStarted = { [weak self] in self?.onTurnAudioStarted?() }
         player.onTurnFinished = { [weak self] in self?.onTurnFinished?() }
+        player.onMarkerReached = { [weak self] id in self?.onUtteranceAudioStarted?(id) }
     }
 
-    var voiceDescription: String {
-        client.voiceDescription
+    var modelDescription: String {
+        client.modelDescription
     }
 
     func prepare() throws {
@@ -43,11 +55,12 @@ final class CloudSentenceSpeaker {
     func beginTurn() {
         sentenceQueue.removeAll()
         streamEnded = false
+        lastMarkedUtteranceID = nil
         player.beginTurn()
     }
 
-    func enqueue(_ sentence: String) {
-        sentenceQueue.append(sentence)
+    func enqueue(_ item: SpeechItem) {
+        sentenceQueue.append(item)
         startFetchingIfIdle()
     }
 
@@ -91,11 +104,19 @@ final class CloudSentenceSpeaker {
             while true {
                 guard let self, !Task.isCancelled, self.turnID == startedTurnID else { return }
                 guard !self.sentenceQueue.isEmpty else { break }
-                let sentence = self.sentenceQueue.removeFirst()
+                let item = self.sentenceQueue.removeFirst()
+                // 発話の先頭チャンクにだけマーカーを付ける（1 文目の TTS が丸ごと失敗したら 2 文目が引き継ぐ）
+                var pendingMarker: UUID? =
+                    item.utteranceID == self.lastMarkedUtteranceID ? nil : item.utteranceID
                 do {
-                    for try await chunk in self.client.streamPCM(apiKey: apiKey, text: sentence) {
+                    for try await chunk in self.client.streamPCM(
+                        apiKey: apiKey, text: item.text, style: item.style) {
                         guard !Task.isCancelled, self.turnID == startedTurnID else { return }
-                        self.player.enqueue(pcm16Data: chunk)
+                        self.player.enqueue(pcm16Data: chunk, marker: pendingMarker)
+                        if pendingMarker != nil {
+                            self.lastMarkedUtteranceID = item.utteranceID
+                            pendingMarker = nil
+                        }
                     }
                 } catch is CancellationError {
                     return

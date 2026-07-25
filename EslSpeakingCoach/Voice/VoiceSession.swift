@@ -25,13 +25,15 @@ enum VoiceSessionEvent: Sendable {
     case userPartialTranscript(String)
     /// 発話終端が確定し、user ターンとして履歴に積んだ
     case userTurnCommitted(String)
-    /// Claude のストリーミング応答の断片
-    case assistantTextDelta(String)
-    /// assistant ターンの全文が確定した
-    case assistantTurnCompleted(String)
+    /// 発話（1 キャラの 1 吹き出し）の読み上げが実際に始まった。text はその時点までの確定分
+    case assistantUtteranceBegan(id: UUID, speaker: ChatCharacter, text: String)
+    /// 読み上げ開始済みの発話のテキストがストリーミングで伸びた
+    case assistantUtteranceUpdated(id: UUID, text: String)
+    /// 学習者の goodbye（制御行 [end]）を検知した。closing の読み上げ完了後に通知する
+    case sessionEndDetected
     /// 1 ターン分のレイテンシ実測値
     case turnMetrics(TurnMetrics)
-    /// マイク入力の RMS レベル（barge-in しきい値チューニング用）
+    /// マイク入力の RMS レベル（音声モードの波形表示用）
     case micLevel(Float)
     case info(String)
     case failure(String)
@@ -62,8 +64,10 @@ protocol VoiceSession: AnyObject {
     var events: AsyncStream<VoiceSessionEvent> { get }
     func start() async
     func stop()
-    #if DEBUG
-    /// マイク・STT を経由せず user ターンを投入する（シミュレータでマイクが使えないときの検証用）。
+    /// テキストモードの user ターン投入（マイク・STT を経由しない。AI は音声で返す）。
+    /// 読み上げ / 生成中の送信は barge-in と同じ扱いになる。
     func submitTypedUserTurn(_ text: String)
-    #endif
+    /// 音声入力（STT 接続 + マイク）の有効 / 無効。読み上げ（TTS）には影響しない。
+    /// 入力バーのテキスト⇔音声モード切替と、音声モードの一時停止（⏸）から呼ぶ。
+    func setVoiceInputEnabled(_ enabled: Bool)
 }

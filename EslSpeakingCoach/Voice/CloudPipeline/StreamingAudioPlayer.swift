@@ -10,6 +10,8 @@ final class StreamingAudioPlayer {
     var onTurnAudioStarted: (() -> Void)?
     /// endStream 済み かつ スケジュールしたバッファを全部再生し終えた。
     var onTurnFinished: (() -> Void)?
+    /// マーカー付きバッファの再生が実際に始まった（発話単位の吹き出し表示タイミング）。
+    var onMarkerReached: ((UUID) -> Void)?
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -17,6 +19,8 @@ final class StreamingAudioPlayer {
         commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
 
     private var pendingBuffers = 0
+    /// スケジュール済みバッファと並行するマーカー列。先頭 = 再生中（または次に再生される）バッファ
+    private var markerQueue: [UUID?] = []
     private var streamEnded = false
     private var startedThisTurn = false
     /// stopNow 後に届く古いバッファの完了通知を無視するための世代カウンタ。
@@ -37,13 +41,18 @@ final class StreamingAudioPlayer {
 
     func beginTurn() {
         pendingBuffers = 0
+        markerQueue.removeAll()
         streamEnded = false
         startedThisTurn = false
     }
 
-    func enqueue(pcm16Data: Data) {
+    /// marker には発話（吹き出し）の先頭チャンクで utteranceID を渡す。
+    /// そのバッファの再生が実際に始まるタイミングで onMarkerReached が発火する。
+    func enqueue(pcm16Data: Data, marker: UUID? = nil) {
         guard let buffer = Self.makeBuffer(pcm16Data: pcm16Data, format: format) else { return }
+        let wasIdle = pendingBuffers == 0
         pendingBuffers += 1
+        markerQueue.append(marker)
         let scheduledTurnID = turnID
         player.scheduleBuffer(buffer) { [weak self] in
             Task { @MainActor in self?.handleBufferFinished(turnID: scheduledTurnID) }
@@ -54,6 +63,9 @@ final class StreamingAudioPlayer {
         if !startedThisTurn {
             startedThisTurn = true
             onTurnAudioStarted?()
+        }
+        if wasIdle {
+            fireMarkerAtHead()
         }
     }
 
@@ -67,6 +79,7 @@ final class StreamingAudioPlayer {
     func stopNow() {
         turnID += 1
         pendingBuffers = 0
+        markerQueue.removeAll()
         streamEnded = false
         startedThisTurn = true
         player.stop()
@@ -81,7 +94,19 @@ final class StreamingAudioPlayer {
     private func handleBufferFinished(turnID: Int) {
         guard turnID == self.turnID, pendingBuffers > 0 else { return }
         pendingBuffers -= 1
+        if !markerQueue.isEmpty {
+            markerQueue.removeFirst()
+        }
+        // 次のバッファの再生が始まった
+        fireMarkerAtHead()
         finishIfDrained()
+    }
+
+    /// 先頭（= 再生が始まったバッファ）のマーカーを 1 度だけ発火する。
+    private func fireMarkerAtHead() {
+        guard let head = markerQueue.first, let marker = head else { return }
+        markerQueue[0] = nil
+        onMarkerReached?(marker)
     }
 
     private func finishIfDrained() {

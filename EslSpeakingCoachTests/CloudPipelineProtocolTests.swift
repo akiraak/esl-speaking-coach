@@ -99,39 +99,47 @@ final class CloudPipelineProtocolTests: XCTestCase {
     // MARK: - TTS のリクエスト
 
     /// /v1/audio/speech のボディ形式を固定する（response_format=pcm で 24kHz PCM16 が返る前提）。
+    /// OpenAI は voice 体系が異なるため SpeechStyle.voice ではなく設定の固定 voice を使う。
     func testTTSRequestBodyShape() throws {
         let data = try OpenAITTSClient.makeRequestBody(
-            configuration: OpenAITTSConfiguration(), text: "Hello there.")
+            configuration: OpenAITTSConfiguration(), text: "Hello there.",
+            style: ChatCharacter.chobi.speechStyle)
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         XCTAssertEqual(object["model"] as? String, "gpt-4o-mini-tts")
         XCTAssertEqual(object["voice"] as? String, "coral")
         XCTAssertEqual(object["input"] as? String, "Hello there.")
         XCTAssertEqual(object["response_format"] as? String, "pcm")
-        XCTAssertFalse((object["instructions"] as? String ?? "").isEmpty)
+        XCTAssertEqual(
+            object["instructions"] as? String, ChatCharacter.chobi.speechStyle.styleInstruction)
     }
 
     // MARK: - Gemini TTS のリクエストと SSE パース
 
     /// streamGenerateContent のボディ形式を固定する（responseModalities=AUDIO + prebuilt voice。
     /// 話し方は独立フィールドが無いためテキスト先頭の自然文指示で制御する）。
+    /// voice / スタイル前置文は発話ごとの SpeechStyle（キャラ）で切り替わること。
     func testGeminiTTSRequestBodyShape() throws {
-        let data = try GeminiTTSClient.makeRequestBody(
-            configuration: GeminiTTSConfiguration(), text: "Hello there.")
-        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for (character, expectedVoice) in [(ChatCharacter.chobi, "Leda"), (.naruko, "Aoede")] {
+            let data = try GeminiTTSClient.makeRequestBody(
+                configuration: GeminiTTSConfiguration(), text: "Hello there.",
+                style: character.speechStyle)
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-        let contents = try XCTUnwrap(object["contents"] as? [[String: Any]])
-        let parts = try XCTUnwrap(contents[0]["parts"] as? [[String: Any]])
-        let text = try XCTUnwrap(parts[0]["text"] as? String)
-        XCTAssertTrue(text.hasSuffix("\nHello there."))
-        XCTAssertTrue(text.contains("conversation coach"))
+            let contents = try XCTUnwrap(object["contents"] as? [[String: Any]])
+            let parts = try XCTUnwrap(contents[0]["parts"] as? [[String: Any]])
+            let text = try XCTUnwrap(parts[0]["text"] as? String)
+            XCTAssertTrue(text.hasSuffix("\nHello there."))
+            XCTAssertTrue(text.hasPrefix(character.speechStyle.styleInstruction))
 
-        let generationConfig = try XCTUnwrap(object["generationConfig"] as? [String: Any])
-        XCTAssertEqual(generationConfig["responseModalities"] as? [String], ["AUDIO"])
-        let speechConfig = try XCTUnwrap(generationConfig["speechConfig"] as? [String: Any])
-        let voiceConfig = try XCTUnwrap(speechConfig["voiceConfig"] as? [String: Any])
-        XCTAssertEqual(
-            (voiceConfig["prebuiltVoiceConfig"] as? [String: Any])?["voiceName"] as? String, "Aoede")
+            let generationConfig = try XCTUnwrap(object["generationConfig"] as? [String: Any])
+            XCTAssertEqual(generationConfig["responseModalities"] as? [String], ["AUDIO"])
+            let speechConfig = try XCTUnwrap(generationConfig["speechConfig"] as? [String: Any])
+            let voiceConfig = try XCTUnwrap(speechConfig["voiceConfig"] as? [String: Any])
+            XCTAssertEqual(
+                (voiceConfig["prebuiltVoiceConfig"] as? [String: Any])?["voiceName"] as? String,
+                expectedVoice)
+        }
     }
 
     func testGeminiTTSEndpointUsesModelAndKey() {

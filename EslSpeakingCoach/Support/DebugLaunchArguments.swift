@@ -23,13 +23,7 @@ enum DebugLaunchArguments {
         }
     }
 
-    /// 起動時に会話画面まで自動遷移する（UI スモークテスト用）。
-    static var shouldOpenConversation: Bool {
-        let args = ProcessInfo.processInfo.arguments
-        return args.contains("-open-conversation") || shouldStartConversation
-    }
-
-    /// 会話画面を開いてセッションも自動開始する（権限 → STT モデル → マイクの起動パス確認用）。
+    /// 起動時に Free talk セッションを自動開始する（権限 → STT モデル → マイクの起動パス確認用）。
     static var shouldStartConversation: Bool {
         ProcessInfo.processInfo.arguments.contains("-start-conversation")
     }

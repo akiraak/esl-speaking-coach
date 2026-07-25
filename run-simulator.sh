@@ -30,7 +30,8 @@ xcodegen generate
 echo "==> シミュレータ向けビルド..."
 xcodebuild -project EslSpeakingCoach.xcodeproj -scheme "$SCHEME" \
   -destination "platform=iOS Simulator,name=$SIM_NAME" build \
-  | grep -E "error|BUILD" || true
+  | grep -E "error|BUILD" \
+  || { echo "エラー: ビルドに失敗しました（古いアプリをインストールしないため中断）" >&2; exit 1; }
 
 APP_PATH=$(xcodebuild -project EslSpeakingCoach.xcodeproj -scheme "$SCHEME" \
   -destination "platform=iOS Simulator,name=$SIM_NAME" -showBuildSettings 2>/dev/null \

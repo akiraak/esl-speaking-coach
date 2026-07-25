@@ -1,15 +1,11 @@
 import Foundation
 
-/// gpt-4o-mini-tts（案 A2 の TTS）の設定。
+/// gpt-4o-mini-tts（聞き比べ用 TTS）の設定。
+/// voice 体系が Gemini と異なるため SpeechStyle.voice は使わず固定 voice で読む
+/// （スタイル前置文のみ instructions として反映する）。
 struct OpenAITTSConfiguration: Sendable {
     var model = "gpt-4o-mini-tts"
     var voice = "coral"
-    /// 話し方の指示（gpt-4o-mini-tts は instructions で話速・トーンを制御できる。ESL 適性の根拠）
-    var instructions = """
-        You are the voice of a warm, friendly English conversation coach talking with an adult \
-        ESL learner. Speak clearly at a natural, slightly unhurried pace. Sound encouraging and \
-        genuinely curious.
-        """
     var endpoint = URL(string: "https://api.openai.com/v1/audio/speech")!
 }
 
@@ -32,7 +28,7 @@ enum OpenAITTSError: Error, LocalizedError {
 struct OpenAITTSClient: SentenceTTSClient {
     var configuration = OpenAITTSConfiguration()
 
-    var voiceDescription: String {
+    var modelDescription: String {
         "\(configuration.model) (\(configuration.voice))"
     }
 
@@ -44,18 +40,20 @@ struct OpenAITTSClient: SentenceTTSClient {
     }()
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
-    static func makeRequestBody(configuration: OpenAITTSConfiguration, text: String) throws -> Data {
+    static func makeRequestBody(
+        configuration: OpenAITTSConfiguration, text: String, style: SpeechStyle
+    ) throws -> Data {
         try JSONSerialization.data(withJSONObject: [
             "model": configuration.model,
             "voice": configuration.voice,
             "input": text,
-            "instructions": configuration.instructions,
+            "instructions": style.styleInstruction,
             "response_format": "pcm",
         ])
     }
 
     /// 1 文ぶんの音声を PCM16 24kHz mono LE のチャンク列としてストリーミング取得する。
-    func streamPCM(apiKey: String, text: String) -> AsyncThrowingStream<Data, Error> {
+    func streamPCM(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<Data, Error> {
         let configuration = configuration
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -64,7 +62,8 @@ struct OpenAITTSClient: SentenceTTSClient {
                     request.httpMethod = "POST"
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.httpBody = try Self.makeRequestBody(configuration: configuration, text: text)
+                    request.httpBody = try Self.makeRequestBody(
+                        configuration: configuration, text: text, style: style)
 
                     let (bytes, response) = try await Self.session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {

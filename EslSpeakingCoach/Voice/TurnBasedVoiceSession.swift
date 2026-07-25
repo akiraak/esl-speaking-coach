@@ -2,22 +2,33 @@ import AVFAudio
 import Foundation
 import UIKit
 
-/// 案 A2（クラウド STT + Claude + クラウド TTS）の VoiceSession 実装。
-/// マイク → gpt-4o-transcribe（WebSocket） → Claude（SSE） → クラウド TTS（HTTP ストリーミング）を
-/// ターン制で回す。会話相手は Claude のまま。
+/// クラウド STT + Claude + クラウド TTS の VoiceSession 実装（2 キャラ台本方式）。
+/// マイク → gpt-4o-transcribe（WebSocket） → Claude（SSE・Chobi / Naruko の台本） →
+/// クラウド TTS（発話ごとに voice 切替）をターン制で回す。
 ///
 /// 発話終端・barge-in は STT セッションのサーバ VAD を使う。
 ///
 /// 状態遷移:
-///   listening --(サーバ VAD: speech_stopped)--> thinking --(STT 確定 → Claude → 初文 TTS 再生)--> speaking --> listening
-///   speaking / thinking 中に speech_started が来たら barge-in（TTS 停止 + Claude キャンセル）で listening へ戻る。
-///   STT 切断時は reconnecting（backoff 付き再接続）、割り込み・バックグラウンド遷移時は suspended を経由して復帰する。
+///   listening --(サーバ VAD: speech_stopped / テキスト送信)--> thinking
+///     --(STT 確定 → Claude → 初文 TTS 再生)--> speaking --> listening
+///   speaking / thinking 中に speech_started かテキスト送信が来たら barge-in
+///   （TTS 停止 + Claude キャンセル + 読み上げ開始済み発話まで履歴確定）で listening へ戻る。
+///   STT 切断時は reconnecting（backoff 付き再接続）、割り込み・バックグラウンド遷移時は
+///   suspended を経由して復帰する。
+///
+/// 入力モード: setVoiceInputEnabled で STT + マイクだけを起動 / 停止できる（TTS 再生は常に有効）。
+/// テキストモードでは STT 非接続のまま listening になり、submitTypedUserTurn でターンを進める。
+///
+/// セッションフロー: Configuration.initialTopic があると、ready 後に制御メッセージ
+/// [New topic: X] を履歴に積んで AI 側から開始ターンを生成する。学習者の goodbye で台本に
+/// 制御行 [end] が現れたら、closing の読み上げ完了後に sessionEndDetected を通知する
+/// （表示・読み上げはしない）。
 ///
 /// 寿命: start〜stop の間は切断・割り込みから自力で復帰する。stop 後の再 start はできない（毎回作り直す）。
 ///
 /// エラーの扱い:
 ///   - 致命的（キー未設定・マイク権限拒否・再接続 backoff 尽き等）→ .failure を流して stop()。
-///     events が finish するので ViewModel 側は自動的にデタッチされる
+///     events が finish するので呼び出し側は自動的にデタッチされる
 ///   - 回復可能（Claude ターン 1 回の失敗・TTS 1 文の失敗・STT 1 セグメントの失敗）→ .info 通知で継続
 @MainActor
 final class TurnBasedVoiceSession: VoiceSession {
@@ -27,6 +38,12 @@ final class TurnBasedVoiceSession: VoiceSession {
         var ttsProvider: TTSProvider = .gemini
         var openAITTS = OpenAITTSConfiguration()
         var geminiTTS = GeminiTTSConfiguration()
+        /// ready 後に AI 側から開始するトピック（[New topic: X] を送る）
+        var initialTopic: String?
+        /// 開始時点の音声入力（STT + マイク）の有効 / 無効
+        var voiceInputEnabled = true
+        /// 途中再開用の会話履歴（エラー後の立て直しで使う）
+        var initialHistory: [ConversationMessage] = []
     }
 
     let events: AsyncStream<VoiceSessionEvent>
@@ -47,7 +64,21 @@ final class TurnBasedVoiceSession: VoiceSession {
         didSet { eventContinuation.yield(.stateChanged(state)) }
     }
 
+    /// 現在ターンの台本発話（吹き出し単位）。
+    private struct TurnUtterance {
+        let id = UUID()
+        let index: Int
+        let speaker: ChatCharacter
+        var text: String
+        /// 読み上げ（= 吹き出し表示）開始済みか。barge-in 時はここまでを履歴に確定する
+        var hasBegun = false
+    }
+
     private var history: [ConversationMessage] = []
+    private var turnUtterances: [TurnUtterance] = []
+    private var scriptEndDetected = false
+    private var pendingInitialTopic: String?
+    private var isVoiceInputEnabled: Bool
     private var transcriber: (any StreamingSpeechTranscriber)?
     private var sttEventTask: Task<Void, Never>?
     private var claudeTask: Task<Void, Never>?
@@ -79,6 +110,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         self.claudeKeyProvider = claudeKeyProvider
         self.openAIKeyProvider = openAIKeyProvider
         self.geminiKeyProvider = geminiKeyProvider
+        self.pendingInitialTopic = configuration.initialTopic
+        self.isVoiceInputEnabled = configuration.voiceInputEnabled
+        self.history = configuration.initialHistory
         switch configuration.ttsProvider {
         case .openAI:
             speaker = CloudSentenceSpeaker(
@@ -94,6 +128,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
         speaker.onTurnAudioStarted = { [weak self] in self?.handleTurnAudioStarted() }
         speaker.onTurnFinished = { [weak self] in self?.handleTurnFinished() }
+        speaker.onUtteranceAudioStarted = { [weak self] id in self?.handleUtteranceAudioStarted(id) }
         speaker.onError = { [weak self] message in self?.eventContinuation.yield(.info(message)) }
     }
 
@@ -104,11 +139,12 @@ final class TurnBasedVoiceSession: VoiceSession {
         hasStarted = true
         state = .preparing
 
-        guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
-            fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
-            return
+        if configuration.voiceInputEnabled {
+            guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
+                fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
+                return
+            }
         }
-        _ = openAIKey
         if configuration.ttsProvider == .gemini {
             guard let geminiKey = geminiKeyProvider(), !geminiKey.isEmpty else {
                 fail("Gemini API キーが未設定です。.secrets/gemini-api-key を用意して再インストールしてください。")
@@ -119,6 +155,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             fail("Anthropic API キーが未設定です。設定画面から保存してください。")
             return
         }
+        _ = claudeKey
 
         #if targetEnvironment(simulator)
         // シミュレータでは音声入力ユニットの初期化が CoreAudio の RPC タイムアウトで abort するため
@@ -133,9 +170,11 @@ final class TurnBasedVoiceSession: VoiceSession {
             return
         }
         #else
-        guard await AVAudioApplication.requestRecordPermission() else {
-            fail("マイクの使用が許可されていません。設定アプリから許可してください。")
-            return
+        if configuration.voiceInputEnabled {
+            guard await AVAudioApplication.requestRecordPermission() else {
+                fail("マイクの使用が許可されていません。設定アプリから許可してください。")
+                return
+            }
         }
         do {
             let audioSession = AVAudioSession.sharedInstance()
@@ -158,8 +197,13 @@ final class TurnBasedVoiceSession: VoiceSession {
         }
 
         startSystemObservers()
-        eventContinuation.yield(.info("STT へ接続中… (\(configuration.transcription.model))"))
-        connectSTT()
+        if isVoiceInputEnabled {
+            eventContinuation.yield(.info("STT へ接続中… (\(configuration.transcription.model))"))
+            connectSTT()
+        } else {
+            state = .listening
+            startInitialTopicIfNeeded()
+        }
     }
 
     func stop() {
@@ -169,20 +213,11 @@ final class TurnBasedVoiceSession: VoiceSession {
             NotificationCenter.default.removeObserver(token)
         }
         observerTokens.removeAll()
-        sttEventTask?.cancel()
         claudeTask?.cancel()
-        micStreamTask?.cancel()
-        levelTask?.cancel()
-        micWatchdogTask?.cancel()
-        reconnectTask?.cancel()
-        sttEventTask = nil
         claudeTask = nil
-        micStreamTask = nil
+        tearDownSTT()
+        levelTask?.cancel()
         levelTask = nil
-        micWatchdogTask = nil
-        reconnectTask = nil
-        transcriber?.stop()
-        transcriber = nil
         speaker.shutdown()
         microphone.router.detachRaw()
         microphone.stop()
@@ -194,17 +229,25 @@ final class TurnBasedVoiceSession: VoiceSession {
     }
 
     /// 復帰不能なエラー。failure を通知してセッションを終了する
-    /// （events が finish することで ViewModel 側もデタッチされる）。
+    /// （events が finish することで呼び出し側もデタッチされる）。
     private func fail(_ message: String) {
         eventContinuation.yield(.failure(message))
         stop()
     }
 
-    #if DEBUG
-    /// STT を経由せず user ターンを投入する（シミュレータでの Claude / TTS 検証用）。
+    /// テキストモードの user ターン投入。読み上げ / 生成中の送信は barge-in と同じ扱い。
     func submitTypedUserTurn(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, state == .listening, claudeTask == nil else { return }
+        guard !trimmed.isEmpty, hasStarted, !isStopped else { return }
+        switch state {
+        case .listening:
+            break
+        case .thinking, .speaking:
+            interruptAssistantTurn()
+        default:
+            return
+        }
+        guard claudeTask == nil else { return }
         state = .thinking
 
         metrics = TurnMetricsBuilder()
@@ -214,12 +257,28 @@ final class TurnBasedVoiceSession: VoiceSession {
         metrics.transcriptFinalizedAt = now
         commitText(trimmed)
     }
-    #endif
+
+    /// 音声入力（STT + マイク）の有効 / 無効。読み上げには影響しない。
+    func setVoiceInputEnabled(_ enabled: Bool) {
+        guard enabled != isVoiceInputEnabled else { return }
+        isVoiceInputEnabled = enabled
+        guard hasStarted, !isStopped, state != .suspended else { return }
+        if enabled {
+            guard transcriber == nil else { return }
+            reconnectPolicy.reset()
+            eventContinuation.yield(.info("音声入力を開始します。STT へ接続中…"))
+            connectSTT()
+        } else {
+            tearDownSTT()
+            eventContinuation.yield(.userPartialTranscript(""))
+            if state == .reconnecting { state = .listening }
+        }
+    }
 
     // MARK: - STT 接続・再接続
 
     private func connectSTT() {
-        guard !isStopped else { return }
+        guard !isStopped, isVoiceInputEnabled else { return }
         guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
             fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
             return
@@ -236,10 +295,24 @@ final class TurnBasedVoiceSession: VoiceSession {
         stt.connect()
     }
 
+    /// STT 側の停止と認識途中状態の破棄（モード切替・suspend・stop の共通処理）。
+    private func tearDownSTT() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        sttEventTask?.cancel()
+        sttEventTask = nil
+        transcriber?.stop()
+        transcriber = nil
+        stopMicrophoneStreaming()
+        isUserSpeaking = false
+        pendingSegments = 0
+        pendingTurnText = ""
+    }
+
     /// STT 切断。セッションを殺さず backoff 付きで再接続する（Wi-Fi ⇔ LTE 切替やサーバ側打ち切り対策）。
     /// 認識途中のセグメントは失われるが、確定済みの pendingTurnText は再接続後に commit する。
     private func handleSTTConnectionLost(_ message: String) {
-        guard !isStopped else { return }
+        guard !isStopped, isVoiceInputEnabled else { return }
         isUserSpeaking = false
         pendingSegments = 0
         sttEventTask?.cancel()
@@ -277,7 +350,8 @@ final class TurnBasedVoiceSession: VoiceSession {
             case .preparing:
                 state = .listening
                 eventContinuation.yield(.info(
-                    "接続完了（STT: \(configuration.transcription.model), TTS: \(speaker.voiceDescription), LLM: \(client.parameters.model)）"))
+                    "接続完了（STT: \(configuration.transcription.model), TTS: \(speaker.modelDescription), LLM: \(client.parameters.model)）"))
+                startInitialTopicIfNeeded()
             case .reconnecting:
                 state = .listening
                 eventContinuation.yield(.info("STT 再接続完了"))
@@ -330,9 +404,7 @@ final class TurnBasedVoiceSession: VoiceSession {
     private func handleSpeechStarted() {
         isUserSpeaking = true
         if claudeTask != nil || state == .speaking {
-            claudeTask?.cancel()
-            claudeTask = nil
-            speaker.stopNow()
+            interruptAssistantTurn()
             eventContinuation.yield(.info("割り込みを検知しました"))
         }
         if state != .listening { state = .listening }
@@ -353,6 +425,16 @@ final class TurnBasedVoiceSession: VoiceSession {
     }
 
     // MARK: - Turn commit → Claude
+
+    /// ready 直後に AI 側から開始ターンを生成する（トピックカードでの選択に対応）。
+    private func startInitialTopicIfNeeded() {
+        guard let topic = pendingInitialTopic else { return }
+        pendingInitialTopic = nil
+        state = .thinking
+        metrics = TurnMetricsBuilder()
+        appendUserMessage("[New topic: \(topic)]")
+        startClaudeTurn()
+    }
 
     private func commitText(_ text: String) {
         appendUserMessage(text)
@@ -377,13 +459,14 @@ final class TurnBasedVoiceSession: VoiceSession {
         }
 
         speaker.beginTurn()
+        turnUtterances = []
+        scriptEndDetected = false
         let stream = client.streamReply(
             apiKey: apiKey, system: CoachSystemPrompt.text, messages: history)
 
         claudeTask = Task { [weak self] in
             guard let self else { return }
-            var chunker = SentenceChunker()
-            var fullText = ""
+            var chunker = ScriptStreamChunker()
             self.metrics.requestStartedAt = Date()
 
             do {
@@ -393,42 +476,57 @@ final class TurnBasedVoiceSession: VoiceSession {
                         if self.metrics.firstDeltaAt == nil {
                             self.metrics.firstDeltaAt = Date()
                         }
-                        fullText += delta
-                        self.eventContinuation.yield(.assistantTextDelta(delta))
-                        for sentence in chunker.consume(delta) {
-                            self.enqueueSentence(sentence)
-                        }
+                        self.handleScriptSentences(chunker.consume(delta))
                     case .messageStopped(let stopReason):
                         if let stopReason, stopReason != "end_turn" {
                             self.eventContinuation.yield(.info("stop_reason: \(stopReason)"))
                         }
                     }
                 }
-                if let rest = chunker.flush() {
-                    self.enqueueSentence(rest)
+                self.handleScriptSentences(chunker.flush())
+                if chunker.endDetected {
+                    self.scriptEndDetected = true
                 }
                 self.claudeTask = nil
-                self.finishAssistantTurn(fullText: fullText)
                 self.speaker.endStream()
             } catch is CancellationError {
-                self.finishAssistantTurn(fullText: fullText)
+                // barge-in / suspend 側で読み上げ済み発話まで履歴確定済み
             } catch {
-                if Task.isCancelled {
-                    self.finishAssistantTurn(fullText: fullText)
-                    return
-                }
+                if Task.isCancelled { return }
                 self.claudeTask = nil
-                self.handleClaudeTurnError(error, attempt: attempt, partialText: fullText)
+                self.handleClaudeTurnError(error, attempt: attempt)
             }
+        }
+    }
+
+    /// 台本から切り出された文を発話（吹き出し）へ積み、TTS キューへ流す。
+    private func handleScriptSentences(_ sentences: [ScriptSentence]) {
+        for sentence in sentences {
+            if metrics.firstSentenceAt == nil {
+                metrics.firstSentenceAt = Date()
+            }
+            if let last = turnUtterances.last, last.index == sentence.utteranceIndex {
+                let joined = last.text + " " + sentence.text
+                turnUtterances[turnUtterances.count - 1].text = joined
+                if last.hasBegun {
+                    eventContinuation.yield(.assistantUtteranceUpdated(id: last.id, text: joined))
+                }
+            } else {
+                turnUtterances.append(TurnUtterance(
+                    index: sentence.utteranceIndex, speaker: sentence.speaker, text: sentence.text))
+            }
+            guard let current = turnUtterances.last else { continue }
+            speaker.enqueue(SpeechItem(
+                utteranceID: current.id, text: sentence.text, style: sentence.speaker.speechStyle))
         }
     }
 
     /// Claude ターンの失敗はセッションを殺さない（回復可能エラー）。
     /// 何も出力される前の失敗は 1 回だけ自動リトライし、それでもだめなら listening に戻して
-    /// もう一度話してもらう。途中まで出力があった場合はそこまでを履歴に残して打ち切る。
-    private func handleClaudeTurnError(_ error: Error, attempt: Int, partialText: String) {
+    /// もう一度話してもらう。途中まで出力があった場合はそこまでを読み切って履歴に残す。
+    private func handleClaudeTurnError(_ error: Error, attempt: Int) {
         guard !isStopped else { return }
-        if partialText.isEmpty, attempt == 0 {
+        if turnUtterances.isEmpty, attempt == 0 {
             eventContinuation.yield(.info(
                 "応答の取得に失敗したためリトライします: \(error.localizedDescription)"))
             // リトライ待ちにも claudeTask を使う（barge-in の cancel 導線をそのまま効かせる）
@@ -442,28 +540,49 @@ final class TurnBasedVoiceSession: VoiceSession {
             }
             return
         }
-        finishAssistantTurn(fullText: partialText)
-        if partialText.isEmpty {
+        if turnUtterances.isEmpty {
             eventContinuation.yield(.info(
                 "応答を取得できませんでした。もう一度話しかけてください: \(error.localizedDescription)"))
         } else {
             eventContinuation.yield(.info("応答が途中で終了しました: \(error.localizedDescription)"))
         }
+        // 取得済みの文はこのまま読み切り、onTurnFinished で履歴確定する。
         // 文が 1 つも積まれていなくても endStream で onTurnFinished が飛び listening に戻る
         speaker.endStream()
     }
 
-    private func finishAssistantTurn(fullText: String) {
-        guard !fullText.isEmpty else { return }
-        history.append(ConversationMessage(role: .assistant, text: fullText))
-        eventContinuation.yield(.assistantTurnCompleted(fullText))
+    /// 応答の生成・読み上げを即時停止し、読み上げ開始済みの発話までを履歴に確定する
+    /// （barge-in / テキスト割り込み / suspend / 経路変更の共通処理）。
+    private func interruptAssistantTurn() {
+        claudeTask?.cancel()
+        claudeTask = nil
+        speaker.stopNow()
+        commitAssistantTurn(onlyBegun: true)
     }
 
-    private func enqueueSentence(_ sentence: String) {
-        if metrics.firstSentenceAt == nil {
-            metrics.firstSentenceAt = Date()
+    /// assistant ターンをタグ付き台本 1 メッセージとして履歴に確定する。
+    /// onlyBegun = true（barge-in / suspend）は読み上げ開始済みの発話までを確定し、
+    /// 未読み上げ分は履歴・UI とも破棄する（conversation-design.md の barge-in 仕様）。
+    /// 戻り値: このターンで [end] を検知していたか（正常完了時のみ有効）。
+    @discardableResult
+    private func commitAssistantTurn(onlyBegun: Bool) -> Bool {
+        let utterances = onlyBegun ? turnUtterances.filter(\.hasBegun) : turnUtterances
+        let endDetected = scriptEndDetected
+        turnUtterances = []
+        scriptEndDetected = false
+        guard !utterances.isEmpty else { return false }
+        if !onlyBegun {
+            // TTS 失敗等で読み上げが始まらないまま残った発話も、吹き出しは出して履歴に含める
+            for utterance in utterances where !utterance.hasBegun {
+                eventContinuation.yield(.assistantUtteranceBegan(
+                    id: utterance.id, speaker: utterance.speaker, text: utterance.text))
+            }
         }
-        speaker.enqueue(sentence)
+        let script = utterances
+            .map { $0.speaker.scriptTag + $0.text }
+            .joined(separator: "\n")
+        history.append(ConversationMessage(role: .assistant, text: script))
+        return endDetected && !onlyBegun
     }
 
     // MARK: - Playback callbacks
@@ -474,8 +593,23 @@ final class TurnBasedVoiceSession: VoiceSession {
         eventContinuation.yield(.turnMetrics(metrics.build()))
     }
 
+    private func handleUtteranceAudioStarted(_ id: UUID) {
+        guard let index = turnUtterances.firstIndex(where: { $0.id == id }),
+              !turnUtterances[index].hasBegun else { return }
+        turnUtterances[index].hasBegun = true
+        let utterance = turnUtterances[index]
+        eventContinuation.yield(.assistantUtteranceBegan(
+            id: utterance.id, speaker: utterance.speaker, text: utterance.text))
+    }
+
     private func handleTurnFinished() {
         guard state == .thinking || state == .speaking else { return }
+        let endDetected = commitAssistantTurn(onlyBegun: false)
+        if endDetected {
+            // goodbye。呼び出し側が stop() してセッション終了処理（フィードバック → 次トピック）へ進む
+            eventContinuation.yield(.sessionEndDetected)
+            return
+        }
         state = .listening
         // AI の発話中に確定した user セグメントが残っていれば次のターンを始める
         commitPendingTurnIfReady()
@@ -552,22 +686,11 @@ final class TurnBasedVoiceSession: VoiceSession {
     }
 
     /// 電話・Siri 等の割り込みやバックグラウンド遷移で全 I/O を止める。
-    /// 会話履歴は保持し、resume() で復帰する。
+    /// 会話履歴は保持し、resume() で復帰する。読み上げ開始済みの発話は履歴に確定する。
     private func suspend(reason: String) {
         guard hasStarted, !isStopped, state != .idle, state != .suspended else { return }
-        claudeTask?.cancel()  // 途中までの応答は CancellationError 経由で履歴に残る
-        claudeTask = nil
-        speaker.stopNow()
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        sttEventTask?.cancel()
-        sttEventTask = nil
-        transcriber?.stop()
-        transcriber = nil
-        stopMicrophoneStreaming()
-        isUserSpeaking = false
-        pendingSegments = 0
-        pendingTurnText = ""
+        interruptAssistantTurn()
+        tearDownSTT()
         state = .suspended
         eventContinuation.yield(.info("一時停止しました（\(reason)）"))
     }
@@ -590,10 +713,15 @@ final class TurnBasedVoiceSession: VoiceSession {
             fail("再生エンジンの再起動に失敗: \(error.localizedDescription)")
             return
         }
-        state = .reconnecting
-        reconnectPolicy.reset()
-        eventContinuation.yield(.info("再開します。STT へ再接続中…"))
-        connectSTT()
+        if isVoiceInputEnabled {
+            state = .reconnecting
+            reconnectPolicy.reset()
+            eventContinuation.yield(.info("再開します。STT へ再接続中…"))
+            connectSTT()
+        } else {
+            state = .listening
+            eventContinuation.yield(.info("再開しました"))
+        }
     }
 
     /// イヤホン抜き差し等の経路変更で AVAudioEngine が止まったときの入出力再起動。STT 接続は維持する。
@@ -603,9 +731,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         guard state != .idle, state != .preparing, state != .suspended else { return }
         let wasSpeaking = state == .speaking
         if wasSpeaking {
-            claudeTask?.cancel()
-            claudeTask = nil
-            speaker.stopNow()
+            interruptAssistantTurn()
         }
         stopMicrophoneStreaming()
         do {
@@ -623,12 +749,12 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     // MARK: - Microphone
 
-    /// 再入可能（起動済みなら何もしない）。初回接続・再接続・経路変更後の再起動から共通で呼ぶ。
+    /// 再入可能（起動済み・音声入力無効なら何もしない）。初回接続・再接続・経路変更後の再起動から共通で呼ぶ。
     private func startMicrophoneStreaming() {
         #if targetEnvironment(simulator)
         return
         #else
-        guard !isMicStreaming else { return }
+        guard !isMicStreaming, isVoiceInputEnabled else { return }
         do {
             try microphone.start(voiceProcessing: isVoiceProcessingActive)
         } catch {
@@ -685,7 +811,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             guard let self else { return }
             let baseline = self.microphone.router.bufferCount
             try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, !self.isStopped else { return }
+            guard !Task.isCancelled, !self.isStopped, self.isMicStreaming else { return }
             guard self.microphone.router.bufferCount == baseline else { return }
 
             if self.isVoiceProcessingActive {

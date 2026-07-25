@@ -10,7 +10,7 @@ struct EslSpeakingCoachApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ChatRoomView()
         }
     }
 }
