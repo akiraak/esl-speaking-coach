@@ -15,8 +15,11 @@ final class StreamingAudioPlayer {
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    /// 入力待ちジングル専用ノード。TTS のターン管理（マーカー・完了通知）と混ざらないよう分離する
+    private let cuePlayer = AVAudioPlayerNode()
     private let format = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+    private lazy var cueBuffer: AVAudioPCMBuffer? = Self.makeCueBuffer(format: format)
 
     private var pendingBuffers = 0
     /// スケジュール済みバッファと並行するマーカー列。先頭 = 再生中（または次に再生される）バッファ
@@ -33,6 +36,8 @@ final class StreamingAudioPlayer {
         if !isGraphBuilt {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: format)
+            engine.attach(cuePlayer)
+            engine.connect(cuePlayer, to: engine.mainMixerNode, format: format)
             isGraphBuilt = true
         }
         engine.prepare()
@@ -69,6 +74,15 @@ final class StreamingAudioPlayer {
         }
     }
 
+    /// 入力待ち開始のジングルを鳴らす。TTS 再生キューとは独立で、ターン管理には影響しない。
+    func playCue() {
+        guard engine.isRunning, let cueBuffer else { return }
+        cuePlayer.scheduleBuffer(cueBuffer)
+        if !cuePlayer.isPlaying {
+            cuePlayer.play()
+        }
+    }
+
     /// 応答ストリームが終わったら呼ぶ。以降キューが尽きた時点で onTurnFinished が飛ぶ。
     func endStream() {
         streamEnded = true
@@ -88,6 +102,7 @@ final class StreamingAudioPlayer {
     func shutdown() {
         turnID += 1
         player.stop()
+        cuePlayer.stop()
         engine.stop()
     }
 
@@ -113,6 +128,19 @@ final class StreamingAudioPlayer {
         guard streamEnded, pendingBuffers == 0 else { return }
         streamEnded = false
         onTurnFinished?()
+    }
+
+    private static func makeCueBuffer(format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let samples = ListeningCue.makeSamples(sampleRate: format.sampleRate)
+        guard !samples.isEmpty,
+              let buffer = AVAudioPCMBuffer(
+                  pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
+        else { return nil }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { source in
+            buffer.floatChannelData![0].update(from: source.baseAddress!, count: source.count)
+        }
+        return buffer
     }
 
     /// PCM16 little-endian mono → Float32 バッファ。

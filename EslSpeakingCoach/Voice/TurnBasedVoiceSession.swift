@@ -215,6 +215,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         } else {
             state = .listening
             startInitialTopicIfNeeded()
+            playListeningCueIfListening()
         }
     }
 
@@ -364,10 +365,12 @@ final class TurnBasedVoiceSession: VoiceSession {
                 eventContinuation.yield(.info(
                     "接続完了（STT: \(configuration.transcription.model), TTS: \(speaker.modelDescription), LLM: \(client.parameters.model)）"))
                 startInitialTopicIfNeeded()
+                playListeningCueIfListening()
             case .reconnecting:
                 state = .listening
                 eventContinuation.yield(.info("STT 再接続完了"))
                 commitPendingTurnIfReady()
+                playListeningCueIfListening()
             default:
                 // thinking / speaking 中に裏で再接続が完了した。ターン終了時に listening へ戻る
                 eventContinuation.yield(.info("STT 再接続完了"))
@@ -654,6 +657,14 @@ final class TurnBasedVoiceSession: VoiceSession {
         state = .listening
         // AI の発話中に確定した user セグメントが残っていれば次のターンを始める
         commitPendingTurnIfReady()
+        playListeningCueIfListening()
+    }
+
+    /// 入力待ちへ入ったことをジングルで知らせる。
+    /// 呼び出し後に即 thinking へ進むケース（開始トピック・pending テキストの commit）では鳴らさない。
+    private func playListeningCueIfListening() {
+        guard state == .listening else { return }
+        speaker.playListeningCue()
     }
 
     // MARK: - 割り込み・バックグラウンド・経路変更
@@ -762,6 +773,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         } else {
             state = .listening
             eventContinuation.yield(.info("再開しました"))
+            playListeningCueIfListening()
         }
     }
 

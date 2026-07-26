@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-07-25 入力待ちの前にジングルを鳴らす: listening へ入るタイミングで短い 2 音チャイムを再生 [plan](docs/plans/archive/listening-cue-jingle.md)
+  - 音源ファイルは持たず `ListeningCue` でサイン波合成（E5→A5、約 0.3 秒、±1 内・先頭末尾ほぼ 0）。`StreamingAudioPlayer` に cue 専用の `AVAudioPlayerNode` を追加し、TTS のターン管理とは独立に再生
+  - 鳴らす契機: セッション開始 / AI ターン読み上げ完了 / STT 再接続完了 / suspend 復帰で listening になったとき。barge-in・VAD 誤発火・即次ターンへ進むケースでは鳴らさない
+  - ビルド + 単体テスト全件パス（`ListeningCueTests` 3 件追加）。**音量・タイミングの体感は実機未確認**
 - 2026-07-25 Chobiが会話中に先生モードになるのをやめる: 会話 system prompt から先生役を撤去 [plan](docs/plans/archive/chobi-no-teacher-mode.md)
   - Chobi を "the teacher" → "the host" に変更し、"Correction policy"（recast + 3〜4 ターンごとの明示 tip）を "No-teaching policy" に置き換え。会話中は訂正・tip・英語へのメタコメント（褒め含む）を禁止し、意味が取れないときは友達として聞き返す。例外は学習者からの直接の言語質問のみ
   - 指導はセッション後フィードバック（`SessionFeedbackClient`。こちらは Chobi 先生のまま）に集約。conversation-design.md（キャラ表・ターン進行・付録 A・受け入れ条件）と `ChatCharacter` の doc コメントも同期

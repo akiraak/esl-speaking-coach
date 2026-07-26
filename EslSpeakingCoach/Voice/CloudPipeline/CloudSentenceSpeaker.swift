@@ -61,6 +61,11 @@ final class CloudSentenceSpeaker {
         player.beginTurn()
     }
 
+    /// 入力待ち（listening）開始のジングルを鳴らす。読み上げキューとは独立。
+    func playListeningCue() {
+        player.playCue()
+    }
+
     func enqueue(_ item: SpeechItem) {
         sentenceQueue.append(item)
         startFetchingIfIdle()
