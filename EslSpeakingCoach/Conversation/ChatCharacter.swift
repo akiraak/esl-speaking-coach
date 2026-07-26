@@ -4,7 +4,7 @@ import Foundation
 /// 名前・人格は system prompt 側、ここでは台本タグと TTS voice / スタイルを持つ。
 /// 設定画面での編集は将来検討のため、アプリ内定義の固定値とする。
 enum ChatCharacter: String, CaseIterable, Sendable, Identifiable {
-    /// 先生役。会話を回し、recast / tip を担当
+    /// ホスト役。会話を回し進行を担当（会話中の訂正・指導はしない。指導はセッション後フィードバックのみ）
     case chobi
     /// 仲間の生徒役。リアクションと質問で会話に厚みを出す
     case naruko

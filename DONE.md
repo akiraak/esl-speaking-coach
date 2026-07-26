@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-07-25 Chobiが会話中に先生モードになるのをやめる: 会話 system prompt から先生役を撤去 [plan](docs/plans/archive/chobi-no-teacher-mode.md)
+  - Chobi を "the teacher" → "the host" に変更し、"Correction policy"（recast + 3〜4 ターンごとの明示 tip）を "No-teaching policy" に置き換え。会話中は訂正・tip・英語へのメタコメント（褒め含む）を禁止し、意味が取れないときは友達として聞き返す。例外は学習者からの直接の言語質問のみ
+  - 指導はセッション後フィードバック（`SessionFeedbackClient`。こちらは Chobi 先生のまま）に集約。conversation-design.md（キャラ表・ターン進行・付録 A・受け入れ条件）と `ChatCharacter` の doc コメントも同期
+  - プロンプトは約 1,200 語でキャッシュ最小プレフィックス（1024 トークン）を維持。ビルド + 単体テスト全件パス。**実会話での効果（tip が出ないこと）は実機未確認**
 - 2026-07-25 モデル・パラメータの最終調整をクローズ: 現行構成で確定（TTS: `gemini-3.1-flash-tts-preview` / voice: Chobi=Leda・Naruko=Aoede / VAD 無音判定 800ms / STT: `gpt-4o-transcribe` / 会話 LLM: `claude-sonnet-5`）。以後の調整が必要になったら個別タスクとして起票する
 - 2026-07-25 実機確認: STT usage の記録 — タスクをクローズ（ユーザー判断。問題が見つかったら再起票する）
 - 2026-07-25 サマリー生成のAIモデルはOpus5にする: 調査の結果、対応済みであることを確認（コード変更なし）。サマリー（セッション後フィードバックの総評）を生成する `SessionFeedbackClient` はリクエストボディ・利用量記録とも `claude-opus-5` を使用している。会話ターン / トピック生成の `claude-sonnet-5` は CLAUDE.md の決定どおり変更しない
