@@ -2,6 +2,6 @@
 
 ## 実装
 
-- [ ] 読み上げの再再生
 - [ ] アプリアイコンの作成
-- [ ] アプリ表示名を変更
+  /Users/akiraak/Downloads/naruko-icon.png
+- [ ] キャラに記憶を持たせる
