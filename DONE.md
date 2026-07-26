@@ -1,5 +1,7 @@
 # DONE
 
+- 2026-07-25 モデル・パラメータの最終調整をクローズ: 現行構成で確定（TTS: `gemini-3.1-flash-tts-preview` / voice: Chobi=Leda・Naruko=Aoede / VAD 無音判定 800ms / STT: `gpt-4o-transcribe` / 会話 LLM: `claude-sonnet-5`）。以後の調整が必要になったら個別タスクとして起票する
+- 2026-07-25 実機確認: STT usage の記録 — タスクをクローズ（ユーザー判断。問題が見つかったら再起票する）
 - 2026-07-25 サマリー生成のAIモデルはOpus5にする: 調査の結果、対応済みであることを確認（コード変更なし）。サマリー（セッション後フィードバックの総評）を生成する `SessionFeedbackClient` はリクエストボディ・利用量記録とも `claude-opus-5` を使用している。会話ターン / トピック生成の `claude-sonnet-5` は CLAUDE.md の決定どおり変更しない
 - 2026-07-25 キャラアイコンの変更: アバターをイラスト画像（`Assets.xcassets` の `chobi-icon` / `naruko-icon`、512px に縮小して取り込み）に差し替え [plan](docs/plans/archive/character-avatar-icons.md)
   - `Assets.xcassets` 新設に伴い actool が AppIcon を要求するため、空の `AppIcon.appiconset` プレースホルダを追加（アイコン本体は TODO「アプリアイコンの作成」で対応）
