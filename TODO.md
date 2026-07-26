@@ -7,11 +7,9 @@
 
 ## 実装
 
+- [ ] Chobiが会話中に先生モードになるのをやめる
 - [ ] 読み上げの再再生
 - [ ] アプリアイコンの作成
 - [ ] アプリ表示名を変更
 - [ ] 入力待ちの前にジングルを鳴らす
 - [ ] サマリー生成のAIモデルはOpus5にする
-- [ ] キャラアイコンの変更
-  - /Users/akiraak/Downloads/chobi-icon.png
-  - /Users/akiraak/Downloads/naruko-bg-green-icon.png

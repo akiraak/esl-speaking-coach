@@ -36,17 +36,12 @@ enum ChatTheme {
 }
 
 extension ChatCharacter {
-    /// アバター色（Chobi ピンク / Naruko 薄い緑）。
+    /// キャラのテーマ色（管理画面の話者名などテキスト用。アバター本体は画像アセット）。
     var avatarColor: Color {
         switch self {
         case .chobi: return Color(rgb: 0xEF5DA8)
         case .naruko: return Color(rgb: 0x6FCF97)
         }
-    }
-
-    /// アバターに表示するイニシャル（画像アセットは当面使わない）。
-    var avatarInitial: String {
-        String(displayName.prefix(1))
     }
 }
 

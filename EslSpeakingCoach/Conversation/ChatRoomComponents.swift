@@ -147,14 +147,11 @@ struct CharacterAvatar: View {
     let character: ChatCharacter
 
     var body: some View {
-        Circle()
-            .fill(character.avatarColor)
+        Image(character.avatarImageName)
+            .resizable()
+            .scaledToFill()
             .frame(width: 36, height: 36)
-            .overlay {
-                Text(character.avatarInitial)
-                    .font(.subheadline.weight(.heavy))
-                    .foregroundStyle(.white)
-            }
+            .clipShape(Circle())
             .overlay {
                 Circle().strokeBorder(.white, lineWidth: 2)
             }

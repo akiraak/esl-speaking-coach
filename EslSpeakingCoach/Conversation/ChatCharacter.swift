@@ -22,6 +22,14 @@ enum ChatCharacter: String, CaseIterable, Sendable, Identifiable {
     /// 台本直列化時の行頭タグ。
     var scriptTag: String { displayName + ": " }
 
+    /// アバター画像のアセット名（Assets.xcassets）。
+    var avatarImageName: String {
+        switch self {
+        case .chobi: return "chobi-icon"
+        case .naruko: return "naruko-icon"
+        }
+    }
+
     /// キャラ固有の TTS voice とスタイル前置文（conversation-design.md の確定値）。
     var speechStyle: SpeechStyle {
         switch self {

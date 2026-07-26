@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-07-25 キャラアイコンの変更: アバターをイラスト画像（`Assets.xcassets` の `chobi-icon` / `naruko-icon`、512px に縮小して取り込み）に差し替え [plan](docs/plans/archive/character-avatar-icons.md)
+  - `Assets.xcassets` 新設に伴い actool が AppIcon を要求するため、空の `AppIcon.appiconset` プレースホルダを追加（アイコン本体は TODO「アプリアイコンの作成」で対応）
+  - `CharacterAvatar` を画像表示（円形クリップ + 白フチ + 影）へ変更、`avatarInitial` を削除（`avatarColor` は管理画面の話者名色で使用中のため残置）
+  - シミュレータで両キャラのアイコン表示を確認
 - 2026-07-25 会話履歴の永続化 + 管理画面（会話内容・AI 利用料金） [plan](docs/plans/archive/history-persistence-and-admin.md)
   - 永続化（SwiftData・端末内のみ）: `ChatSessionRecord` / `ChatMessageRecord`（speaker 付き。conversation-design.md の履歴モデル）+ `ChatHistoryStore`。user 確定・AI 発話開始/ストリーミング更新のたびに保存し、起動時に直近 10 セッション + 保存済みフィードバックをタイムラインへ復元。前回強制終了のセッションは最終発話時刻で閉じ、空セッションは削除。トピック重複回避の直近 20 件も永続化から復元
   - AI 利用量の記録: 課金 5 経路すべてで API レスポンスの usage を取得（Claude は SSE `message_start`/`message_delta`・非ストリーミングは `usage`、STT は completed イベントの usage（tokens/duration 両対応）、Gemini TTS は `usageMetadata` + PCM バイト数）。`VoiceSessionEvent.apiUsage` で UI 層へ流し `APIUsageRecord` に保存。推定額は**記録時**に `AIPricing`（ai-cost-map.md の単価表 + sonnet-5 導入価格の期限切替）で計算して保存
