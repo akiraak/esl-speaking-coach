@@ -1,5 +1,8 @@
 # DONE
 
+- 2026-07-25 Naruko の発話量を Chobi と同程度にリバランス: 会話 system prompt から "Speaks less than Chobi" を撤廃 [plan](docs/plans/archive/naruko-speech-balance.md)
+  - Output format にバランス規則を追加（セッション全体でターン取得を両キャラ同程度に・最終行の質問はどちらが出してもよい・Chobi の 3 連続ターン禁止）。トピック開始キャラも交替させる。締めの Remember 行に "both characters share the stage" を追加
+  - conversation-design.md（キャラ表補足・ターン進行・付録 A・変更履歴）を同期。ビルド + 単体テスト全件パス。**実会話でのバランス改善は実機未確認**
 - 2026-07-25 入力待ちの前にジングルを鳴らす: listening へ入るタイミングで短い 2 音チャイムを再生 [plan](docs/plans/archive/listening-cue-jingle.md)
   - 音源ファイルは持たず `ListeningCue` でサイン波合成（E5→A5、約 0.3 秒、±1 内・先頭末尾ほぼ 0）。`StreamingAudioPlayer` に cue 専用の `AVAudioPlayerNode` を追加し、TTS のターン管理とは独立に再生
   - 鳴らす契機: セッション開始 / AI ターン読み上げ完了 / STT 再接続完了 / suspend 復帰で listening になったとき。barge-in・VAD 誤発火・即次ターンへ進むケースでは鳴らさない
