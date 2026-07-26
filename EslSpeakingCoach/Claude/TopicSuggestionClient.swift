@@ -1,6 +1,6 @@
 import Foundation
 
-/// トピックカードに出す候補 1 件（英語タイトル + フック 1 文）。
+/// トピックカードに出す候補 1 件（日本語タイトル + フック 1 文）。
 struct TopicCandidate: Sendable, Equatable, Decodable {
     let title: String
     let hook: String
@@ -28,7 +28,7 @@ enum TopicSuggestionError: Error, LocalizedError {
 
 /// 会話とは別の軽量呼び出しでトピック候補 3 件を生成する（conversation-design.md「トピック生成」）。
 /// claude-sonnet-5 / 非ストリーミング / effort low / output_config.format の structured outputs。
-/// 「Free talk」は生成せず、アプリ側で固定候補として追加する。
+/// 「フリートーク」は生成せず、アプリ側で固定候補として追加する。
 struct TopicSuggestionClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
@@ -36,15 +36,17 @@ struct TopicSuggestionClient: Sendable {
     static let systemPrompt = """
     You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese \
     adult learner practices spoken English with two AI friends. Generate exactly three topic \
-    candidates the learner can pick from.
+    candidates the learner can pick from. The conversation itself happens in English, but the \
+    learner picks a topic from a card before speaking, so write title and hook in natural Japanese \
+    the learner can grasp at a glance.
 
     Rules:
     - Topics are about everyday life: daily routines, food, travel, work, hobbies, movies, plans, \
     small personal stories. Concrete beats abstract.
     - Vary the three candidates: different genres, and a mix of easy and slightly challenging.
     - Do not repeat or closely resemble any topic in the recent-topics list.
-    - title: three to six words, natural English, works as a card label.
-    - hook: one short inviting question or teaser, at most twelve words.
+    - title: natural Japanese, roughly four to twelve characters, works as a card label.
+    - hook: one short inviting Japanese question or teaser, at most twenty characters.
     """
 
     private static let session: URLSession = {

@@ -40,7 +40,7 @@ struct ChatRoomView: View {
             #endif
         }
         .alert("自分でトピックを作る", isPresented: $isShowingTopicInput) {
-            TextField("例: My favorite ramen shop", text: $customTopicText)
+            TextField("例: 好きなラーメン屋", text: $customTopicText)
                 .autocorrectionDisabled()
             Button("開始") { submitCustomTopic() }
             Button("キャンセル", role: .cancel) { customTopicText = "" }

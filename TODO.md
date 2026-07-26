@@ -8,4 +8,5 @@
   - [ ] Phase 3: 会話への注入（[Memory: ...] 制御メッセージ + system prompt 追記）
   - [ ] Phase 4: 管理画面での記憶の閲覧・リセット
   - [ ] Phase 5: 実機での通し確認
-- [ ] トピックを日本語で作成
+- [ ] Hum など考え中のときに小さい声を出すと以下の長い文章が入力される時がある。
+  The speaker is a Japanese adult practicing English conversation. The audio is always English

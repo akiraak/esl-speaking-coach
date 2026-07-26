@@ -161,7 +161,7 @@ struct CharacterAvatar: View {
 
 // MARK: - トピックカード
 
-/// トピック候補 3 件 + Free talk。選択でセッション開始、🔄 で差し替え、＋で自作入力。
+/// トピック候補 3 件 + フリートーク。選択でセッション開始、🔄 で差し替え、＋で自作入力。
 /// 選択済み・過去のカードはグレーアウトして履歴に残す（タップ無効）。
 struct TopicCardView: View {
     let card: ChatRoomStore.TopicCard

@@ -69,7 +69,7 @@ final class ChatRoomStore {
 
     /// アプリ側の固定候補（生成はしない）。
     static let freeTalkCandidate = TopicCandidate(
-        title: "Free talk", hook: "Anything on your mind—just start talking.")
+        title: "フリートーク", hook: "話したいことをそのまま話そう。")
 
     private static let inputModeKey = "chatRoomInputMode"
 

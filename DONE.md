@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-07-26 トピックを日本語で作成: トピックカードの候補（title / hook）を日本語生成に変更 [plan](docs/plans/archive/topic-in-japanese.md)
+  - `TopicSuggestionClient` の system prompt を日本語生成に変更（リクエスト構造・スキーマは不変）。固定候補「Free talk」→「フリートーク」、自作トピックの placeholder も日本語化
+  - 会話へは従来どおり `[New topic: <タイトル>]` で渡し、`CoachSystemPrompt` に「トピック名が日本語でも会話は英語で開く」を追記。conversation-design.md / screen-layout.md を同期
+  - ビルド + 単体テスト全 83 件パス。シミュレータで日本語候補（例:「週末の予定 / 今週末は何するの?」）の生成・表示を確認。**選択後に英語で会話が始まることは実機未確認**
 - 2026-07-26 アプリアイコンの作成: Naruko のイラストをアプリアイコンに設定 [plan](docs/plans/archive/app-icon.md)
   - 元画像（1254x1254 PNG・アルファなし）を 1024x1024 にリサイズし、`AppIcon.appiconset` の single-size スロットに `AppIcon.png` として配置
   - ビルド成果物に `AppIcon60x60@2x.png` / `Assets.car` が生成され、Info.plist に `CFBundleIconName = AppIcon` が入ることを確認。**ホーム画面での見え方は実機未確認**

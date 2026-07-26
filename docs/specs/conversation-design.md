@@ -68,7 +68,7 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 
 - 会話とは別の呼び出し。`claude-sonnet-5` / 非ストリーミング / `effort: low` / structured outputs（付録 B のスキーマ）で候補 3 件を生成
 - 各候補は **英語タイトル（3〜6 語）+ フック 1 文（12 語以内）**。トピックカードのピルにはタイトルを表示し、フック文を添える
-- 「Free talk」は生成せず、アプリ側で固定候補として常に追加する
+- 「フリートーク」は生成せず、アプリ側で固定候補として常に追加する
 - **呼び出しタイミング**: 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時（screen-layout の決定どおり）
 - **重複回避**: user メッセージに直近トピックのタイトル一覧を渡す（永続化前は同一起動内のメモリ、永続化後は直近 20 件程度）。🔄 再生成時は表示中の候補タイトルも除外リストに加える
 
@@ -111,7 +111,7 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 - [ ] 通常ターンが 1〜2 発話・最終行質問で進行し、会話中に訂正・tip・英語へのメタコメントが出ない（発話数・質問配置は確認済み。no-teaching は実会話で確認）
 - [x] barge-in 時、読み上げ中の発話まで履歴確定・未読分は表示されない
 - [x] goodbye で closing + `[end]` が出力され、セッションが自動終了する（`[end]` は表示・読み上げされない）
-- [x] トピックカードにタイトル + フック 1 文の候補 3 件 + Free talk が表示され、🔄 で重複しない候補に差し替わる
+- [x] トピックカードにタイトル + フック 1 文の候補 3 件 + フリートークが表示され、🔄 で重複しない候補に差し替わる
 
 ## 付録 A: 会話 system prompt（確定版）
 
@@ -167,6 +167,7 @@ Naruko (the fellow student)
 
 ## App control messages
 - Messages from the app appear in square brackets, for example: [New topic: Planning a trip]. These are instructions from the app, not the learner speaking. Never mention, quote, or read the brackets aloud.
+- The topic name may be written in Japanese. Treat it only as the subject to talk about: open and discuss it in English, and do not switch to Japanese or translate the name aloud.
 - When a new topic message arrives, open the topic in this order: one character shares a short personal thought or example about the topic, the other character may react briefly, and then the last line asks the learner one easy starter question. As on every turn, the question must be the last line. Do not explain or lecture about the topic. Vary which character opens each new topic.
 
 ## Speech interface
@@ -187,14 +188,14 @@ Remember: short turns, exactly one question every turn, English only, no teachin
 system prompt（固定英文）:
 
 ```
-You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese adult learner practices spoken English with two AI friends. Generate exactly three topic candidates the learner can pick from.
+You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese adult learner practices spoken English with two AI friends. Generate exactly three topic candidates the learner can pick from. The conversation itself happens in English, but the learner picks a topic from a card before speaking, so write title and hook in natural Japanese the learner can grasp at a glance.
 
 Rules:
 - Topics are about everyday life: daily routines, food, travel, work, hobbies, movies, plans, small personal stories. Concrete beats abstract.
 - Vary the three candidates: different genres, and a mix of easy and slightly challenging.
 - Do not repeat or closely resemble any topic in the recent-topics list.
-- title: three to six words, natural English, works as a card label.
-- hook: one short inviting question or teaser, at most twelve words.
+- title: natural Japanese, roughly four to twelve characters, works as a card label.
+- hook: one short inviting Japanese question or teaser, at most twenty characters.
 ```
 
 user メッセージ: `Recent topics: <直近トピックのタイトルをカンマ区切り>`（🔄 時は表示中候補も含める）
