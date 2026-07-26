@@ -1,5 +1,6 @@
 # DONE
 
+- 2026-07-25 サマリー生成のAIモデルはOpus5にする: 調査の結果、対応済みであることを確認（コード変更なし）。サマリー（セッション後フィードバックの総評）を生成する `SessionFeedbackClient` はリクエストボディ・利用量記録とも `claude-opus-5` を使用している。会話ターン / トピック生成の `claude-sonnet-5` は CLAUDE.md の決定どおり変更しない
 - 2026-07-25 キャラアイコンの変更: アバターをイラスト画像（`Assets.xcassets` の `chobi-icon` / `naruko-icon`、512px に縮小して取り込み）に差し替え [plan](docs/plans/archive/character-avatar-icons.md)
   - `Assets.xcassets` 新設に伴い actool が AppIcon を要求するため、空の `AppIcon.appiconset` プレースホルダを追加（アイコン本体は TODO「アプリアイコンの作成」で対応）
   - `CharacterAvatar` を画像表示（円形クリップ + 白フチ + 影）へ変更、`avatarInitial` を削除（`avatarColor` は管理画面の話者名色で使用中のため残置）
