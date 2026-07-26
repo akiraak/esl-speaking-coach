@@ -1,5 +1,8 @@
 # DONE
 
+- 2026-07-26 アプリアイコンの作成: Naruko のイラストをアプリアイコンに設定 [plan](docs/plans/archive/app-icon.md)
+  - 元画像（1254x1254 PNG・アルファなし）を 1024x1024 にリサイズし、`AppIcon.appiconset` の single-size スロットに `AppIcon.png` として配置
+  - ビルド成果物に `AppIcon60x60@2x.png` / `Assets.car` が生成され、Info.plist に `CFBundleIconName = AppIcon` が入ることを確認。**ホーム画面での見え方は実機未確認**
 - 2026-07-25 Naruko の発話量を Chobi と同程度にリバランス: 会話 system prompt から "Speaks less than Chobi" を撤廃 [plan](docs/plans/archive/naruko-speech-balance.md)
   - Output format にバランス規則を追加（セッション全体でターン取得を両キャラ同程度に・最終行の質問はどちらが出してもよい・Chobi の 3 連続ターン禁止）。トピック開始キャラも交替させる。締めの Remember 行に "both characters share the stage" を追加
   - conversation-design.md（キャラ表補足・ターン進行・付録 A・変更履歴）を同期。ビルド + 単体テスト全件パス。**実会話でのバランス改善は実機未確認**
