@@ -47,6 +47,55 @@ final class CloudPipelineProtocolTests: XCTestCase {
         XCTAssertEqual(object["audio"] as? String, "QUJD")
     }
 
+    // MARK: - STT の prompt エコー幻覚フィルタ
+
+    private let sttPrompt = OpenAITranscriptionConfiguration().prompt
+
+    /// 非発話セグメントで prompt がそのままエコーされるケース（句読点・大文字小文字の揺れ込み）
+    func testPromptEchoDetectsFullEcho() {
+        XCTAssertTrue(STTHallucinationFilter.isPromptEcho(transcript: sttPrompt, prompt: sttPrompt))
+        // 実機で観測された形: 末尾ピリオドなし・改行継ぎ目の揺れ
+        XCTAssertTrue(STTHallucinationFilter.isPromptEcho(
+            transcript: "The speaker is a Japanese adult practicing English conversation. "
+                + "The audio is always English",
+            prompt: sttPrompt))
+        XCTAssertTrue(STTHallucinationFilter.isPromptEcho(
+            transcript: "the speaker is a japanese adult practicing english conversation, "
+                + "the audio is always english.",
+            prompt: sttPrompt))
+    }
+
+    /// 末尾が切れたエコー（prompt の先頭部分だけ）も破棄する
+    func testPromptEchoDetectsTruncatedEcho() {
+        XCTAssertTrue(STTHallucinationFilter.isPromptEcho(
+            transcript: "The speaker is a Japanese adult practicing", prompt: sttPrompt))
+    }
+
+    /// prompt が 2 回以上繰り返されるエコー（+ 末尾の切れ端）も破棄する
+    func testPromptEchoDetectsRepeatedEcho() {
+        let full = "The speaker is a Japanese adult practicing English conversation. "
+            + "The audio is always English."
+        XCTAssertTrue(STTHallucinationFilter.isPromptEcho(
+            transcript: full + " " + full, prompt: sttPrompt))
+        XCTAssertTrue(STTHallucinationFilter.isPromptEcho(
+            transcript: full + " The speaker is a Japanese", prompt: sttPrompt))
+    }
+
+    /// 正当な発話は prompt と単語が重なっても破棄しない
+    func testPromptEchoKeepsLegitimateUtterances() {
+        // prompt の途中とだけ一致（先頭一致でない）
+        XCTAssertFalse(STTHallucinationFilter.isPromptEcho(
+            transcript: "I'm practicing English conversation.", prompt: sttPrompt))
+        XCTAssertFalse(STTHallucinationFilter.isPromptEcho(
+            transcript: "English conversation is fun.", prompt: sttPrompt))
+        // 短い発話は先頭が偶然一致しても通す（最小長ガード）
+        XCTAssertFalse(STTHallucinationFilter.isPromptEcho(
+            transcript: "The speaker", prompt: sttPrompt))
+        XCTAssertFalse(STTHallucinationFilter.isPromptEcho(
+            transcript: "Hello!", prompt: sttPrompt))
+        XCTAssertFalse(STTHallucinationFilter.isPromptEcho(transcript: "", prompt: sttPrompt))
+    }
+
     // MARK: - STT のサーバイベントのパース
 
     func testTranscriptionParseLifecycleEvents() {

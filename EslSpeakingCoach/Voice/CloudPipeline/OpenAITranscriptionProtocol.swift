@@ -22,6 +22,42 @@ struct OpenAITranscriptionConfiguration: Sendable {
     }
 }
 
+/// STT の幻覚（prompt leakage）対策。gpt-4o-transcribe は Hum・咳など実質非発話の
+/// セグメントで、認識バイアス用 prompt をそのまま書き起こしとして出力することがある
+/// （調査記録: docs/plans/stt-prompt-echo-hallucination.md）。
+enum STTHallucinationFilter {
+    /// 誤爆防止の最小長（正規化後）。prompt 冒頭と偶然一致しうる短い正当発話は通す
+    private static let minimumEchoLength = 12
+
+    /// transcript が prompt のエコー（全体・先頭の切れ端・繰り返し）とみなせるなら true。
+    /// leakage は prompt の先頭から始まるため、途中だけの一致（"English conversation" 等の
+    /// 正当な発話）はエコー扱いしない
+    static func isPromptEcho(transcript: String, prompt: String) -> Bool {
+        let echo = normalize(transcript)
+        let source = normalize(prompt)
+        guard !source.isEmpty, echo.count >= minimumEchoLength else { return false }
+
+        // prompt 丸ごとを先頭から取り除けるだけ取り除く（2 回繰り返しエコー等）
+        var remainder = Substring(echo)
+        var fullMatches = 0
+        while remainder.hasPrefix(source) {
+            remainder = remainder.dropFirst(source.count)
+            fullMatches += 1
+        }
+        if fullMatches > 0 {
+            // 残りが空 or prompt の先頭部分なら「prompt の繰り返し + 切れ端」のエコー
+            return remainder.isEmpty || source.hasPrefix(remainder)
+        }
+        // 丸ごとは含まない: prompt の先頭部分だけの（末尾が切れた）エコー
+        return source.hasPrefix(echo)
+    }
+
+    /// 大文字小文字・句読点・空白の揺れを無視して比較するため英数字のみに正規化する
+    private static func normalize(_ text: String) -> String {
+        String(text.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains))
+    }
+}
+
 /// クライアント → サーバのイベント JSON を生成する。テストから直接検証できるよう純関数にする。
 enum OpenAITranscriptionClientEvent {
     static func inputAudioAppend(base64Audio: String) throws -> Data {

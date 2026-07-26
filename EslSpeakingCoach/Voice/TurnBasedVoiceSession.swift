@@ -397,7 +397,12 @@ final class TurnBasedVoiceSession: VoiceSession {
             pendingSegments = max(0, pendingSegments - 1)
             metrics.transcriptFinalizedAt = Date()
             let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
+            if STTHallucinationFilter.isPromptEcho(
+                transcript: trimmed, prompt: configuration.transcription.prompt)
+            {
+                // 非発話セグメントで STT が prompt をエコーした。空セグメントと同じ扱いにする
+                eventContinuation.yield(.info("STT プロンプトのエコーを破棄しました"))
+            } else if !trimmed.isEmpty {
                 pendingTurnText = pendingTurnText.isEmpty ? trimmed : pendingTurnText + " " + trimmed
             }
             commitPendingTurnIfReady()

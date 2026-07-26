@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-07-26 Hum など小さい声で STT prompt がそのまま入力される問題を修正 [plan](docs/plans/archive/stt-prompt-echo-hallucination.md)
+  - 原因: gpt-4o-transcribe が非発話セグメントで認識バイアス用 prompt をエコーする既知の幻覚（prompt leakage）。空文字チェックしかなく素通りしていた
+  - `STTHallucinationFilter.isPromptEcho` を追加（正規化して先頭一致のみエコー判定。全体・末尾切れ・繰り返しに対応、最小長ガードで誤爆防止）し、`TurnBasedVoiceSession` の `.finalTranscript` で適用。破棄時は空セグメント扱いで listening へ戻す
+  - ビルド + `CloudPipelineProtocolTests` 全 23 件パス（エコー判定 4 件追加）。実機で Hum・咳払いをしても prompt 文が入力されないことを確認済み
 - 2026-07-26 トピックを日本語で作成: トピックカードの候補（title / hook）を日本語生成に変更 [plan](docs/plans/archive/topic-in-japanese.md)
   - `TopicSuggestionClient` の system prompt を日本語生成に変更（リクエスト構造・スキーマは不変）。固定候補「Free talk」→「フリートーク」、自作トピックの placeholder も日本語化
   - 会話へは従来どおり `[New topic: <タイトル>]` で渡し、`CoachSystemPrompt` に「トピック名が日本語でも会話は英語で開く」を追記。conversation-design.md / screen-layout.md を同期
