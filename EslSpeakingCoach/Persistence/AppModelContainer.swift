@@ -18,6 +18,7 @@ enum AppModelContainer {
         let schema = Schema([
             ChatSessionRecord.self,
             ChatMessageRecord.self,
+            ChatSessionLogRecord.self,
             APIUsageRecord.self,
             CharacterMemoryRecord.self,
         ])

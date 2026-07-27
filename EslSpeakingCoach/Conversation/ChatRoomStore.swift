@@ -563,16 +563,16 @@ final class ChatRoomStore {
             isEndingSession = true
             session?.stop()
         case .turnMetrics(let metrics):
-            #if DEBUG
-            appendItem(.systemNotice(id: UUID(), text: metrics.summaryLine))
-            #endif
-            _ = metrics
+            // 会話練習の邪魔になるのでトーク画面には出さず、管理画面の会話ログにだけ残す
+            historyStore.appendLog(kind: .metrics, text: metrics.summaryLine)
         case .micLevel(let level):
             micLevel = level
         case .info(let text):
-            appendItem(.systemNotice(id: UUID(), text: text))
+            // STT 接続・stop_reason などの技術通知も同様に会話ログ行き
+            historyStore.appendLog(kind: .notice, text: text)
         case .failure(let text):
             appendItem(.systemNotice(id: UUID(), text: "エラー: \(text)"))
+            historyStore.appendLog(kind: .error, text: text)
         }
     }
 
@@ -593,9 +593,8 @@ final class ChatRoomStore {
     }
 }
 
-#if DEBUG
 extension TurnMetrics {
-    /// DEBUG ビルドの参考表示用 1 行サマリ（製品画面には出さない）。
+    /// 管理画面の会話ログに残す 1 行サマリ（トーク画面には出さない）。
     var summaryLine: String {
         func fmt(_ value: Double?) -> String {
             guard let value else { return "-" }
@@ -606,4 +605,3 @@ extension TurnMetrics {
             + "初文 \(fmt(firstSentenceMs)) | 発声 \(fmt(speakStartMs))"
     }
 }
-#endif

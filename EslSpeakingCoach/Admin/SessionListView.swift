@@ -82,9 +82,29 @@ struct SessionDetailView: View {
     let usageStore: UsageStore
     let summary: ChatHistoryStore.SessionSummary
 
-    @State private var messages: [ChatHistoryStore.MessageSnapshot] = []
+    @State private var entries: [Entry] = []
     @State private var feedback: SessionFeedback?
     @State private var costUSD = 0.0
+
+    /// 発話と調査用ログを時系列にマージした 1 行。
+    private enum Entry: Identifiable {
+        case message(ChatHistoryStore.MessageSnapshot)
+        case log(ChatHistoryStore.LogSnapshot)
+
+        var id: UUID {
+            switch self {
+            case .message(let message): return message.id
+            case .log(let log): return log.id
+            }
+        }
+
+        var createdAt: Date {
+            switch self {
+            case .message(let message): return message.createdAt
+            case .log(let log): return log.createdAt
+            }
+        }
+    }
 
     var body: some View {
         List {
@@ -97,15 +117,20 @@ struct SessionDetailView: View {
             }
 
             Section("会話") {
-                ForEach(messages) { message in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(speakerName(message.speaker))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(speakerColor(message.speaker))
-                        Text(message.text)
-                            .font(.subheadline)
+                ForEach(entries) { entry in
+                    switch entry {
+                    case .message(let message):
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(speakerName(message.speaker))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(speakerColor(message.speaker))
+                            Text(message.text)
+                                .font(.subheadline)
+                        }
+                        .padding(.vertical, 2)
+                    case .log(let log):
+                        logRow(log)
                     }
-                    .padding(.vertical, 2)
                 }
             }
 
@@ -142,10 +167,38 @@ struct SessionDetailView: View {
         .navigationTitle(summary.topicTitle)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            messages = historyStore.messages(sessionID: summary.id)
+            entries = mergedEntries()
             feedback = historyStore.feedback(sessionID: summary.id)
             costUSD = usageStore.sessionCostUSD(sessionID: summary.id)
         }
+    }
+
+    /// 調査用ログの行（レイテンシ計測・技術通知・エラー）。トーク画面には出ないのでここでだけ見る。
+    private func logRow(_ log: ChatHistoryStore.LogSnapshot) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(logMark(log.kind))
+            Text(log.text)
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+        .font(.caption2)
+        .foregroundStyle(log.kind == .error ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+        .padding(.vertical, 1)
+    }
+
+    private func logMark(_ kind: SessionLogKind) -> String {
+        switch kind {
+        case .metrics: return "⏱"
+        case .notice: return "ℹ️"
+        case .error: return "⚠️"
+        }
+    }
+
+    /// 発話と調査用ログを記録時刻順に 1 本のリストへまとめる。
+    private func mergedEntries() -> [Entry] {
+        let messages = historyStore.messages(sessionID: summary.id).map(Entry.message)
+        let logs = historyStore.logs(sessionID: summary.id).map(Entry.log)
+        return (messages + logs).sorted { $0.createdAt < $1.createdAt }
     }
 
     private func speakerName(_ speaker: MessageSpeaker) -> String {

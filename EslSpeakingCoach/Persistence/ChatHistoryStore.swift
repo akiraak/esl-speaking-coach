@@ -24,6 +24,14 @@ final class ChatHistoryStore {
         let createdAt: Date
     }
 
+    /// セッション詳細の調査用ログ 1 行（値型）。
+    struct LogSnapshot: Identifiable, Sendable {
+        let id: UUID
+        let kind: SessionLogKind
+        let text: String
+        let createdAt: Date
+    }
+
     private static let logger = Logger(subsystem: "com.akiraak.EslSpeakingCoach", category: "ChatHistoryStore")
 
     private let context: ModelContext
@@ -31,6 +39,7 @@ final class ChatHistoryStore {
     private var activeSession: ChatSessionRecord?
     private var activeMessagesByID: [UUID: ChatMessageRecord] = [:]
     private var nextOrderIndex = 0
+    private var nextLogOrderIndex = 0
 
     init(container: ModelContainer) {
         context = ModelContext(container)
@@ -60,6 +69,7 @@ final class ChatHistoryStore {
         activeSession = session
         activeMessagesByID = [:]
         nextOrderIndex = 0
+        nextLogOrderIndex = 0
         save()
     }
 
@@ -71,6 +81,7 @@ final class ChatHistoryStore {
         activeMessagesByID = Dictionary(
             uniqueKeysWithValues: session.messages.map { ($0.id, $0) })
         nextOrderIndex = (session.messages.map(\.orderIndex).max() ?? -1) + 1
+        nextLogOrderIndex = (session.logs.map(\.orderIndex).max() ?? -1) + 1
     }
 
     func appendMessage(id: UUID, speaker: MessageSpeaker, text: String) {
@@ -88,6 +99,18 @@ final class ChatHistoryStore {
     func updateMessageText(id: UUID, text: String) {
         guard let record = activeMessagesByID[id] else { return }
         record.text = text
+        save()
+    }
+
+    /// 調査用ログの追記（レイテンシ計測・技術通知・エラー）。
+    /// セッション外で起きたものは記録しない（会話ログの一部として見るため）。
+    func appendLog(kind: SessionLogKind, text: String) {
+        guard let activeSession else { return }
+        let record = ChatSessionLogRecord(
+            orderIndex: nextLogOrderIndex, kind: kind, text: text)
+        nextLogOrderIndex += 1
+        record.session = activeSession
+        context.insert(record)
         save()
     }
 
@@ -149,6 +172,18 @@ final class ChatHistoryStore {
                 return MessageSnapshot(
                     id: record.id, speaker: speaker, text: record.text,
                     createdAt: record.createdAt)
+            }
+    }
+
+    /// 管理画面用: セッションの調査用ログ（記録順）。
+    func logs(sessionID: UUID) -> [LogSnapshot] {
+        guard let session = fetchSession(id: sessionID) else { return [] }
+        return session.logs
+            .sorted { $0.orderIndex < $1.orderIndex }
+            .compactMap { record in
+                guard let kind = record.kind else { return nil }
+                return LogSnapshot(
+                    id: record.id, kind: kind, text: record.text, createdAt: record.createdAt)
             }
     }
 

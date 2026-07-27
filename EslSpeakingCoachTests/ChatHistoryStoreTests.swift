@@ -47,6 +47,49 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(store.sessionSummaries().first?.hasFeedback, true)
     }
 
+    /// 調査用ログ: 記録順に取り出せて、セッション削除で一緒に消える。
+    func testLogRoundTripAndCascadeDelete() throws {
+        let store = try makeStore()
+        let sessionID = UUID()
+        store.beginSession(id: sessionID, topicTitle: "Latency check")
+        store.appendMessage(id: UUID(), speaker: .user, text: "Hello")
+        store.appendLog(kind: .notice, text: "STT へ接続中…")
+        store.appendLog(kind: .metrics, text: "体感 1200ms | 無音待ち 800")
+        store.appendLog(kind: .error, text: "接続が切れました")
+        store.endActiveSession()
+
+        let logs = store.logs(sessionID: sessionID)
+        XCTAssertEqual(logs.map(\.kind), [.notice, .metrics, .error])
+        XCTAssertEqual(logs[1].text, "体感 1200ms | 無音待ち 800")
+
+        store.deleteSession(id: sessionID)
+        XCTAssertTrue(store.logs(sessionID: sessionID).isEmpty)
+    }
+
+    /// セッション外のログは記録しない（会話ログの一部としてのみ残す）。
+    func testLogOutsideSessionIsIgnored() throws {
+        let store = try makeStore()
+        store.appendLog(kind: .notice, text: "セッション前の通知")
+
+        let sessionID = UUID()
+        store.beginSession(id: sessionID, topicTitle: "Later")
+        XCTAssertTrue(store.logs(sessionID: sessionID).isEmpty)
+    }
+
+    /// エラー再開でセッションを resume したあとも、ログは既存の続きから追記される。
+    func testResumeSessionContinuesLogOrder() throws {
+        let store = try makeStore()
+        let sessionID = UUID()
+        store.beginSession(id: sessionID, topicTitle: "Resumed")
+        store.appendLog(kind: .notice, text: "1 番目")
+        // 別セッションを挟んでから元のセッションへ戻る
+        store.beginSession(id: UUID(), topicTitle: "Other")
+        store.resumeSession(id: sessionID)
+        store.appendLog(kind: .notice, text: "2 番目")
+
+        XCTAssertEqual(store.logs(sessionID: sessionID).map(\.text), ["1 番目", "2 番目"])
+    }
+
     /// 前回セッション中に落ちた場合: 発話ありは最終発話時刻で閉じ、空は削除する。
     func testCloseUnfinishedSessions() throws {
         let store = try makeStore()

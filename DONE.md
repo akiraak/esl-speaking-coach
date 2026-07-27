@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-26 トーク画面のデバッグ表示を削除し、管理画面の会話ログへ移した [plan](docs/plans/archive/hide-debug-notices-in-chat.md)
+  - 対象: DEBUG 限定のレイテンシ計測行（`体感 …ms | 無音待ち … | TTFT …`）と技術通知ピル（`STT へ接続中… (gpt-4o-transcribe)` / `STT 再接続完了` / `stop_reason: …` / `シミュレータのためマイクは無効です…` など）。会話が止まる「エラー: …」はこれまで通りトーク画面にも出す
+  - 保存先として `ChatSessionLogRecord`（kind = metrics / notice / error）を追加し、`ChatHistoryStore.appendLog` / `logs(sessionID:)` で読み書き。セッションに紐づくので削除は cascade。schema への追加は additive なので既存ストアもそのまま開ける
+  - 管理画面のセッション詳細は、発話と調査用ログを createdAt 順にマージして 1 本のリストに表示（⏱ 計測 / ℹ️ 通知 / ⚠️ エラー のキャプション行）
+  - ユニットテスト 3 件追加・全 103 件パス。シミュレータで 1 ターン会話し、トーク画面に計測行・技術通知が出ないこと、同じ内容が管理画面の会話ログに時系列で並ぶことを確認済み（実機未確認）。仕様書 screen-layout.md を同期
 - 2026-07-26 設定ボタンと画面を削除し、管理画面ボタンをその場所へ移設 [plan](docs/plans/archive/remove-settings-screen.md)
   - API キーは `.secrets/<provider>-api-key` + 起動引数で Keychain にシードする運用に固まっており、アプリ内の設定画面（Anthropic キー手入力）は不要になっていたため `SettingsView` ごと削除。`ChatRoomView` の sheet / state / キー未設定時の自動表示、`ChatRoomStore.isAnthropicKeyMissing` も削除
   - ヘッダは ⋯ メニュー（中身は「管理画面」1 項目のみ）+ ⚙ の 2 ボタンから、`chart.bar.doc.horizontal` の管理画面ボタン 1 個（旧 ⚙ の位置）に集約。1 タップで管理画面が開く
