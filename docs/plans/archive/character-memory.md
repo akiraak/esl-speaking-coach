@@ -97,15 +97,25 @@ SwiftData に会話の全記録が残っているのに、会話コンテキス�
 - `TurnBasedVoiceSession` の開始メッセージ合成: memoryNote あり / なし / 記憶のみ再開時の履歴先頭を検証（既存の CloudPipeline 系テストの流儀に合わせる）
 - 手動確認: シミュレータでセッションを 2 回実施し、1 回目で話した内容（例: 名前・趣味）に 2 回目のキャラが言及できることを確認。`xcodebuild` でのビルド確認を完了条件とする
 
+### シミュレータ検証記録（2026-07-26）
+
+`-start-conversation -send-text ...` の自動送信で 2 セッションを通し実行して確認済み:
+
+- セッション 1（名前 + 味噌ラーメン好きを話して goodbye）終了後、記憶ノートが 2 部構成（About the learner / Recent sessions）で生成・保存され、usage が kind `memory` で記録された
+- セッション 2 で "Do you remember what food I like?" に対し Naruko が "Miso ramen, right? Every Friday near your office!"、Chobi が "Aw, we do remember, Akira!" と記憶の事実 + 名前に言及
+- セッション 2 終了後、ノートに 2 件目のセッションサマリが追記され、学習者の事実は維持（ローリング更新の冪等性）
+
+実機での通し確認（Phase 5）は 2026-07-26 に完了。
+
 ## Phase / Step
 
 - [x] Phase 1: 現状実装の調査（本プランの「現状実装の調査結果」に記録）
-- [ ] Phase 2: 記憶の生成と保存
+- [x] Phase 2: 記憶の生成と保存（2026-07-26 実装）
   - `CharacterMemoryRecord` + `CharacterMemoryStore` + schema 追加
-  - `MemoryUpdateClient`（sonnet-5・structured outputs・SSE 蓄積）
-  - セッション正常終了時の更新フック（発話 2 未満スキップ・best effort）+ usage 記録
-- [ ] Phase 3: 会話への注入
-  - `Configuration.memoryNote` と `[Memory: ...]` + `[New topic: ...]` の合成（`rebuildHistory` 含む）
-  - `CoachSystemPrompt` に `[Memory: ...]` の扱いを追記
-- [ ] Phase 4: 管理画面での記憶の閲覧・リセット
-- [ ] Phase 5: 実機での通し確認（2 セッションで記憶の引き継ぎを確認）
+  - `MemoryUpdateClient`（sonnet-5・structured outputs・SSE 蓄積・effort medium・max_tokens 2000）
+  - セッション正常終了時の更新フック（発話 2 未満スキップ・best effort）+ usage 記録（kind: `memory`）
+- [x] Phase 3: 会話への注入（2026-07-26 実装）
+  - `Configuration.memoryNote` と `[Memory: ...]` + `[New topic: ...]` の合成（`SessionOpeningMessage.compose`。`rebuildHistory` 含む）
+  - `CoachSystemPrompt` に `[Memory: ...]` の扱いを追記（conversation-design.md 付録 A も同期）
+- [x] Phase 4: 管理画面での記憶の閲覧・リセット（「記憶」タブ / `MemoryAdminView`）
+- [x] Phase 5: 実機での通し確認（2 セッションで記憶の引き継ぎを確認。2026-07-26 完了）

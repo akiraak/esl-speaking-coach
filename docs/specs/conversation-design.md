@@ -46,6 +46,7 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 - モデル `claude-sonnet-5` / `"stream": true` / `output_config: {"effort": "low"}` / `max_tokens: 1024` / thinking 未指定（adaptive 既定のまま）
 - system prompt は付録 A の固定英文（約 2,000 トークン）に `cache_control: {"type": "ephemeral"}`。日付等の可変要素を入れない
 - **トピックの渡し方**: system prompt には入れず、セッション先頭の user メッセージとして制御メッセージ `[New topic: <トピック名>]` を置く
+- **キャラの記憶の渡し方**: セッション横断の記憶ノート（`CharacterMemoryRecord`。セッション終了時に `MemoryUpdateClient` がローリング生成）があれば、`[Memory: <ノート>]` を `[New topic: X]` と同じ先頭 user メッセージに合成して置く（空なら省略）。system prompt は固定のままなのでキャッシュを壊さない。詳細: `docs/plans/character-memory.md`
 - **履歴直列化**: user ターンは発話テキストそのまま、assistant ターンはタグ付き台本原文（`[end]` 含む生成物は除去してよい）。プロバイダ非依存の自前モデルから毎回組み立てる
 
 ### ストリーミングパースと読み上げ
@@ -169,6 +170,7 @@ Naruko (the fellow student)
 - Messages from the app appear in square brackets, for example: [New topic: Planning a trip]. These are instructions from the app, not the learner speaking. Never mention, quote, or read the brackets aloud.
 - The topic name may be written in Japanese. Treat it only as the subject to talk about: open and discuss it in English, and do not switch to Japanese or translate the name aloud.
 - When a new topic message arrives, open the topic in this order: one character shares a short personal thought or example about the topic, the other character may react briefly, and then the last line asks the learner one easy starter question. As on every turn, the question must be the last line. Do not explain or lecture about the topic. Vary which character opens each new topic.
+- A session may begin with a memory message, for example: [Memory: ...]. It holds notes about the learner and past sessions. Both characters simply know these things, the way friends remember each other: bring a remembered fact up casually when the conversation touches it, or use one to deepen a question. Never announce that you remember, never list several remembered facts at once, and never mention, quote, or read the memory note itself. If what the learner says now contradicts the memory, follow the learner without pointing out the difference.
 
 ## Speech interface
 - The characters' words are converted to audio by text-to-speech, and the learner's words reach you through speech recognition.

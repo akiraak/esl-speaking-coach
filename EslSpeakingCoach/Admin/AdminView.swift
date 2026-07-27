@@ -1,13 +1,15 @@
 import SwiftUI
 
-/// 管理画面（ヘッダメニューから開く）。会話内容の閲覧と AI 利用料金の確認。
+/// 管理画面（ヘッダメニューから開く）。会話内容の閲覧・キャラの記憶・AI 利用料金の確認。
 /// 標準コンポーネント中心の簡素な作り。トーク画面に合わせてライト固定。
 struct AdminView: View {
     let historyStore: ChatHistoryStore
     let usageStore: UsageStore
+    let memoryStore: CharacterMemoryStore
 
     private enum Tab: String, CaseIterable, Identifiable {
         case sessions = "会話"
+        case memory = "記憶"
         case usage = "料金"
         var id: String { rawValue }
     }
@@ -15,9 +17,13 @@ struct AdminView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var tab: Tab
 
-    init(historyStore: ChatHistoryStore, usageStore: UsageStore, startOnUsage: Bool = false) {
+    init(
+        historyStore: ChatHistoryStore, usageStore: UsageStore,
+        memoryStore: CharacterMemoryStore, startOnUsage: Bool = false
+    ) {
         self.historyStore = historyStore
         self.usageStore = usageStore
+        self.memoryStore = memoryStore
         _tab = State(initialValue: startOnUsage ? .usage : .sessions)
     }
 
@@ -36,6 +42,8 @@ struct AdminView: View {
                 switch tab {
                 case .sessions:
                     SessionListView(historyStore: historyStore, usageStore: usageStore)
+                case .memory:
+                    MemoryAdminView(memoryStore: memoryStore)
                 case .usage:
                     UsageDashboardView(usageStore: usageStore)
                 }

@@ -40,6 +40,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         var geminiTTS = GeminiTTSConfiguration()
         /// ready 後に AI 側から開始するトピック（[New topic: X] を送る）
         var initialTopic: String?
+        /// セッション横断の記憶ノート。initialTopic の開始メッセージに [Memory: ...] として合成する
+        /// （空なら省略。docs/plans/character-memory.md）
+        var memoryNote: String?
         /// 開始時点の音声入力（STT + マイク）の有効 / 無効
         var voiceInputEnabled = true
         /// 途中再開用の会話履歴（エラー後の立て直しで使う）
@@ -457,12 +460,15 @@ final class TurnBasedVoiceSession: VoiceSession {
     // MARK: - Turn commit → Claude
 
     /// ready 直後に AI 側から開始ターンを生成する（トピックカードでの選択に対応）。
+    /// 記憶ノートがあれば [Memory: ...] を同じ user メッセージに合成する
+    /// （messages 先頭で不変にし、system prompt のキャッシュを壊さない）。
     private func startInitialTopicIfNeeded() {
         guard let topic = pendingInitialTopic else { return }
         pendingInitialTopic = nil
         state = .thinking
         metrics = TurnMetricsBuilder()
-        appendUserMessage("[New topic: \(topic)]")
+        appendUserMessage(SessionOpeningMessage.compose(
+            topic: topic, memoryNote: configuration.memoryNote))
         startClaudeTurn()
     }
 

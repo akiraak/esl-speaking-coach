@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-26 キャラの記憶の現状実装の調査と改善: セッション横断の記憶（ローリング記憶ノート）を実装 [plan](docs/plans/archive/character-memory.md)
+  - 調査で「セッション内記憶は完全 / セッション横断はゼロ / データ自体は端末に全部ある」を確認し、方式比較の上ローリング記憶ノート方式を採用
+  - セッション正常終了時に `MemoryUpdateClient`（sonnet-5・structured outputs・SSE 蓄積）が「前回ノート + 今回 transcript → 更新済みノート（英語箇条書き・約 400 語以内・2 部構成）」を生成し、SwiftData の単一レコードへ上書き保存（`CharacterMemoryStore`。発話 2 未満スキップ・best effort・usage kind `memory` で料金記録）
+  - 次セッション開始時に `[Memory: <ノート>]` を `[New topic: X]` と同じ先頭 user メッセージへ合成して注入（`SessionOpeningMessage.compose`。エラー再開の `rebuildHistory` も同形）。system prompt は固定のままキャッシュを壊さない。`CoachSystemPrompt` に扱い（自然に使う・列挙しない・矛盾は学習者優先）を追記し conversation-design.md / ai-cost-map.md を同期
+  - 管理画面に「記憶」タブ（閲覧・リセット）を追加。ビルド + 単体テスト全件パス（13 件追加）。シミュレータ 2 セッション通しで記憶の引き継ぎ（名前・好物への言及とノートのローリング更新）を確認、実機での通し確認も完了
 - 2026-07-26 Hum など小さい声で STT prompt がそのまま入力される問題を修正 [plan](docs/plans/archive/stt-prompt-echo-hallucination.md)
   - 原因: gpt-4o-transcribe が非発話セグメントで認識バイアス用 prompt をエコーする既知の幻覚（prompt leakage）。空文字チェックしかなく素通りしていた
   - `STTHallucinationFilter.isPromptEcho` を追加（正規化して先頭一致のみエコー判定。全体・末尾切れ・繰り返しに対応、最小長ガードで誤爆防止）し、`TurnBasedVoiceSession` の `.finalTranscript` で適用。破棄時は空セグメント扱いで listening へ戻す

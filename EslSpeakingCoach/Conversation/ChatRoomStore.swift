@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import SwiftData
 import UIKit
 
@@ -94,6 +95,11 @@ final class ChatRoomStore {
     let historyStore: ChatHistoryStore
     /// AI 利用量の記録（管理画面からも参照する）。
     let usageStore: UsageStore
+    /// キャラのセッション横断記憶（管理画面からも参照する）。
+    let memoryStore: CharacterMemoryStore
+
+    private static let logger = Logger(
+        subsystem: "com.akiraak.EslSpeakingCoach", category: "ChatRoomStore")
 
     private var session: (any VoiceSession)?
     private var eventTask: Task<Void, Never>?
@@ -104,6 +110,8 @@ final class ChatRoomStore {
     private var activeSessionID: UUID?
     /// 重複回避用の直近トピックタイトル（起動時に永続化済みセッションから復元。直近 20 件）
     private var recentTopicTitles: [String] = []
+    /// 現在セッションの開始時に読み込んだ記憶ノート（エラー再開の rebuildHistory でも同じものを使う）
+    private var activeMemoryNote: String?
     #if DEBUG
     private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
     #endif
@@ -111,6 +119,7 @@ final class ChatRoomStore {
     init(container: ModelContainer = AppModelContainer.shared) {
         historyStore = ChatHistoryStore(container: container)
         usageStore = UsageStore(container: container)
+        memoryStore = CharacterMemoryStore(container: container)
         let stored = UserDefaults.standard.string(forKey: Self.inputModeKey)
         inputMode = stored.flatMap(InputMode.init(rawValue:)) ?? .voice
     }
@@ -247,6 +256,7 @@ final class ChatRoomStore {
         appendItem(.sessionDivider(id: UUID(), text: "\(Self.dividerDateText(for: Date())) \(trimmed)"))
         let sessionID = UUID()
         activeSessionID = sessionID
+        activeMemoryNote = memoryStore.currentNote()
         historyStore.beginSession(id: sessionID, topicTitle: trimmed)
         launchSession(initialTopic: trimmed, initialHistory: [])
     }
@@ -274,6 +284,7 @@ final class ChatRoomStore {
         configuration.ttsProvider = DebugLaunchArguments.ttsProviderOverride ?? .gemini
         #endif
         configuration.initialTopic = initialTopic
+        configuration.memoryNote = activeMemoryNote
         configuration.initialHistory = initialHistory
         configuration.voiceInputEnabled = inputMode == .voice && !isVoicePaused
         let newSession = TurnBasedVoiceSession(
@@ -317,11 +328,13 @@ final class ChatRoomStore {
             let endedSessionID = activeSessionID
             activeTopicTitle = nil
             activeSessionID = nil
+            activeMemoryNote = nil
             historyStore.endActiveSession()
             // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
             // フィードバックは生成中表示で即投稿し、完了を待たずに次のトピックを選べるようにする
             if let endedTopic {
                 postFeedbackCard(topic: endedTopic, sessionID: endedSessionID)
+                updateCharacterMemory(topic: endedTopic, sessionID: endedSessionID)
             }
             postTopicCard()
         } else {
@@ -388,6 +401,31 @@ final class ChatRoomStore {
         }
     }
 
+    // MARK: - キャラの記憶
+
+    /// セッション正常終了時に記憶ノートをローリング更新する（docs/plans/character-memory.md）。
+    /// フィードバックと同じく学習者の発話 2 未満はスキップ。失敗は best effort
+    /// （前回ノートが残るだけで壊れず、次回終了時の生成でカバーされる）。
+    private func updateCharacterMemory(topic: String, sessionID: UUID?) {
+        let (transcript, learnerTurnCount) = sessionTranscript()
+        guard learnerTurnCount >= 2 else { return }
+        guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else { return }
+        let previousMemory = memoryStore.currentNote()
+        Task {
+            do {
+                let (memory, usage) = try await MemoryUpdateClient().updateMemory(
+                    apiKey: apiKey, previousMemory: previousMemory,
+                    topic: topic, transcript: transcript)
+                if let usage {
+                    usageStore.record(usage, sessionID: sessionID)
+                }
+                memoryStore.save(text: memory, sourceSessionID: sessionID)
+            } catch {
+                Self.logger.error("記憶ノートの更新に失敗: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func findFeedbackCard(_ cardID: UUID) -> FeedbackCard? {
         for item in timeline.reversed() {
             if case .feedbackCard(let card) = item, card.id == cardID { return card }
@@ -428,13 +466,16 @@ final class ChatRoomStore {
 
     /// タイムラインの現在セッション区間（最後の区切り以降）から API 用の会話履歴を組み立てる。
     /// 連続する AI 発話は 1 つのタグ付き台本メッセージへ再直列化する。
+    /// 先頭はセッション開始時と同じ合成メッセージ（[Memory: ...] + [New topic: X]）にする。
     private func rebuildHistory(topic: String) -> [ConversationMessage] {
         var sessionItems: [TimelineItem] = []
         for item in timeline.reversed() {
             if case .sessionDivider = item { break }
             sessionItems.append(item)
         }
-        var history = [ConversationMessage(role: .user, text: "[New topic: \(topic)]")]
+        var history = [ConversationMessage(
+            role: .user,
+            text: SessionOpeningMessage.compose(topic: topic, memoryNote: activeMemoryNote))]
         var pendingScript: [String] = []
         func flushScript() {
             guard !pendingScript.isEmpty else { return }

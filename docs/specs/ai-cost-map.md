@@ -17,6 +17,7 @@
 | 3 | 読み上げ（TTS） | Gemini `gemini-3.1-flash-tts-preview` | テキスト入力トークン + **音声出力トークン（25 トークン/秒）** | AI 発話の **1 文ごと**に 1 リクエスト | 実装済み |
 | 4 | トピック候補生成 | Claude Messages / `claude-sonnet-5` | 入力 + 出力トークン(少量) | 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時 | 実装済み |
 | 5 | セッション後フィードバック生成 | Claude Messages / `claude-opus-5` | 入力（会話全文）+ 出力トークン（effort high・max_tokens 16000） | セッション正常終了ごとに 1 回（学習者の発話 2 未満はスキップ。失敗時のリトライも課金） | 実装済み |
+| 6 | 記憶ノート更新 | Claude Messages / `claude-sonnet-5` | 入力（前回ノート + 会話全文）+ 出力トークン（max_tokens 2000） | セッション正常終了ごとに 1 回（学習者の発話 2 未満はスキップ。失敗してもリトライ導線なし） | 実装済み |
 
 ## 単価表（2026-07-25 時点）
 
@@ -99,7 +100,7 @@
 
 ## 利用量の記録（2026-07-25 実装）
 
-管理画面「AI 利用料金」のため、5 経路すべてで API レスポンスの usage を記録している
+管理画面「AI 利用料金」のため、6 経路すべてで API レスポンスの usage を記録している
 （実装プラン: `docs/plans/archive/history-persistence-and-admin.md`）。
 
 - 取得元: Claude は SSE の `message_start` / `message_delta`（非ストリーミングは応答の `usage`）、

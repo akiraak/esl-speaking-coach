@@ -34,9 +34,12 @@ struct ChatRoomView: View {
             #if DEBUG
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,
+                memoryStore: store.memoryStore,
                 startOnUsage: DebugLaunchArguments.adminOpensOnUsageTab)
             #else
-            AdminView(historyStore: store.historyStore, usageStore: store.usageStore)
+            AdminView(
+                historyStore: store.historyStore, usageStore: store.usageStore,
+                memoryStore: store.memoryStore)
             #endif
         }
         .alert("自分でトピックを作る", isPresented: $isShowingTopicInput) {

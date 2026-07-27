@@ -19,6 +19,7 @@ enum AppModelContainer {
             ChatSessionRecord.self,
             ChatMessageRecord.self,
             APIUsageRecord.self,
+            CharacterMemoryRecord.self,
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         return try ModelContainer(for: schema, configurations: [configuration])
