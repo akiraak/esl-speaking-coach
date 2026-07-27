@@ -57,6 +57,8 @@ final class ChatMessageRecord {
     var orderIndex: Int
     var speakerRawValue: String
     var text: String
+    /// 日本語訳（未生成は nil）。トーク画面の翻訳トグルで表示する
+    var translation: String?
     var createdAt: Date
     var session: ChatSessionRecord?
 

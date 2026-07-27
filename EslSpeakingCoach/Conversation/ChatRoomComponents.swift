@@ -7,6 +7,8 @@ struct AIMessageRow: View {
     let message: ChatRoomStore.AIMessage
     /// 読み上げ中はアバター横（名前の隣）に 🔊 を出す
     let isSpeaking: Bool
+    /// 翻訳トグル ON のとき吹き出しの下に出す日本語訳
+    let translation: ChatRoomStore.TranslationDisplay
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -35,6 +37,7 @@ struct AIMessageRow: View {
                             bottomTrailingRadius: ChatTheme.bubbleRadius,
                             topTrailingRadius: ChatTheme.bubbleRadius))
                     .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+                TranslationLine(display: translation, alignment: .leading)
             }
             Spacer(minLength: 48)
         }
@@ -43,25 +46,60 @@ struct AIMessageRow: View {
 
 /// ユーザーメッセージ: 右寄せ・アクセントカラー。自分のアバター・名前は表示しない（LINE 準拠）。
 struct UserMessageRow: View {
-    let text: String
+    let message: ChatRoomStore.UserMessage
+    /// 翻訳トグル ON のとき吹き出しの下に出す日本語訳
+    let translation: ChatRoomStore.TranslationDisplay
 
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            Text(text)
-                .font(.body.weight(.medium))
-                .foregroundStyle(ChatTheme.userText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    ChatTheme.userBubble,
-                    in: UnevenRoundedRectangle(
-                        topLeadingRadius: ChatTheme.bubbleRadius,
-                        bottomLeadingRadius: ChatTheme.bubbleRadius,
-                        bottomTrailingRadius: ChatTheme.bubbleRadius,
-                        topTrailingRadius: ChatTheme.bubbleTailRadius))
-                .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(message.text)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(ChatTheme.userText)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        ChatTheme.userBubble,
+                        in: UnevenRoundedRectangle(
+                            topLeadingRadius: ChatTheme.bubbleRadius,
+                            bottomLeadingRadius: ChatTheme.bubbleRadius,
+                            bottomTrailingRadius: ChatTheme.bubbleRadius,
+                            topTrailingRadius: ChatTheme.bubbleTailRadius))
+                    .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+                TranslationLine(display: translation, alignment: .trailing)
+            }
         }
+    }
+}
+
+/// 吹き出しの下に添える日本語訳の 1 行（翻訳トグル OFF・生成対象外は何も出さない）。
+struct TranslationLine: View {
+    let display: ChatRoomStore.TranslationDisplay
+    let alignment: HorizontalAlignment
+
+    var body: some View {
+        switch display {
+        case .hidden:
+            EmptyView()
+        case .text(let text):
+            line(text, color: ChatTheme.systemText)
+        case .loading:
+            line("翻訳中…", color: ChatTheme.systemText.opacity(0.6))
+        case .failed:
+            line("翻訳できませんでした", color: ChatTheme.systemText.opacity(0.6))
+        }
+    }
+
+    private func line(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(color)
+            .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
+            .padding(.horizontal, 4)
+            .frame(
+                maxWidth: .infinity,
+                alignment: alignment == .trailing ? .trailing : .leading)
     }
 }
 
@@ -366,23 +404,52 @@ struct FeedbackCardView: View {
     }
 }
 
-// MARK: - セッション終了
+// MARK: - タイムライン下端の固定バー
 
-/// セッション中だけタイムライン下端に固定表示する横長の終了ボタン。
-/// スクロールには乗せない（会話が追記されても位置が動かない）。
-struct EndSessionRow: View {
-    let action: () -> Void
+/// タイムライン下端に固定表示するバー。スクロールには乗せない（会話が追記されても位置が動かない）。
+/// 翻訳トグルは常時表示（過去ログを遡って読むときにも使う）、終了ボタンはセッション中のみ。
+struct TimelineBottomBar: View {
+    let isTranslationVisible: Bool
+    let isSessionActive: Bool
+    let onToggleTranslation: () -> Void
+    let onEndSession: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label("このトピックを終了", systemImage: "flag.checkered")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(ChatTheme.userText)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(
-                    ChatTheme.accent,
-                    in: RoundedRectangle(cornerRadius: ChatTheme.cardRadius))
-                .shadow(color: ChatTheme.bubbleShadow, radius: 6, y: 2)
+        HStack(spacing: 10) {
+            Button(action: onToggleTranslation) {
+                Text("翻訳")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(isTranslationVisible ? ChatTheme.userText : ChatTheme.aiText)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .background(
+                        isTranslationVisible ? AnyShapeStyle(ChatTheme.accent)
+                            : AnyShapeStyle(ChatTheme.barBackground),
+                        in: RoundedRectangle(cornerRadius: ChatTheme.cardRadius))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ChatTheme.cardRadius)
+                            .strokeBorder(
+                                isTranslationVisible ? .clear : ChatTheme.cardBorder, lineWidth: 1)
+                    }
+                    .shadow(color: ChatTheme.bubbleShadow, radius: 6, y: 2)
+            }
+            .accessibilityLabel(isTranslationVisible ? "翻訳を隠す" : "翻訳を表示")
+
+            if isSessionActive {
+                Button(action: onEndSession) {
+                    Label("このトピックを終了", systemImage: "flag.checkered")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(ChatTheme.userText)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(
+                            ChatTheme.accent,
+                            in: RoundedRectangle(cornerRadius: ChatTheme.cardRadius))
+                        .shadow(color: ChatTheme.bubbleShadow, radius: 6, y: 2)
+                }
+            } else {
+                // セッション外は翻訳ボタンだけ。中央寄せにせず左端に置く
+                Spacer(minLength: 0)
+            }
         }
     }
 }

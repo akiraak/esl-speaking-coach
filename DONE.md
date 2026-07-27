@@ -1,5 +1,16 @@
 # DONE
 
+- 2026-07-26 会話の翻訳を生成し、下端バーの「翻訳」トグルで表示を切り替える [plan](docs/plans/archive/message-translation.md)
+  - 会話は英語のみで意味が取れないまま流れることがあるため、AI 発話・ユーザー発話の両方に日本語訳を持たせ、吹き出しの下に小さめの文字で添える。訳は端末内に永続化し、起動後に遡ってもすぐ読める
+  - 表示 UI: 吹き出しタップは見つけにくいので採らず、下端バーに「翻訳」トグルを置いてタイムライン全体を一括切替。トグルはセッション中かどうかに関わらず常時表示、終了ボタンはセッション中のみで横並び。ON / OFF は `UserDefaults` に保存（既定 OFF）
+  - 生成: `claude-haiku-4-5` / 非ストリーミング / structured outputs（`[{id, ja}]`）。**`output_config.effort` は haiku-4-5 では 400 になるため送らない**。呼び出しは訳 ON のときだけで、ターン終了ごと（`stateChanged(.listening)`）+ セッション終了時 + OFF → ON + 訳 ON のまま起動した時。会話のクリティカルパスには載せない
+  - 文脈を必ず渡す: 英会話は代名詞と省略が多い（`Yeah, I did.` / `That one.`）ため、リクエストは「トピック + 直前 8 発話（id なし・訳出しない参照専用）」と「翻訳対象（id 付き）」の 2 部構成。実機確認でも `What did you do there, Akira?` が文脈から「京都で何をしたんですか、アキラ？」と訳せている
+  - 生成対象は常に 1 セッション分だけ（セッション中は現在のセッション、セッション外はタイムライン末尾のセッション）。**表示は生成対象より広く**、保存済みの訳があればどのセッションでも出す（新しいトピックを始めた瞬間に前の訳が消えないようにするため）。生成対象外の未翻訳発話には「翻訳中…」も出さない
+  - 1 リクエスト最大 20 発話・逐次実行（多重実行防止）。失敗は best effort で「翻訳できませんでした」を出し、次のフラッシュで再挑戦
+  - 実装: `Claude/TranslationClient.swift`（新規）、`ChatMessageRecord.translation` + `ChatHistoryStore.updateTranslation`（additive なので既存ストアもそのまま開ける）、`AIUsageEvent.Kind.translation` と haiku 単価（$1 / $5）、`TimelineItem.sessionDivider` にトピック名を追加、`EndSessionRow` → `TimelineBottomBar`、管理画面のセッション詳細に訳を併記
+  - ユニットテスト 17 件追加・全 120 件パス。シミュレータで OFF のまま会話 → 訳が生成されないこと、ON にすると対象セッションが順に埋まること、ON のまま会話するとターンごとに訳が付くこと、新しいトピックを始めても前セッションの訳が消えないこと、料金タブに「会話の翻訳」が記録されること（$0.0059 / 最安経路）を確認済み（実機未確認）
+  - 訳 ON のまま再起動すると復元した直前セッションが「翻訳中…」のまま止まるバグを実機確認中に発見し、`onAppear` でもフラッシュするよう修正
+  - 仕様書 screen-layout.md / conversation-design.md / ai-cost-map.md（課金経路 #7）を同期
 - 2026-07-26 トーク画面のデバッグ表示を削除し、管理画面の会話ログへ移した [plan](docs/plans/archive/hide-debug-notices-in-chat.md)
   - 対象: DEBUG 限定のレイテンシ計測行（`体感 …ms | 無音待ち … | TTFT …`）と技術通知ピル（`STT へ接続中… (gpt-4o-transcribe)` / `STT 再接続完了` / `stop_reason: …` / `シミュレータのためマイクは無効です…` など）。会話が止まる「エラー: …」はこれまで通りトーク画面にも出す
   - 保存先として `ChatSessionLogRecord`（kind = metrics / notice / error）を追加し、`ChatHistoryStore.appendLog` / `logs(sessionID:)` で読み書き。セッションに紐づくので削除は cascade。schema への追加は additive なので既存ストアもそのまま開ける

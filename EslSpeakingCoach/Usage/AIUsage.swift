@@ -10,7 +10,7 @@ struct AIUsageEvent: Sendable, Equatable {
         case gemini
     }
 
-    /// 課金 6 経路（docs/specs/ai-cost-map.md の #1〜#6）。
+    /// 課金 7 経路（docs/specs/ai-cost-map.md の #1〜#7）。
     enum Kind: String, Sendable, CaseIterable {
         case speechToText = "stt"
         case conversationTurn = "turn"
@@ -18,6 +18,7 @@ struct AIUsageEvent: Sendable, Equatable {
         case topicSuggestion = "topic"
         case sessionFeedback = "feedback"
         case memoryUpdate = "memory"
+        case translation = "translation"
 
         var label: String {
             switch self {
@@ -27,6 +28,7 @@ struct AIUsageEvent: Sendable, Equatable {
             case .topicSuggestion: return "トピック生成"
             case .sessionFeedback: return "フィードバック生成"
             case .memoryUpdate: return "記憶更新"
+            case .translation: return "会話の翻訳"
             }
         }
     }

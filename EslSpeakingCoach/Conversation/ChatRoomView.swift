@@ -14,8 +14,8 @@ struct ChatRoomView: View {
     @State private var isAutoScrollEnabled = true
 
     private static let bottomAnchorID = "timeline-bottom"
-    /// 固定表示の終了ボタン（高さ 44 + 下余白 12）に隠れない分のスクロール下余白
-    private static let endSessionButtonInset: CGFloat = 72
+    /// 固定表示の下端バー（高さ 44 + 下余白 12）に隠れない分のスクロール下余白
+    private static let bottomBarInset: CGFloat = 72
 
     var body: some View {
         VStack(spacing: 0) {
@@ -114,10 +114,10 @@ struct ChatRoomView: View {
                     if store.voiceState == .thinking {
                         TypingIndicatorRow()
                     }
-                    // 最下部アンカー。固定表示の終了ボタンに最新メッセージが隠れないよう、
-                    // ボタンの高さぶんの余白をアンカー自体に持たせる
+                    // 最下部アンカー。固定表示の下端バーに最新メッセージが隠れないよう、
+                    // バーの高さぶんの余白をアンカー自体に持たせる
                     Color.clear
-                        .frame(height: isEndSessionButtonVisible ? Self.endSessionButtonInset : 1)
+                        .frame(height: isBottomBarVisible ? Self.bottomBarInset : 1)
                         .id(Self.bottomAnchorID)
                 }
                 .padding(.horizontal, 12)
@@ -163,13 +163,26 @@ struct ChatRoomView: View {
             }
             // スクロールに乗せずタイムライン下端へ固定する（会話追記でも位置が動かない）
             .overlay(alignment: .bottom) {
-                if isEndSessionButtonVisible {
-                    EndSessionRow { isConfirmingEndSession = true }
+                if isBottomBarVisible {
+                    TimelineBottomBar(
+                        isTranslationVisible: store.isTranslationVisible,
+                        isSessionActive: isEndSessionButtonVisible,
+                        onToggleTranslation: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                store.setTranslationVisible(!store.isTranslationVisible)
+                            }
+                        },
+                        onEndSession: { isConfirmingEndSession = true })
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
                 }
             }
         }
+    }
+
+    /// 下端バーを出す条件（翻訳トグルは常時表示。エラー再開バー表示中だけは引っ込める）。
+    private var isBottomBarVisible: Bool {
+        !store.canResumeAfterFailure
     }
 
     /// 終了ボタンを出す条件（セッション中。エラー再開バー表示中は出さない）。
@@ -180,15 +193,20 @@ struct ChatRoomView: View {
     @ViewBuilder
     private func timelineRow(_ item: ChatRoomStore.TimelineItem) -> some View {
         switch item {
-        case .sessionDivider(_, let text):
+        case .sessionDivider(_, let text, _):
             SystemPillRow(text: text, emphasized: true)
         case .aiMessage(let message):
             AIMessageRow(
                 message: message,
                 isSpeaking: store.speakingUtteranceID == message.id
-                    && store.voiceState == .speaking)
-        case .userMessage(_, let text):
-            UserMessageRow(text: text)
+                    && store.voiceState == .speaking,
+                translation: store.translationDisplay(
+                    id: message.id, translation: message.translation))
+        case .userMessage(let message):
+            UserMessageRow(
+                message: message,
+                translation: store.translationDisplay(
+                    id: message.id, translation: message.translation))
         case .topicCard(let card):
             TopicCardView(
                 card: card,

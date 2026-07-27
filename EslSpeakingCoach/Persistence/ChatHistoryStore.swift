@@ -21,6 +21,8 @@ final class ChatHistoryStore {
         let id: UUID
         let speaker: MessageSpeaker
         let text: String
+        /// 日本語訳（未生成は nil）
+        let translation: String?
         let createdAt: Date
     }
 
@@ -102,6 +104,14 @@ final class ChatHistoryStore {
         save()
     }
 
+    /// 発話の日本語訳を保存する。過去セッション（アクティブ外）の発話も対象なので
+    /// キャッシュに無ければ発話 ID で直接フェッチする。
+    func updateTranslation(id: UUID, text: String) {
+        guard let record = activeMessagesByID[id] ?? fetchMessage(id: id) else { return }
+        record.translation = text
+        save()
+    }
+
     /// 調査用ログの追記（レイテンシ計測・技術通知・エラー）。
     /// セッション外で起きたものは記録しない（会話ログの一部として見るため）。
     func appendLog(kind: SessionLogKind, text: String) {
@@ -171,7 +181,7 @@ final class ChatHistoryStore {
                 guard let speaker = record.speaker else { return nil }
                 return MessageSnapshot(
                     id: record.id, speaker: speaker, text: record.text,
-                    createdAt: record.createdAt)
+                    translation: record.translation, createdAt: record.createdAt)
             }
     }
 
@@ -214,6 +224,13 @@ final class ChatHistoryStore {
     private func fetchSession(id: UUID) -> ChatSessionRecord? {
         if let activeSession, activeSession.id == id { return activeSession }
         var descriptor = FetchDescriptor<ChatSessionRecord>(
+            predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return (try? context.fetch(descriptor))?.first
+    }
+
+    private func fetchMessage(id: UUID) -> ChatMessageRecord? {
+        var descriptor = FetchDescriptor<ChatMessageRecord>(
             predicate: #Predicate { $0.id == id })
         descriptor.fetchLimit = 1
         return (try? context.fetch(descriptor))?.first

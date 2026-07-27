@@ -31,6 +31,19 @@ final class AIPricingTests: XCTestCase {
         XCTAssertEqual(AIPricing.estimatedCostUSD(for: event), 0.1, accuracy: 0.0001)
     }
 
+    /// haiku-4-5（会話の翻訳）は $1/$5。導入価格の期限判定には引っかからない。
+    func testHaikuTranslationCost() {
+        let event = AIUsageEvent(
+            provider: .anthropic, model: "claude-haiku-4-5", kind: .translation,
+            inputTokens: 2_000, outputTokens: 1_000)
+        let expected = 2_000.0 / 1_000_000 * 1 + 1_000.0 / 1_000_000 * 5
+        for iso in ["2026-07-25T00:00:00Z", "2026-10-01T00:00:00Z"] {
+            let date = ISO8601DateFormatter().date(from: iso)!
+            XCTAssertEqual(
+                AIPricing.estimatedCostUSD(for: event, at: date), expected, accuracy: 0.0000001)
+        }
+    }
+
     /// STT はトークン優先（音声入力 $6/M + テキスト入力 $2.5/M + 出力 $10/M）。
     func testTranscribeCostWithTokens() {
         let event = AIUsageEvent(

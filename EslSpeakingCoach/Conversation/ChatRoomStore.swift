@@ -22,6 +22,32 @@ final class ChatRoomStore {
         let id: UUID  // = 発話 utteranceID
         let speaker: ChatCharacter
         var text: String
+        /// 日本語訳（未生成は nil）。翻訳トグル ON のとき吹き出しの下に出す
+        var translation: String?
+    }
+
+    struct UserMessage: Identifiable {
+        let id: UUID
+        var text: String
+        /// 日本語訳（未生成は nil）。STT が何を拾ったかの確認にもなる
+        var translation: String?
+    }
+
+    /// 吹き出しに出す訳の表示状態（トグル OFF・生成対象外は .hidden）。
+    enum TranslationDisplay: Equatable {
+        case hidden
+        case text(String)
+        case loading
+        case failed
+    }
+
+    /// 翻訳のリクエスト組み立て用に切り出した 1 発話（純粋関数のテストに使う）。
+    struct TranslatableMessage: Equatable {
+        let id: UUID
+        /// 話者ラベル（Chobi / Naruko / Learner）
+        let speaker: String
+        let text: String
+        let translation: String?
     }
 
     struct TopicCard: Identifiable {
@@ -48,19 +74,19 @@ final class ChatRoomStore {
     }
 
     enum TimelineItem: Identifiable {
-        /// セッション区切り（日付 + トピック名）
-        case sessionDivider(id: UUID, text: String)
+        /// セッション区切り（表示用の「日付 + トピック名」と、翻訳の文脈に渡すトピック名）
+        case sessionDivider(id: UUID, text: String, topic: String)
         case aiMessage(AIMessage)
-        case userMessage(id: UUID, text: String)
+        case userMessage(UserMessage)
         case topicCard(TopicCard)
         case feedbackCard(FeedbackCard)
         case systemNotice(id: UUID, text: String)
 
         var id: UUID {
             switch self {
-            case .sessionDivider(let id, _): return id
+            case .sessionDivider(let id, _, _): return id
             case .aiMessage(let message): return message.id
-            case .userMessage(let id, _): return id
+            case .userMessage(let message): return message.id
             case .topicCard(let card): return card.id
             case .feedbackCard(let card): return card.id
             case .systemNotice(let id, _): return id
@@ -73,6 +99,9 @@ final class ChatRoomStore {
         title: "フリートーク", hook: "話したいことをそのまま話そう。")
 
     private static let inputModeKey = "chatRoomInputMode"
+    private static let translationVisibleKey = "chatRoomTranslationVisible"
+    /// 1 リクエストで訳す発話数の上限（並列にはせず、このチャンクを順に投げる）
+    static let translationChunkSize = 20
 
     private(set) var timeline: [TimelineItem] = []
     /// タイムラインの追記・伸長のたびに増える（自動スクロールのトリガ。
@@ -90,6 +119,9 @@ final class ChatRoomStore {
     private(set) var inputMode: InputMode
     /// 音声モードの一時停止（⏸）。聞き取りだけを止める
     private(set) var isVoicePaused = false
+    /// 訳の表示 ON / OFF（アプリ再起動をまたいで保持する）。
+    /// OFF のあいだは翻訳リクエストも投げない
+    private(set) var isTranslationVisible: Bool
 
     /// 会話履歴の永続化（管理画面からも参照する）。
     let historyStore: ChatHistoryStore
@@ -112,6 +144,13 @@ final class ChatRoomStore {
     private var recentTopicTitles: [String] = []
     /// 現在セッションの開始時に読み込んだ記憶ノート（エラー再開の rebuildHistory でも同じものを使う）
     private var activeMemoryNote: String?
+    /// 翻訳の生成対象（タイムライン末尾のセッション区切り以降の発話 ID）。
+    /// 表示はこれより広く、保存済みの訳があればどのセッションの吹き出しでも出す
+    private var translationTargetIDs: Set<UUID> = []
+    /// 今回のフラッシュで翻訳に失敗した発話（次のフラッシュで再挑戦する）
+    private var failedTranslationIDs: Set<UUID> = []
+    /// フラッシュの多重実行防止
+    private var isFlushingTranslations = false
     #if DEBUG
     private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
     #endif
@@ -122,6 +161,8 @@ final class ChatRoomStore {
         memoryStore = CharacterMemoryStore(container: container)
         let stored = UserDefaults.standard.string(forKey: Self.inputModeKey)
         inputMode = stored.flatMap(InputMode.init(rawValue:)) ?? .voice
+        // 既定は OFF（会話中の視界を汚さない）
+        isTranslationVisible = UserDefaults.standard.bool(forKey: Self.translationVisibleKey)
     }
 
     // MARK: - ルームのライフサイクル
@@ -130,6 +171,8 @@ final class ChatRoomStore {
         guard !didAppear else { return }
         didAppear = true
         restoreTimeline()
+        // 訳 ON のまま再起動した場合、復元した直前セッションの未翻訳分をここで埋める
+        scheduleTranslationFlush()
         postTopicCard()
         #if DEBUG
         if DebugLaunchArguments.shouldStartConversation {
@@ -145,15 +188,18 @@ final class ChatRoomStore {
         for record in historyStore.recentSessions(limit: 10) {
             appendItem(.sessionDivider(
                 id: UUID(),
-                text: "\(Self.dividerDateText(for: record.startedAt)) \(record.topicTitle)"))
+                text: "\(Self.dividerDateText(for: record.startedAt)) \(record.topicTitle)",
+                topic: record.topicTitle))
             let messages = record.messages.sorted { $0.orderIndex < $1.orderIndex }
             for message in messages {
                 guard let speaker = message.speaker else { continue }
                 if let character = speaker.character {
                     appendItem(.aiMessage(AIMessage(
-                        id: message.id, speaker: character, text: message.text)))
+                        id: message.id, speaker: character, text: message.text,
+                        translation: message.translation)))
                 } else {
-                    appendItem(.userMessage(id: message.id, text: message.text))
+                    appendItem(.userMessage(UserMessage(
+                        id: message.id, text: message.text, translation: message.translation)))
                 }
             }
             if let data = record.feedbackJSON,
@@ -250,7 +296,8 @@ final class ChatRoomStore {
         if recentTopicTitles.count > 20 {
             recentTopicTitles.removeFirst(recentTopicTitles.count - 20)
         }
-        appendItem(.sessionDivider(id: UUID(), text: "\(Self.dividerDateText(for: Date())) \(trimmed)"))
+        appendItem(.sessionDivider(
+            id: UUID(), text: "\(Self.dividerDateText(for: Date())) \(trimmed)", topic: trimmed))
         let sessionID = UUID()
         activeSessionID = sessionID
         activeMemoryNote = memoryStore.currentNote()
@@ -333,6 +380,8 @@ final class ChatRoomStore {
                 postFeedbackCard(topic: endedTopic, sessionID: endedSessionID)
                 updateCharacterMemory(topic: endedTopic, sessionID: endedSessionID)
             }
+            // 終了時にも訳を埋めきる（区切りは動いていないので対象は今のセッションのまま）
+            scheduleTranslationFlush()
             postTopicCard()
         } else {
             // 致命的エラー。タイムラインは残っているので履歴を引き継いで再開できる
@@ -449,8 +498,8 @@ final class ChatRoomStore {
         var learnerTurnCount = 0
         for item in sessionItems.reversed() {
             switch item {
-            case .userMessage(_, let text):
-                lines.append("Learner: " + text)
+            case .userMessage(let message):
+                lines.append("Learner: " + message.text)
                 learnerTurnCount += 1
             case .aiMessage(let message):
                 lines.append(message.speaker.displayName + ": " + message.text)
@@ -484,12 +533,12 @@ final class ChatRoomStore {
             switch item {
             case .aiMessage(let message):
                 pendingScript.append(message.speaker.scriptTag + message.text)
-            case .userMessage(_, let text):
+            case .userMessage(let message):
                 flushScript()
                 if let last = history.last, last.role == .user {
-                    history[history.count - 1].text += "\n" + text
+                    history[history.count - 1].text += "\n" + message.text
                 } else {
-                    history.append(ConversationMessage(role: .user, text: text))
+                    history.append(ConversationMessage(role: .user, text: message.text))
                 }
             default:
                 break
@@ -520,6 +569,139 @@ final class ChatRoomStore {
         session?.setVoiceInputEnabled(!isVoicePaused)
     }
 
+    // MARK: - 会話の翻訳
+
+    /// 翻訳トグル（タイムライン下端）。ON にした時点で対象セッションの未翻訳分をまとめて生成する。
+    func setTranslationVisible(_ visible: Bool) {
+        guard isTranslationVisible != visible else { return }
+        isTranslationVisible = visible
+        UserDefaults.standard.set(visible, forKey: Self.translationVisibleKey)
+        // 吹き出しが伸び縮みするので自動スクロールを追従させる
+        timelineRevision += 1
+        scheduleTranslationFlush()
+    }
+
+    /// 吹き出しに出す訳の表示状態。保存済みの訳はどのセッションでも出すが、
+    /// 「翻訳中…」「翻訳できませんでした」は生成対象セッションの発話にだけ出す。
+    func translationDisplay(id: UUID, translation: String?) -> TranslationDisplay {
+        guard isTranslationVisible else { return .hidden }
+        if let translation, !translation.isEmpty { return .text(translation) }
+        guard translationTargetIDs.contains(id) else { return .hidden }
+        return failedTranslationIDs.contains(id) ? .failed : .loading
+    }
+
+    private func scheduleTranslationFlush() {
+        guard isTranslationVisible, !isFlushingTranslations else { return }
+        Task { await flushTranslations() }
+    }
+
+    /// 生成対象セッションの未翻訳発話を 20 件ずつ順に翻訳して保存する。
+    /// 失敗は best effort（次のターン終了・トグル再 ON でもう一度試す）。
+    private func flushTranslations() async {
+        guard isTranslationVisible, !isFlushingTranslations else { return }
+        guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else { return }
+        isFlushingTranslations = true
+        defer { isFlushingTranslations = false }
+        // 前回の失敗はここで解除し、今回のフラッシュで再挑戦する
+        failedTranslationIDs.removeAll()
+
+        let client = TranslationClient()
+        while isTranslationVisible {
+            let sessionMessages = Self.translationTargetMessages(in: timeline)
+            let pending = sessionMessages.filter {
+                $0.translation == nil && !failedTranslationIDs.contains($0.id)
+            }
+            guard !pending.isEmpty else { break }
+            let chunk = Array(pending.prefix(Self.translationChunkSize))
+            let context = Self.contextLines(
+                before: chunk[0].id, in: sessionMessages,
+                limit: TranslationClient.contextLineLimit)
+            let targets = chunk.map {
+                TranslationClient.Item(id: $0.id, speaker: $0.speaker, text: $0.text)
+            }
+            do {
+                let (translations, usage) = try await client.translate(
+                    apiKey: apiKey, topic: Self.translationTargetTopic(in: timeline),
+                    context: context, targets: targets)
+                if let usage {
+                    usageStore.record(usage, sessionID: activeSessionID)
+                }
+                for (id, text) in translations {
+                    applyTranslation(id: id, text: text)
+                }
+                // 返ってこなかった発話は失敗扱いにする（同じチャンクで無限ループしない）
+                for item in chunk where translations[item.id] == nil {
+                    failedTranslationIDs.insert(item.id)
+                }
+                timelineRevision += 1
+            } catch {
+                Self.logger.error("翻訳に失敗: \(error.localizedDescription)")
+                for item in chunk {
+                    failedTranslationIDs.insert(item.id)
+                }
+                timelineRevision += 1
+                // 通信断などは続けても同じなので、このフラッシュは打ち切る
+                break
+            }
+        }
+    }
+
+    private func applyTranslation(id: UUID, text: String) {
+        guard let index = timeline.lastIndex(where: { $0.id == id }) else { return }
+        switch timeline[index] {
+        case .aiMessage(var message):
+            message.translation = text
+            timeline[index] = .aiMessage(message)
+        case .userMessage(var message):
+            message.translation = text
+            timeline[index] = .userMessage(message)
+        default:
+            return
+        }
+        historyStore.updateTranslation(id: id, text: text)
+    }
+
+    /// 生成対象セッション（タイムライン末尾の区切り以降）の発話を並び順で切り出す。
+    static func translationTargetMessages(in timeline: [TimelineItem]) -> [TranslatableMessage] {
+        var reversed: [TranslatableMessage] = []
+        for item in timeline.reversed() {
+            switch item {
+            case .sessionDivider:
+                return reversed.reversed()
+            case .aiMessage(let message):
+                reversed.append(TranslatableMessage(
+                    id: message.id, speaker: message.speaker.displayName,
+                    text: message.text, translation: message.translation))
+            case .userMessage(let message):
+                reversed.append(TranslatableMessage(
+                    id: message.id, speaker: "Learner",
+                    text: message.text, translation: message.translation))
+            default:
+                break
+            }
+        }
+        // 区切りが 1 つも無い（履歴なしの起動直後など）
+        return reversed.reversed()
+    }
+
+    /// 生成対象セッションのトピック名（区切りが無ければ nil）。
+    static func translationTargetTopic(in timeline: [TimelineItem]) -> String? {
+        for item in timeline.reversed() {
+            if case .sessionDivider(_, _, let topic) = item { return topic }
+        }
+        return nil
+    }
+
+    /// 対象発話の直前 limit 件を文脈として切り出す（同じセッション内から。足りなければあるだけ）。
+    static func contextLines(
+        before id: UUID, in messages: [TranslatableMessage], limit: Int
+    ) -> [TranslationClient.ContextLine] {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return [] }
+        return messages[max(0, index - limit)..<index].map {
+            TranslationClient.ContextLine(speaker: $0.speaker, text: $0.text)
+        }
+    }
+
     // MARK: - セッションイベント
 
     private func handle(_ event: VoiceSessionEvent) {
@@ -532,6 +714,11 @@ final class ChatRoomStore {
             if newState != .speaking {
                 speakingUtteranceID = nil
             }
+            if newState == .listening {
+                // AI のターンが終わって聞き取りに戻った = 1 ターン確定。
+                // 会話のクリティカルパスには載せず、非同期でまとめて訳す
+                scheduleTranslationFlush()
+            }
             #if DEBUG
             if newState == .listening, !pendingAutoTexts.isEmpty {
                 sendText(pendingAutoTexts.removeFirst())
@@ -542,7 +729,7 @@ final class ChatRoomStore {
         case .userTurnCommitted(let text):
             partialTranscript = ""
             let messageID = UUID()
-            appendItem(.userMessage(id: messageID, text: text))
+            appendItem(.userMessage(UserMessage(id: messageID, text: text)))
             historyStore.appendMessage(id: messageID, speaker: .user, text: text)
         case .assistantUtteranceBegan(let id, let speaker, let text):
             appendItem(.aiMessage(AIMessage(id: id, speaker: speaker, text: text)))
@@ -577,6 +764,19 @@ final class ChatRoomStore {
     }
 
     private func appendItem(_ item: TimelineItem) {
+        // 翻訳の生成対象は「タイムライン末尾のセッション区切り以降」。
+        // 区切りが来たら前セッション分を対象から外す（表示は保存済みの訳が残る）
+        switch item {
+        case .sessionDivider:
+            translationTargetIDs.removeAll()
+            failedTranslationIDs.removeAll()
+        case .aiMessage(let message):
+            translationTargetIDs.insert(message.id)
+        case .userMessage(let message):
+            translationTargetIDs.insert(message.id)
+        default:
+            break
+        }
         timeline.append(item)
         timelineRevision += 1
     }

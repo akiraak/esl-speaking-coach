@@ -30,6 +30,31 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(messages[1].text, "Six? That is early. What do you do first?")
     }
 
+    /// 翻訳: 保存 → 再取得、未生成のとき nil、セッション削除で cascade。
+    func testTranslationRoundTrip() throws {
+        let store = try makeStore()
+        let sessionID = UUID()
+        let userID = UUID()
+        let chobiID = UUID()
+        store.beginSession(id: sessionID, topicTitle: "Kyoto trip")
+        store.appendMessage(id: userID, speaker: .user, text: "I went to Kyoto.")
+        store.appendMessage(id: chobiID, speaker: .chobi, text: "Oh, when?")
+        store.updateTranslation(id: userID, text: "京都に行ったよ。")
+        store.endActiveSession()
+
+        var messages = store.messages(sessionID: sessionID)
+        XCTAssertEqual(messages[0].translation, "京都に行ったよ。")
+        XCTAssertNil(messages[1].translation)
+
+        // 終了後（アクティブ外）の発話にも後から訳を保存できる
+        store.updateTranslation(id: chobiID, text: "え、いつ行ったの？")
+        messages = store.messages(sessionID: sessionID)
+        XCTAssertEqual(messages[1].translation, "え、いつ行ったの？")
+
+        store.deleteSession(id: sessionID)
+        XCTAssertTrue(store.messages(sessionID: sessionID).isEmpty)
+    }
+
     func testFeedbackRoundTrip() throws {
         let store = try makeStore()
         let sessionID = UUID()

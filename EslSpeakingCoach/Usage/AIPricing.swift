@@ -38,7 +38,7 @@ enum AIPricing {
         }
     }
 
-    // MARK: - Claude（会話ターン / トピック生成 / フィードバック生成）
+    // MARK: - Claude（会話ターン / トピック生成 / フィードバック生成 / 記憶更新 / 翻訳）
 
     private static func claudeCost(event: AIUsageEvent, at date: Date) -> Double {
         let rates = claudeRates(model: event.model, at: date)
@@ -53,6 +53,10 @@ enum AIPricing {
     private static func claudeRates(model: String, at date: Date) -> ClaudeRates {
         if model.contains("opus") {
             return ClaudeRates(input: 5, output: 25)
+        }
+        // claude-haiku-4-5（会話の翻訳）
+        if model.contains("haiku") {
+            return ClaudeRates(input: 1, output: 5)
         }
         // claude-sonnet-5（既定）。〜2026-08-31 は導入価格
         if date <= sonnet5IntroPriceEndsAfter {

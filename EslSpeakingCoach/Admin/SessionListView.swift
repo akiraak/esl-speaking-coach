@@ -126,6 +126,11 @@ struct SessionDetailView: View {
                                 .foregroundStyle(speakerColor(message.speaker))
                             Text(message.text)
                                 .font(.subheadline)
+                            if let translation = message.translation {
+                                Text(translation)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.vertical, 2)
                     case .log(let log):
