@@ -1,9 +1,17 @@
 import Foundation
 
 /// トピックカードに出す候補 1 件（日本語タイトル + フック 1 文）。
+/// `genre` は生成時に割り当てた `TopicCatalog` のジャンル id（自作トピック等では nil）。
 struct TopicCandidate: Sendable, Equatable, Decodable {
     let title: String
     let hook: String
+    var genre: String?
+
+    init(title: String, hook: String, genre: String? = nil) {
+        self.title = title
+        self.hook = hook
+        self.genre = genre
+    }
 }
 
 enum TopicSuggestionError: Error, LocalizedError {
@@ -40,13 +48,22 @@ struct TopicSuggestionClient: Sendable {
     learner picks a topic from a card before speaking, so write title and hook in natural Japanese \
     the learner can grasp at a glance.
 
+    Each request assigns every candidate a genre, a speaking angle, and a difficulty. Follow the \
+    assignments: candidate 1 uses assignment 1, and so on. The genre says what the topic is about; \
+    the angle says what the learner will be doing with English while talking about it (recalling, \
+    comparing, imagining, planning ...). Two topics in the same genre must feel different when the \
+    angle differs.
+
     Rules:
-    - Topics are about everyday life: daily routines, food, travel, work, hobbies, movies, plans, \
-    small personal stories. Concrete beats abstract.
-    - Vary the three candidates: different genres, and a mix of easy and slightly challenging.
-    - Do not repeat or closely resemble any topic in the recent-topics list.
+    - Stay inside the assigned genre and angle, but keep the topic concrete and grounded in \
+    everyday life. Concrete beats abstract. If a genre feels hard to make concrete, narrow it to a \
+    small specific scene rather than drifting to another genre.
+    - Do not repeat or closely resemble any topic in the recent-topics list, and do not fall back \
+    on stock topics such as morning routines, favorite food, or weekend plans unless the \
+    assignment clearly calls for them.
     - title: natural Japanese, roughly four to twelve characters, works as a card label.
     - hook: one short inviting Japanese question or teaser, at most twenty characters.
+    - genre: echo the genre_id of the assignment you used, verbatim.
     """
 
     private static let session: URLSession = {
@@ -57,16 +74,18 @@ struct TopicSuggestionClient: Sendable {
     }()
 
     /// 候補 3 件を生成する。recentTitles には重複回避のため直近トピック + 表示中候補のタイトルを渡す。
+    /// assignments はアプリ側でサンプリングしたジャンル × 話し方 × 難易度の割り当て。
     /// usage は非ストリーミング応答の usage フィールド（取れなければ nil）。
     func suggestTopics(
-        apiKey: String, recentTitles: [String]
+        apiKey: String, recentTitles: [String], assignments: [TopicAssignment]
     ) async throws -> (topics: [TopicCandidate], usage: AIUsageEvent?) {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try Self.makeRequestBody(recentTitles: recentTitles)
+        request.httpBody = try Self.makeRequestBody(
+            recentTitles: recentTitles, assignments: assignments)
 
         let (data, response) = try await Self.session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -81,7 +100,9 @@ struct TopicSuggestionClient: Sendable {
     }
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
-    static func makeRequestBody(recentTitles: [String]) throws -> Data {
+    static func makeRequestBody(
+        recentTitles: [String], assignments: [TopicAssignment]
+    ) throws -> Data {
         let recentList = recentTitles.isEmpty ? "(none)" : recentTitles.joined(separator: ", ")
         let schema: [String: Any] = [
             "type": "object",
@@ -93,8 +114,9 @@ struct TopicSuggestionClient: Sendable {
                         "properties": [
                             "title": ["type": "string"],
                             "hook": ["type": "string"],
+                            "genre": ["type": "string"],
                         ],
-                        "required": ["title", "hook"],
+                        "required": ["title", "hook", "genre"],
                         "additionalProperties": false,
                     ],
                 ]
@@ -114,10 +136,28 @@ struct TopicSuggestionClient: Sendable {
             ],
             "system": Self.systemPrompt,
             "messages": [
-                ["role": "user", "content": "Recent topics: \(recentList)"]
+                [
+                    "role": "user",
+                    "content": """
+                    Recent topics: \(recentList)
+
+                    Assignments:
+                    \(assignmentLines(assignments))
+                    """,
+                ]
             ],
         ]
         return try JSONSerialization.data(withJSONObject: payload)
+    }
+
+    /// 割り当てを user メッセージ用の 1 行 1 件のリストにする。
+    static func assignmentLines(_ assignments: [TopicAssignment]) -> String {
+        guard !assignments.isEmpty else { return "(none)" }
+        return assignments.enumerated().map { index, assignment in
+            "\(index + 1). genre_id: \(assignment.genre.id) | genre: \(assignment.genre.english)"
+                + " | angle: \(assignment.style.english)"
+                + " | difficulty: \(assignment.difficulty.english)"
+        }.joined(separator: "\n")
     }
 
     /// 非ストリーミング応答から候補一覧を取り出す。

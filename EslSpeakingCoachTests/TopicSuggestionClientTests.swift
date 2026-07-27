@@ -2,9 +2,21 @@ import XCTest
 @testable import EslSpeakingCoach
 
 final class TopicSuggestionClientTests: XCTestCase {
+    /// 割り当て 2 件（サンプラーを通さず固定値で組む）。
+    private let assignments = [
+        TopicAssignment(
+            genre: TopicGenre(id: "mishaps", english: "mishaps", japanese: "失敗談"),
+            style: TopicStyle(id: "recall", english: "recall a past experience", japanese: "思い出"),
+            difficulty: .easy),
+        TopicAssignment(
+            genre: TopicGenre(id: "what-if", english: "what-if situations", japanese: "もしも"),
+            style: TopicStyle(id: "imagine", english: "imagine a situation", japanese: "想像する"),
+            difficulty: .challenging),
+    ]
+
     func testRequestBodyFollowsProjectRules() throws {
         let data = try TopicSuggestionClient.makeRequestBody(
-            recentTitles: ["Planning a trip", "Food you can't quit"])
+            recentTitles: ["Planning a trip", "Food you can't quit"], assignments: assignments)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         XCTAssertEqual(json["model"] as? String, "claude-sonnet-5")
@@ -20,24 +32,43 @@ final class TopicSuggestionClientTests: XCTestCase {
         XCTAssertEqual(format["type"] as? String, "json_schema")
         let schema = try XCTUnwrap(format["schema"] as? [String: Any])
         XCTAssertEqual(schema["required"] as? [String], ["topics"])
+        // 候補がどのジャンルとして生成されたかを受け取る（履歴に残して次回の除外に使う）
+        let items = try XCTUnwrap(
+            (schema["properties"] as? [String: Any])?["topics"] as? [String: Any])
+        let itemSchema = try XCTUnwrap(items["items"] as? [String: Any])
+        XCTAssertEqual(itemSchema["required"] as? [String], ["title", "hook", "genre"])
 
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.count, 1)
         XCTAssertEqual(messages[0]["role"] as? String, "user")
         XCTAssertEqual(
             messages[0]["content"] as? String,
-            "Recent topics: Planning a trip, Food you can't quit")
+            """
+            Recent topics: Planning a trip, Food you can't quit
+
+            Assignments:
+            1. genre_id: mishaps | genre: mishaps | angle: recall a past experience | difficulty: easy
+            2. genre_id: what-if | genre: what-if situations | angle: imagine a situation | difficulty: slightly challenging
+            """)
     }
 
     func testRequestBodyWithNoRecentTopics() throws {
-        let data = try TopicSuggestionClient.makeRequestBody(recentTitles: [])
+        let data = try TopicSuggestionClient.makeRequestBody(
+            recentTitles: [], assignments: [])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
-        XCTAssertEqual(messages[0]["content"] as? String, "Recent topics: (none)")
+        XCTAssertEqual(
+            messages[0]["content"] as? String,
+            """
+            Recent topics: (none)
+
+            Assignments:
+            (none)
+            """)
     }
 
     func testParseResponseExtractsTopics() throws {
-        let inner = #"{"topics":[{"title":"Morning routines","hook":"What starts your day right?"},{"title":"A trip you remember","hook":"Where did you go?"},{"title":"Comfort food","hook":"What do you eat when tired?"}]}"#
+        let inner = #"{"topics":[{"title":"Morning routines","hook":"What starts your day right?","genre":"sleep"},{"title":"A trip you remember","hook":"Where did you go?","genre":"travel"},{"title":"Comfort food","hook":"What do you eat when tired?","genre":"food"}]}"#
         let response = try JSONSerialization.data(withJSONObject: [
             "content": [["type": "text", "text": inner]],
             "stop_reason": "end_turn",
@@ -46,6 +77,19 @@ final class TopicSuggestionClientTests: XCTestCase {
         XCTAssertEqual(topics.count, 3)
         XCTAssertEqual(topics[0].title, "Morning routines")
         XCTAssertEqual(topics[0].hook, "What starts your day right?")
+        XCTAssertEqual(topics[0].genre, "sleep")
+    }
+
+    /// 旧形式（genre 無し）の応答でも壊れない。
+    func testParseResponseWithoutGenre() throws {
+        let inner = #"{"topics":[{"title":"Comfort food","hook":"つかれた日の一皿は？"}]}"#
+        let response = try JSONSerialization.data(withJSONObject: [
+            "content": [["type": "text", "text": inner]],
+            "stop_reason": "end_turn",
+        ])
+        let topics = try TopicSuggestionClient.parseResponse(response)
+        XCTAssertEqual(topics.count, 1)
+        XCTAssertNil(topics[0].genre)
     }
 
     /// stop_reason=refusal のとき content を読まずに投げる（CLAUDE.md の規約）。

@@ -9,7 +9,7 @@
 | キャラクター | **Chobi**（ホスト・voice Leda・ピンク。セッション後フィードバックでは先生役）と **Naruko**（仲間の生徒・voice Aoede・薄い緑）。claude-code-manager の ちょビ / なるこ を英語会話用に翻案 |
 | ターン進行 | **台本方式**: 1 回の Claude 呼び出しで両キャラ分を行頭タグ（`Chobi: ` / `Naruko: `）付きで生成 |
 | 会話・トピック生成モデル | `claude-sonnet-5`（3 モデル比較で決定。フィードバック生成は `claude-opus-5`） |
-| トピック | 会話とは別の軽量呼び出し + structured outputs で候補 3 件（英語タイトル + フック 1 文）を生成 |
+| トピック | 会話とは別の軽量呼び出し + structured outputs で候補 3 件（日本語タイトル + フック 1 文）を生成。ジャンル × 話し方はアプリ側でサンプリングして割り当てる |
 | セッション終了 | 手動（ヘッダメニュー）+ goodbye 自動終了（AI が制御行 `[end]` を出力 → アプリが検知） |
 
 ## キャラクター
@@ -68,10 +68,21 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 ## トピック生成
 
 - 会話とは別の呼び出し。`claude-sonnet-5` / 非ストリーミング / `effort: low` / structured outputs（付録 B のスキーマ）で候補 3 件を生成
-- 各候補は **英語タイトル（3〜6 語）+ フック 1 文（12 語以内）**。トピックカードのピルにはタイトルを表示し、フック文を添える
+- 各候補は **日本語タイトル（4〜12 文字）+ 日本語フック 1 文（20 文字以内）**。会話は英語だがカードは一目で選べることを優先する。トピックカードのピルにはタイトルを表示し、フック文を添える
 - 「フリートーク」は生成せず、アプリ側で固定候補として常に追加する
 - **呼び出しタイミング**: 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時（screen-layout の決定どおり）
 - **重複回避**: user メッセージに直近トピックのタイトル一覧を渡す（永続化前は同一起動内のメモリ、永続化後は直近 20 件程度）。🔄 再生成時は表示中の候補タイトルも除外リストに加える
+
+### 多様性の仕組み（2026-07-26 追加）
+
+プロンプトにジャンルを例示列挙するとモデルがその中を回り、`temperature` も送れない（規約）ため出力が最頻値へ収束する。
+そこで**アプリ側から多様性の種を注入する**（`TopicCatalog` / `TopicAssignmentSampler`）。
+
+- **ジャンル**（何について話すか。約 28 件）と**話し方**（どう話すか。8 件: 思い出を語る / 説明する / 比べて選ぶ / 意見を言う / 想像する / 計画を立てる / 描写する / 教える・すすめる）のカタログをコード内定数で持つ
+- リクエストごとにサンプリングし、候補 1〜3 に**それぞれ別のジャンル・別の話し方・別の難易度**（easy / normal / slightly challenging）を割り当てて user メッセージに載せる。RNG は注入可能（テストは固定シード）
+- **同ジャンル連発の抑止**: 直近 8 セッションで使ったジャンルはサンプリングから除外する。除外しきって候補が足りなくなる場合はリセットして全件から引く
+- ジャンルは `ChatSessionRecord.topicGenre`（ジャンル id）に永続化する。応答スキーマに `genre` を持たせ、モデルが実際に使った割り当てを受け取る。自作トピック・フリートークは `nil`（除外対象にしない）
+- 記憶ノートから学習者の興味を種にする案は、同じ興味へ収束して単調さが悪化しうるため採らない
 
 ## 会話の翻訳
 
@@ -206,15 +217,26 @@ system prompt（固定英文）:
 ```
 You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese adult learner practices spoken English with two AI friends. Generate exactly three topic candidates the learner can pick from. The conversation itself happens in English, but the learner picks a topic from a card before speaking, so write title and hook in natural Japanese the learner can grasp at a glance.
 
+Each request assigns every candidate a genre, a speaking angle, and a difficulty. Follow the assignments: candidate 1 uses assignment 1, and so on. The genre says what the topic is about; the angle says what the learner will be doing with English while talking about it (recalling, comparing, imagining, planning ...). Two topics in the same genre must feel different when the angle differs.
+
 Rules:
-- Topics are about everyday life: daily routines, food, travel, work, hobbies, movies, plans, small personal stories. Concrete beats abstract.
-- Vary the three candidates: different genres, and a mix of easy and slightly challenging.
-- Do not repeat or closely resemble any topic in the recent-topics list.
+- Stay inside the assigned genre and angle, but keep the topic concrete and grounded in everyday life. Concrete beats abstract. If a genre feels hard to make concrete, narrow it to a small specific scene rather than drifting to another genre.
+- Do not repeat or closely resemble any topic in the recent-topics list, and do not fall back on stock topics such as morning routines, favorite food, or weekend plans unless the assignment clearly calls for them.
 - title: natural Japanese, roughly four to twelve characters, works as a card label.
 - hook: one short inviting Japanese question or teaser, at most twenty characters.
+- genre: echo the genre_id of the assignment you used, verbatim.
 ```
 
-user メッセージ: `Recent topics: <直近トピックのタイトルをカンマ区切り>`（🔄 時は表示中候補も含める）
+user メッセージ（1 行目は直近トピックのタイトルをカンマ区切り。🔄 時は表示中候補も含める）:
+
+```
+Recent topics: 友達に教えたいコツ, もしも無人島旅行
+
+Assignments:
+1. genre_id: mishaps | genre: mishaps and embarrassing moments | angle: recall a past experience and tell it as a story | difficulty: easy
+2. genre_id: seasons | genre: seasons and weather | angle: compare two options and pick one | difficulty: normal
+3. genre_id: what-if | genre: imaginary what-if situations | angle: imagine a hypothetical situation | difficulty: slightly challenging
+```
 
 `output_config.format` の JSON Schema:
 
@@ -230,9 +252,10 @@ user メッセージ: `Recent topics: <直近トピックのタイトルをカ�
           "type": "object",
           "properties": {
             "title": {"type": "string"},
-            "hook": {"type": "string"}
+            "hook": {"type": "string"},
+            "genre": {"type": "string"}
           },
-          "required": ["title", "hook"],
+          "required": ["title", "hook", "genre"],
           "additionalProperties": false
         }
       }

@@ -30,6 +30,9 @@ enum MessageSpeaker: String, Sendable {
 final class ChatSessionRecord {
     @Attribute(.unique) var id: UUID
     var topicTitle: String
+    /// 生成時に割り当てられた `TopicCatalog` のジャンル id。
+    /// 自作トピック・フリートークは nil（ジャンル不明として次回の除外対象にしない）
+    var topicGenre: String?
     var startedAt: Date
     /// nil はセッション中（アプリ強制終了で残った場合は次回起動時に閉じる）
     var endedAt: Date?
@@ -41,9 +44,13 @@ final class ChatSessionRecord {
     @Relationship(deleteRule: .cascade, inverse: \ChatSessionLogRecord.session)
     var logs: [ChatSessionLogRecord] = []
 
-    init(id: UUID = UUID(), topicTitle: String, startedAt: Date = Date()) {
+    init(
+        id: UUID = UUID(), topicTitle: String, topicGenre: String? = nil,
+        startedAt: Date = Date()
+    ) {
         self.id = id
         self.topicTitle = topicTitle
+        self.topicGenre = topicGenre
         self.startedAt = startedAt
     }
 }

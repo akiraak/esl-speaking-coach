@@ -98,6 +98,9 @@ final class ChatRoomStore {
     static let freeTalkCandidate = TopicCandidate(
         title: "フリートーク", hook: "話したいことをそのまま話そう。")
 
+    /// サンプリング時に除外する直近ジャンルの件数（カタログが尽きない範囲に留める）
+    static let recentGenreLimit = 8
+
     private static let inputModeKey = "chatRoomInputMode"
     private static let translationVisibleKey = "chatRoomTranslationVisible"
     /// 1 リクエストで訳す発話数の上限（並列にはせず、このチャンクを順に投げる）
@@ -142,6 +145,8 @@ final class ChatRoomStore {
     private var activeSessionID: UUID?
     /// 重複回避用の直近トピックタイトル（起動時に永続化済みセッションから復元。直近 20 件）
     private var recentTopicTitles: [String] = []
+    /// 多様性のために避ける直近ジャンル（起動時に復元。カタログが尽きない範囲で 8 件）
+    private var recentTopicGenres: [String] = []
     /// 現在セッションの開始時に読み込んだ記憶ノート（エラー再開の rebuildHistory でも同じものを使う）
     private var activeMemoryNote: String?
     /// 翻訳の生成対象（タイムライン末尾のセッション区切り以降の発話 ID）。
@@ -185,6 +190,7 @@ final class ChatRoomStore {
     private func restoreTimeline() {
         historyStore.closeUnfinishedSessions()
         recentTopicTitles = historyStore.recentTopicTitles(limit: 20)
+        recentTopicGenres = historyStore.recentTopicGenres(limit: Self.recentGenreLimit)
         for record in historyStore.recentSessions(limit: 10) {
             appendItem(.sessionDivider(
                 id: UUID(),
@@ -243,9 +249,14 @@ final class ChatRoomStore {
             }
             return
         }
+        // 🔄 のたびに引き直すので、同じカードでもジャンル・話し方の組み合わせが入れ替わる
+        var rng = SystemRandomNumberGenerator()
+        let assignments = TopicAssignmentSampler.sample(
+            excludingGenreIDs: recentTopicGenres, using: &rng)
         do {
             let (topics, usage) = try await TopicSuggestionClient().suggestTopics(
-                apiKey: apiKey, recentTitles: recentTopicTitles + extraTitles)
+                apiKey: apiKey, recentTitles: recentTopicTitles + extraTitles,
+                assignments: assignments)
             if let usage {
                 usageStore.record(usage, sessionID: nil)
             }
@@ -284,6 +295,12 @@ final class ChatRoomStore {
         let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         guard session == nil, !trimmed.isEmpty else { return }
         canResumeAfterFailure = false
+        // 生成候補から選んだときだけジャンルが分かる（自作トピック・フリートークは nil）
+        let genre = cardID
+            .flatMap(findCard)?
+            .candidates.first { $0.title == trimmed }?
+            .genre
+            .flatMap { TopicCatalog.genre(id: $0)?.id }
         // 未使用のカードはすべてグレーアウトして履歴に残す（選んだピルのハイライトは該当カードのみ）
         for index in timeline.indices {
             guard case .topicCard(var card) = timeline[index], !card.isUsed else { continue }
@@ -296,12 +313,18 @@ final class ChatRoomStore {
         if recentTopicTitles.count > 20 {
             recentTopicTitles.removeFirst(recentTopicTitles.count - 20)
         }
+        if let genre {
+            recentTopicGenres.append(genre)
+            if recentTopicGenres.count > Self.recentGenreLimit {
+                recentTopicGenres.removeFirst(recentTopicGenres.count - Self.recentGenreLimit)
+            }
+        }
         appendItem(.sessionDivider(
             id: UUID(), text: "\(Self.dividerDateText(for: Date())) \(trimmed)", topic: trimmed))
         let sessionID = UUID()
         activeSessionID = sessionID
         activeMemoryNote = memoryStore.currentNote()
-        historyStore.beginSession(id: sessionID, topicTitle: trimmed)
+        historyStore.beginSession(id: sessionID, topicTitle: trimmed, topicGenre: genre)
         launchSession(initialTopic: trimmed, initialHistory: [])
     }
 

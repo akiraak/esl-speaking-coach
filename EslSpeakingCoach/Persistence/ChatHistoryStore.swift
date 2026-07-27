@@ -65,8 +65,9 @@ final class ChatHistoryStore {
 
     // MARK: - アクティブセッションへの書き込み
 
-    func beginSession(id: UUID, topicTitle: String) {
-        let session = ChatSessionRecord(id: id, topicTitle: topicTitle)
+    func beginSession(id: UUID, topicTitle: String, topicGenre: String? = nil) {
+        let session = ChatSessionRecord(
+            id: id, topicTitle: topicTitle, topicGenre: topicGenre)
         context.insert(session)
         activeSession = session
         activeMessagesByID = [:]
@@ -157,6 +158,12 @@ final class ChatHistoryStore {
     /// トピック重複回避用の直近タイトル（古い順・最大 limit 件）。
     func recentTopicTitles(limit: Int) -> [String] {
         fetchSessions().suffix(limit).map(\.topicTitle)
+    }
+
+    /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。
+    /// ジャンル不明（自作トピック・フリートーク）のセッションは含めない。
+    func recentTopicGenres(limit: Int) -> [String] {
+        Array(fetchSessions().compactMap(\.topicGenre).suffix(limit))
     }
 
     /// 管理画面用: 全セッションのサマリ（新しい順)。

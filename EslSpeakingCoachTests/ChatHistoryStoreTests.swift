@@ -139,6 +139,19 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(store.recentTopicTitles(limit: 3), ["Topic 2", "Topic 3", "Topic 4"])
     }
 
+    /// ジャンルはトピックカードから選んだときだけ付く。自作トピックは nil で除外対象にしない。
+    func testRecentTopicGenresSkipsSessionsWithoutGenre() throws {
+        let store = try makeStore()
+        for (title, genre) in [("Food", "food"), ("Custom", nil), ("Trip", "travel")] {
+            store.beginSession(id: UUID(), topicTitle: title, topicGenre: genre)
+            store.appendMessage(id: UUID(), speaker: .user, text: "hi")
+            store.endActiveSession()
+        }
+        XCTAssertEqual(store.recentTopicGenres(limit: 8), ["food", "travel"])
+        XCTAssertEqual(store.recentTopicGenres(limit: 1), ["travel"])
+        XCTAssertEqual(store.recentSessions(limit: 10).map(\.topicGenre), ["food", nil, "travel"])
+    }
+
     /// 発話ゼロで終了したセッションは残さない。
     func testEmptySessionIsDiscardedOnEnd() throws {
         let store = try makeStore()
