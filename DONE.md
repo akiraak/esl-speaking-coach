@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-26 設定ボタンと画面を削除し、管理画面ボタンをその場所へ移設 [plan](docs/plans/archive/remove-settings-screen.md)
+  - API キーは `.secrets/<provider>-api-key` + 起動引数で Keychain にシードする運用に固まっており、アプリ内の設定画面（Anthropic キー手入力）は不要になっていたため `SettingsView` ごと削除。`ChatRoomView` の sheet / state / キー未設定時の自動表示、`ChatRoomStore.isAnthropicKeyMissing` も削除
+  - ヘッダは ⋯ メニュー（中身は「管理画面」1 項目のみ）+ ⚙ の 2 ボタンから、`chart.bar.doc.horizontal` の管理画面ボタン 1 個（旧 ⚙ の位置）に集約。1 タップで管理画面が開く
+  - キー未設定時のエラー文言を「設定画面から保存してください」→「`.secrets/anthropic-api-key` を用意して再インストールしてください」に変更（他プロバイダの既存文言と統一）
+  - ビルド + 単体テスト全 100 件パス。シミュレータでヘッダ表示と管理画面の起動を確認済み（実機未確認）。仕様書 screen-layout.md を同期
 - 2026-07-26 セッション終了ボタンを分かりやすい場所に置く（⋯ メニュー内 → タイムライン下端に固定表示する横長のアクセント色ボタン「🏁 このトピックを終了」。スクロールで動かない・セッション中のみ表示・確認アラート付き） [plan](docs/plans/archive/session-end-button.md)
 - 2026-07-26 テストで AI（外部 API）を利用している箇所が無いか確認 → **利用箇所なし・対応不要**
   - テストターゲットは `EslSpeakingCoachTests` の 1 つのみ（15 ファイル / 約 1,200 行）。`URLSession` / `dataTask` / `URLProtocol` / WebSocket のグレップでヒット 0 = ネットワーク呼び出しコード自体が存在しない

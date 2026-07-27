@@ -124,10 +124,6 @@ final class ChatRoomStore {
         inputMode = stored.flatMap(InputMode.init(rawValue:)) ?? .voice
     }
 
-    var isAnthropicKeyMissing: Bool {
-        ((try? KeychainStore().read(account: KeychainStore.anthropicAPIKeyAccount)) ?? nil) == nil
-    }
-
     // MARK: - ルームのライフサイクル
 
     func onAppear() {
@@ -197,7 +193,7 @@ final class ChatRoomStore {
         guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else {
             updateCard(cardID) {
                 $0.isLoading = false
-                $0.errorText = "Anthropic API キーが未設定です。設定画面から保存してください。"
+                $0.errorText = "Anthropic API キーが未設定です。.secrets/anthropic-api-key を用意して再インストールしてください。"
             }
             return
         }
@@ -376,7 +372,7 @@ final class ChatRoomStore {
         guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else {
             updateFeedbackCard(cardID) {
                 $0.isLoading = false
-                $0.errorText = "Anthropic API キーが未設定です。設定画面から保存してください。"
+                $0.errorText = "Anthropic API キーが未設定です。.secrets/anthropic-api-key を用意して再インストールしてください。"
             }
             return
         }

@@ -167,7 +167,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             }
         }
         guard let claudeKey = claudeKeyProvider(), !claudeKey.isEmpty else {
-            fail("Anthropic API キーが未設定です。設定画面から保存してください。")
+            fail("Anthropic API キーが未設定です。.secrets/anthropic-api-key を用意して再インストールしてください。")
             return
         }
         _ = claudeKey
@@ -490,7 +490,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     private func startClaudeTurn(attempt: Int = 0) {
         guard let apiKey = claudeKeyProvider(), !apiKey.isEmpty else {
-            fail("Anthropic API キーが未設定です。設定画面から保存してください。")
+            fail("Anthropic API キーが未設定です。.secrets/anthropic-api-key を用意して再インストールしてください。")
             return
         }
 

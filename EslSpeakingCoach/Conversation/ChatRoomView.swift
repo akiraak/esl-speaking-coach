@@ -3,7 +3,6 @@ import SwiftUI
 /// 起動直後に表示される主画面。常設グループトークルーム（screen-layout.md のトーク画面）。
 struct ChatRoomView: View {
     @State private var store = ChatRoomStore()
-    @State private var isShowingSettings = false
     @State private var isShowingAdmin = false
     @State private var isShowingTopicInput = false
     @State private var isConfirmingEndSession = false
@@ -30,9 +29,6 @@ struct ChatRoomView: View {
         .background(ChatTheme.chatBackground.ignoresSafeArea())
         // ダークモードの暖色トーン再設計は未決（screen-layout.md）。決まるまでライト固定
         .preferredColorScheme(.light)
-        .sheet(isPresented: $isShowingSettings) {
-            SettingsView()
-        }
         .sheet(isPresented: $isShowingAdmin) {
             #if DEBUG
             AdminView(
@@ -62,9 +58,6 @@ struct ChatRoomView: View {
         }
         .onAppear {
             store.onAppear()
-            if store.isAnthropicKeyMissing {
-                isShowingSettings = true
-            }
             #if DEBUG
             if DebugLaunchArguments.shouldOpenAdmin {
                 isShowingAdmin = true
@@ -86,28 +79,16 @@ struct ChatRoomView: View {
                     .foregroundStyle(ChatTheme.nameLabel)
             }
             Spacer()
-            Menu {
-                Button {
-                    isShowingAdmin = true
-                } label: {
-                    Label("管理画面", systemImage: "chart.bar.doc.horizontal")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(ChatTheme.aiText)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
             Button {
-                isShowingSettings = true
+                isShowingAdmin = true
             } label: {
-                Image(systemName: "gearshape")
+                Image(systemName: "chart.bar.doc.horizontal")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(ChatTheme.aiText)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }
+            .accessibilityLabel("管理画面")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
