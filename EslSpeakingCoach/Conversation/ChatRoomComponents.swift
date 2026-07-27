@@ -366,6 +366,27 @@ struct FeedbackCardView: View {
     }
 }
 
+// MARK: - セッション終了
+
+/// セッション中だけタイムライン下端に固定表示する横長の終了ボタン。
+/// スクロールには乗せない（会話が追記されても位置が動かない）。
+struct EndSessionRow: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("このトピックを終了", systemImage: "flag.checkered")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(ChatTheme.userText)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(
+                    ChatTheme.accent,
+                    in: RoundedRectangle(cornerRadius: ChatTheme.cardRadius))
+                .shadow(color: ChatTheme.bubbleShadow, radius: 6, y: 2)
+        }
+    }
+}
+
 // MARK: - 入力バー
 
 /// LINE 風入力バー。マイクボタンで音声モードへ変形し、キーボードボタンでテキストモードへ戻る。

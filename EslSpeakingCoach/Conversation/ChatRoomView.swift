@@ -6,6 +6,7 @@ struct ChatRoomView: View {
     @State private var isShowingSettings = false
     @State private var isShowingAdmin = false
     @State private var isShowingTopicInput = false
+    @State private var isConfirmingEndSession = false
     @State private var customTopicText = ""
     @State private var customTopicCardID: UUID?
     @State private var draftText = ""
@@ -14,6 +15,8 @@ struct ChatRoomView: View {
     @State private var isAutoScrollEnabled = true
 
     private static let bottomAnchorID = "timeline-bottom"
+    /// 固定表示の終了ボタン（高さ 44 + 下余白 12）に隠れない分のスクロール下余白
+    private static let endSessionButtonInset: CGFloat = 72
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +44,13 @@ struct ChatRoomView: View {
                 historyStore: store.historyStore, usageStore: store.usageStore,
                 memoryStore: store.memoryStore)
             #endif
+        }
+        // ボタンはセッション終了で消えるので、ダイアログはボタンではなく画面側に付ける
+        .alert("このトピックを終了しますか？", isPresented: $isConfirmingEndSession) {
+            Button("終了する") { store.endSession() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("会話をまとめてフィードバックを作ります")
         }
         .alert("自分でトピックを作る", isPresented: $isShowingTopicInput) {
             TextField("例: 好きなラーメン屋", text: $customTopicText)
@@ -77,12 +87,6 @@ struct ChatRoomView: View {
             }
             Spacer()
             Menu {
-                Button {
-                    store.endSession()
-                } label: {
-                    Label("トピックを終える", systemImage: "flag.checkered")
-                }
-                .disabled(!store.isSessionActive)
                 Button {
                     isShowingAdmin = true
                 } label: {
@@ -129,8 +133,10 @@ struct ChatRoomView: View {
                     if store.voiceState == .thinking {
                         TypingIndicatorRow()
                     }
+                    // 最下部アンカー。固定表示の終了ボタンに最新メッセージが隠れないよう、
+                    // ボタンの高さぶんの余白をアンカー自体に持たせる
                     Color.clear
-                        .frame(height: 1)
+                        .frame(height: isEndSessionButtonVisible ? Self.endSessionButtonInset : 1)
                         .id(Self.bottomAnchorID)
                 }
                 .padding(.horizontal, 12)
@@ -174,7 +180,20 @@ struct ChatRoomView: View {
             .onChange(of: store.voiceState) {
                 scrollToBottom(proxy)
             }
+            // スクロールに乗せずタイムライン下端へ固定する（会話追記でも位置が動かない）
+            .overlay(alignment: .bottom) {
+                if isEndSessionButtonVisible {
+                    EndSessionRow { isConfirmingEndSession = true }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                }
+            }
         }
+    }
+
+    /// 終了ボタンを出す条件（セッション中。エラー再開バー表示中は出さない）。
+    private var isEndSessionButtonVisible: Bool {
+        store.isSessionActive && !store.canResumeAfterFailure
     }
 
     @ViewBuilder

@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-07-26 セッション終了ボタンを分かりやすい場所に置く（⋯ メニュー内 → タイムライン下端に固定表示する横長のアクセント色ボタン「🏁 このトピックを終了」。スクロールで動かない・セッション中のみ表示・確認アラート付き） [plan](docs/plans/archive/session-end-button.md)
+- 2026-07-26 テストで AI（外部 API）を利用している箇所が無いか確認 → **利用箇所なし・対応不要**
+  - テストターゲットは `EslSpeakingCoachTests` の 1 つのみ（15 ファイル / 約 1,200 行）。`URLSession` / `dataTask` / `URLProtocol` / WebSocket のグレップでヒット 0 = ネットワーク呼び出しコード自体が存在しない
+  - AI クライアント系テスト（`ClaudeMessagesClientTests` / `SessionFeedbackClientTests` / `TopicSuggestionClientTests` / `MemoryUpdateClientTests` / `CloudPipelineProtocolTests`）はすべて純粋なロジックテスト（SSE 行のパース、リクエスト JSON の組み立て、エンドポイント URL 生成の検証）で、実際の API 接続はしない
+  - 実際に AI API を叩くのは `docs/plans/archive/spike-conversation/*.py` の検証用スパイクのみ。アーカイブ済み・手動実行専用で `xcodebuild test` には含まれない
+  - よってテスト実行で課金が発生する / ネットワーク不調でテストが落ちるリスクは無く、モック化などの追加対応は不要
 - 2026-07-26 新しい会話が表示されたら自動で1番下までスクロール（既存実装が効いていなかったのを修正） [plan](docs/plans/archive/chat-auto-scroll.md)
   - 起動直後: 履歴復元がビューの `.onAppear`（初期レイアウト後）に走り `LazyVStack` の推定高さでズレていた。`ScrollView` に `.defaultScrollAnchor(.bottom, for: .initialOffset)` を付け、さらに `.task` で高さ確定を待ちながらアニメーション無しの `scrollTo` を数回かけ直す
   - 追従が途中で止まる: `onScrollPhaseChange` の `.idle` 再判定がプログラム側スクロール完了（`.animating` → `.idle`）でも走り、追記中の古いジオメトリで `isAutoScrollEnabled` を false に落としていた。`ScrollPhase.isUserDriven`（tracking / interacting / decelerating）だったときのみ再判定するよう限定

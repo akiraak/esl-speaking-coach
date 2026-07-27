@@ -262,7 +262,7 @@ final class ChatRoomStore {
         launchSession(initialTopic: trimmed, initialHistory: [])
     }
 
-    /// ヘッダメニューの「トピックを終える」。
+    /// タイムライン下端に固定表示される「このトピックを終了」ボタン（確認アラート経由）。
     func endSession() {
         guard let session else { return }
         isEndingSession = true
