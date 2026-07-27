@@ -174,6 +174,15 @@ struct SystemPillRow: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
             .background(ChatTheme.systemPill, in: Capsule())
+            // エラー通知はここにしか出ないため、長押しで本文をコピーできるようにする
+            // （実機で出たエラーを転記するのに必要。読み上げ・入力の邪魔にならない導線）
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = text
+                } label: {
+                    Label("コピー", systemImage: "doc.on.doc")
+                }
+            }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, emphasized ? 6 : 0)
     }

@@ -204,6 +204,58 @@ Phase 3 以降は実測に応じて縮小してよい（過剰にフィルタを
 体験上の害が大きい）。逆に Phase 5 まで入れても他人の声を拾うなら、エスカレーション先の
 「サーバ VAD を切って自前 VAD + 手動 commit」へ進む。
 
+## Phase の取捨選択（2026-07-27 決定）
+
+上記 Phase を効果・コストで分類し、**Phase 1 → 実機確認 → Phase 3** の最短経路だけを実施する方針に絞った。
+
+| Phase | 判断 | 理由 |
+| --- | --- | --- |
+| 1（VAD threshold / prefix_padding） | **実施**（完了） | 公式が騒音環境での対処として明記している正攻法で、変更は数行。最優先 |
+| 3（レベルゲート） | **実施**（Phase 1 の実機確認後） | テレビ・家族の声は内容では区別できず、音量（＝距離）でしか切れない。本タスクの本質的な対策 |
+| 6（実機総合確認 + 仕様反映） | **実施** | 決定した閾値を仕様へ残す |
+| 0（診断ログ） | **見送り** | Phase 1・3 の 2 段だけなら実機での体感評価で判断できる。閾値の追い込みで数値が要るとなった時点で足す |
+| 2（logprobs 信頼度ゲート） | **見送り** | 幻覚が高信頼で出る報告（調査 #4）があり破棄判定の根拠として弱い。Phase 3 で音量が使える以上、優先度が低い |
+| 4（transcript 内容フィルタ） | **見送り** | gpt-4o-transcribe では定型幻覚がほぼ出ない（調査 #10）。「短い AND レベルが低い」は Phase 3 の部分集合でしかなく、正当な "Bye." を落とすリスクだけが残る |
+| 5（barge-in 猶予） | **保留** | 雑音混入とは別問題（読み上げが物音で切れる）。Phase 1 の threshold 引き上げで誤発火自体が減るため、実機で再現し続けたら別タスクとして起票する |
+
+### Phase 1 の実装結果（2026-07-27）
+
+`OpenAITranscriptionConfiguration` に `vadThreshold = 0.6` / `prefixPaddingMs = 300` を追加し、
+`sessionUpdate` の `turn_detection` へ反映した。あわせて `silenceDurationMs` のコメントにあった
+「既定 200ms」を現行ドキュメントの 500ms に訂正した（調査 #2）。ユニットテストは既存の
+`testTranscriptionSessionUpdateFollowsGAShape` を拡張して 3 値すべてを固定。
+
+実機の初回起動で `Invalid 'session.audio.input.turn_detection.threshold': max decimal places
+exceeded`（上限 16 桁）になった。`JSONSerialization` が `Double` の 0.6 を
+`0.59999999999999998` と 17 桁で書き出すため。小数 2 桁へ丸めた `NSDecimalNumber` に変換して
+送るようにし（`OpenAITranscriptionClientEvent.jsonNumber`）、**JSON の文字列**を検査する
+回帰テストを追加した（パース後の `Double` を見ても検出できない）。リクエスト JSON に載る
+小数は他に無いことを確認済み。全 129 件パス。**閾値の効果自体は実機確認待ち**。
+
+### Phase 3 の実装結果（2026-07-27）
+
+`Voice/SpeechLevelGate.swift`（新規）に純粋な値型として実装した。
+
+- `SegmentLevelMeter`: タップバッファごとの RMS を受け取り、**非発話区間の移動中央値**を暗騒音、
+  `speech_started` 〜 `speech_stopped` の区間を 1 セグメントとして peak / mean を集計する。
+  集計は `AudioTapRouter.process`（オーディオスレッド・ロック下）で行う。
+  UI 用の `levels` ストリームは `.bufferingNewest(1)` で取りこぼすため判定には使えない
+- **遡り（lookback 約 0.5 秒）**: `speech_started` はサーバ VAD の判定 + ネットワーク往復のぶん
+  遅れて届くので、直近サンプルまで遡ってピークに含める。語頭が窓の外に落ちるのを防ぐ
+- **読み上げ中は暗騒音の更新を止める**（`state == .speaking` で suppress）。VP を無効化した端末で
+  スピーカー出力が回り込み、フロアが持ち上がって直後の本人発話を弾くのを防ぐ
+- `SpeechLevelGate.verdict(for:)` の初期閾値: `snrRatio 3.0` / `minimumPeak 0.01` /
+  `unconditionalPeak 0.05`（この値以上なら無条件採用）/ `minimumSampleCount 3`。
+  **計測できない・フロア不明・サンプル不足はすべて採用側へ倒す**（取りこぼしの害の方が大きいため）
+- 判定は `.finalTranscript` で適用し、破棄は空セグメントと同じ扱い（`commitPendingTurnIfReady`）。
+  セグメントと統計の対応は `pendingSegmentLevels` のキューで取り、再接続時はクリアして採用側へ倒す
+- 閾値を実機で追い込めるよう、**採否と実測値（peak / mean / floor / 比）を毎セグメント会話ログへ**
+  出す（`.info` → 管理画面のみ。トーク画面には出さない）。Phase 0 の代替として最小限のもの
+
+テレビが鳴りっぱなしの部屋では暗騒音の推定自体が持ち上がるため、「それより明確に大きい音」＝
+本人の声だけが通る、というのがこのゲートの効きどころ。ユニットテスト 17 件追加・全 146 件パス。
+**実機未確認**（シミュレータではマイクを使えないため、閾値の妥当性は実機での確認待ち）。
+
 ## 出典（2026-07-27 時点）
 
 - [Voice activity detection (VAD) | OpenAI API](https://developers.openai.com/api/docs/guides/realtime-vad) — `threshold` / `prefix_padding_ms` / `silence_duration_ms`、騒音環境では threshold を上げる指針、`semantic_vad` の `eagerness`

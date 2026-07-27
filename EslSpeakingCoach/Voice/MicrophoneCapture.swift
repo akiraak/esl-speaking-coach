@@ -14,6 +14,9 @@ final class AudioTapRouter: @unchecked Sendable {
     private var rawFormat: AVAudioFormat?
     private var rawConverter: AVAudioConverter?
     private var buffersReceived = 0
+    /// 雑音セグメントの判定用。levels ストリームは .bufferingNewest(1) で取りこぼすため、
+    /// 統計はここ（タップの呼び出しごと）で積む
+    private var meter = SegmentLevelMeter()
 
     /// タップから受け取ったバッファ数の累計（マイクが生きているかの診断用）。
     var bufferCount: Int {
@@ -52,11 +55,34 @@ final class AudioTapRouter: @unchecked Sendable {
         process(buffer: buffer)
     }
 
+    /// サーバ VAD の `speech_started` で呼ぶ。ここから `endLevelSegment()` までを 1 セグメントとして集計する。
+    func beginLevelSegment() {
+        lock.lock()
+        defer { lock.unlock() }
+        meter.beginSegment()
+    }
+
+    /// サーバ VAD の `speech_stopped` で呼ぶ。計測できていなければ nil。
+    func endLevelSegment() -> SpeechSegmentLevels? {
+        lock.lock()
+        defer { lock.unlock() }
+        return meter.endSegment()
+    }
+
+    /// 読み上げ中は暗騒音の更新を止める（VP 無効の端末でスピーカー出力が回り込むため）。
+    func setNoiseFloorUpdateSuppressed(_ suppressed: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        meter.isNoiseFloorUpdateSuppressed = suppressed
+    }
+
     func process(buffer: AVAudioPCMBuffer) {
-        levelContinuation.yield(Self.rmsLevel(of: buffer))
+        let level = Self.rmsLevel(of: buffer)
+        levelContinuation.yield(level)
 
         lock.lock()
         defer { lock.unlock() }
+        meter.record(level)
         buffersReceived += 1
         if let continuation = rawContinuation, let format = rawFormat,
            let converted = convert(buffer, to: format, converter: &rawConverter),

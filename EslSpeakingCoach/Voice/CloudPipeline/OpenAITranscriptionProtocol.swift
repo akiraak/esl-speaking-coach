@@ -13,9 +13,17 @@ struct OpenAITranscriptionConfiguration: Sendable {
         The speaker is a Japanese adult practicing English conversation. \
         The audio is always English.
         """
-    /// サーバ VAD の発話終端とみなす無音時間。transcription セッションの既定 200ms は
+    /// サーバ VAD の発話終端とみなす無音時間。transcription セッションの既定 500ms は
     /// 考えながら話す ESL 学習者には短すぎ、発話が途中で切れやすいため長めにする
     var silenceDurationMs = 800
+    /// サーバ VAD が発話とみなす音声確率のしきい値（0.0〜1.0）。既定 0.5 のままだと
+    /// 咳・物音・部屋の向こうのテレビでもセグメントが切り出され、雑音が書き起こされて
+    /// 会話に入ってしまう。公式ガイドが「騒がしい環境では上げる」と明記しているため上げる
+    /// （docs/plans/noise-input-rejection.md Phase 1。実機で 0.55〜0.7 を調整する）
+    var vadThreshold = 0.6
+    /// 発話開始と判定した時点より前に遡って含める音声。既定値どおりだが、語頭の欠けは
+    /// 体感の劣化が大きいので既定変更に巻き込まれないよう明示指定して固定する
+    var prefixPaddingMs = 300
 
     var websocketURL: URL {
         URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
@@ -67,6 +75,13 @@ enum OpenAITranscriptionClientEvent {
         ])
     }
 
+    /// `Double` をそのまま `JSONSerialization` に渡すと 0.6 が `0.59999999999999998` と
+    /// 17 桁で書かれ、OpenAI に "max decimal places exceeded"（上限 16 桁）で弾かれる。
+    /// 小数 2 桁へ丸めた `NSDecimalNumber` にすると `0.6` と書かれる（閾値の刻みは 0.01 で十分）
+    static func jsonNumber(_ value: Double) -> NSDecimalNumber {
+        NSDecimalNumber(string: String(format: "%.2f", value))
+    }
+
     static func sessionUpdate(configuration: OpenAITranscriptionConfiguration) throws -> Data {
         let payload: [String: Any] = [
             "type": "session.update",
@@ -82,6 +97,8 @@ enum OpenAITranscriptionClientEvent {
                         ],
                         "turn_detection": [
                             "type": "server_vad",
+                            "threshold": jsonNumber(configuration.vadThreshold),
+                            "prefix_padding_ms": configuration.prefixPaddingMs,
                             "silence_duration_ms": configuration.silenceDurationMs,
                         ],
                         "noise_reduction": ["type": "near_field"],

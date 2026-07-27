@@ -47,6 +47,8 @@ final class TurnBasedVoiceSession: VoiceSession {
         var voiceInputEnabled = true
         /// 途中再開用の会話履歴（エラー後の立て直しで使う）
         var initialHistory: [ConversationMessage] = []
+        /// 雑音セグメントを落とすレベルゲートの閾値（docs/plans/noise-input-rejection.md Phase 3）
+        var levelGate = SpeechLevelGate.Thresholds()
     }
 
     let events: AsyncStream<VoiceSessionEvent>
@@ -64,7 +66,11 @@ final class TurnBasedVoiceSession: VoiceSession {
     private let speaker: CloudSentenceSpeaker
 
     private var state: VoiceSessionState = .idle {
-        didSet { eventContinuation.yield(.stateChanged(state)) }
+        didSet {
+            eventContinuation.yield(.stateChanged(state))
+            // 読み上げ中はスピーカーの回り込みで暗騒音が持ち上がりうるので推定を止める
+            microphone.router.setNoiseFloorUpdateSuppressed(state == .speaking)
+        }
     }
 
     /// 現在ターンの台本発話（吹き出し単位）。
@@ -102,6 +108,9 @@ final class TurnBasedVoiceSession: VoiceSession {
     private var pendingSegments = 0
     /// まだ Claude に投げていない確定済みテキスト（短いポーズで複数セグメントに割れた発話を結合する）
     private var pendingTurnText = ""
+    /// 確定テキスト待ちセグメントの音量統計（speech_stopped で積み、確定 / 失敗で取り出す）。
+    /// 計測できなかったセグメントは nil で積んで採用側へ倒す
+    private var pendingSegmentLevels: [SpeechSegmentLevels?] = []
 
     init(
         configuration: Configuration = Configuration(),
@@ -322,6 +331,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         stopMicrophoneStreaming()
         isUserSpeaking = false
         pendingSegments = 0
+        pendingSegmentLevels.removeAll()
         pendingTurnText = ""
     }
 
@@ -331,6 +341,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         guard !isStopped, isVoiceInputEnabled else { return }
         isUserSpeaking = false
         pendingSegments = 0
+        pendingSegmentLevels.removeAll()
         sttEventTask?.cancel()
         sttEventTask = nil
         transcriber?.stop()
@@ -387,6 +398,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             // （VAD の無音待ち自体は計測に含まれない）
             isUserSpeaking = false
             pendingSegments += 1
+            pendingSegmentLevels.append(microphone.router.endLevelSegment())
             metrics = TurnMetricsBuilder()
             let now = Date()
             metrics.utteranceEndedAt = now
@@ -399,8 +411,15 @@ final class TurnBasedVoiceSession: VoiceSession {
         case .finalTranscript(let transcript):
             pendingSegments = max(0, pendingSegments - 1)
             metrics.transcriptFinalizedAt = Date()
+            let levels = dequeueSegmentLevels()
+            let verdict = SpeechLevelGate.verdict(for: levels, thresholds: configuration.levelGate)
             let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            if STTHallucinationFilter.isPromptEcho(
+            // 閾値を実機で追い込めるよう、採否と実測値は毎セグメント会話ログに残す（トーク画面には出さない）
+            eventContinuation.yield(.info(
+                "STT セグメント \(verdict.reason ?? "採用"): \(levels?.summaryLine ?? "レベル計測なし") 「\(trimmed)」"))
+            if !verdict.isAccepted {
+                // 部屋の暗騒音と大差ない音量だった。空セグメントと同じ扱いにする
+            } else if STTHallucinationFilter.isPromptEcho(
                 transcript: trimmed, prompt: configuration.transcription.prompt)
             {
                 // 非発話セグメントで STT が prompt をエコーした。空セグメントと同じ扱いにする
@@ -422,6 +441,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
         case .transcriptFailed(let message):
             pendingSegments = max(0, pendingSegments - 1)
+            _ = dequeueSegmentLevels()
             eventContinuation.yield(.info("認識に失敗したセグメントがあります: \(message)"))
             commitPendingTurnIfReady()
 
@@ -436,11 +456,19 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// barge-in: サーバ VAD がユーザーの発話開始を検知した。応答の生成・再生中なら即座に止める。
     private func handleSpeechStarted() {
         isUserSpeaking = true
+        microphone.router.beginLevelSegment()
         if claudeTask != nil || state == .speaking {
             interruptAssistantTurn()
             eventContinuation.yield(.info("割り込みを検知しました"))
         }
         if state != .listening { state = .listening }
+    }
+
+    /// 確定テキストに対応するセグメントの音量統計を取り出す。
+    /// 対応が崩れた場合（再接続直後など）は nil を返し、レベル判定を諦めて採用側へ倒す。
+    private func dequeueSegmentLevels() -> SpeechSegmentLevels? {
+        guard !pendingSegmentLevels.isEmpty else { return nil }
+        return pendingSegmentLevels.removeFirst()
     }
 
     /// 確定テキストが揃っていて、ユーザーが話しておらず、Claude ターンも走っていなければ投げる。

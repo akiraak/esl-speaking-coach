@@ -23,16 +23,44 @@ final class CloudPipelineProtocolTests: XCTestCase {
         XCTAssertEqual((input["format"] as? [String: Any])?["rate"] as? Int, 24000)
         XCTAssertEqual((input["noise_reduction"] as? [String: Any])?["type"] as? String, "near_field")
 
-        // 既定 200ms は ESL 学習者に短すぎるため明示指定する（値の意図は設定側コメント参照）
+        // VAD は既定任せにせず 3 つとも明示指定する（値の意図は設定側コメント参照）。
+        // 無音待ちは既定より長く、threshold は雑音での誤発火を減らすため既定 0.5 より高く、
+        // prefix_padding は語頭欠け防止のため既定値で固定する
         let turnDetection = try XCTUnwrap(input["turn_detection"] as? [String: Any])
         XCTAssertEqual(turnDetection["type"] as? String, "server_vad")
         XCTAssertEqual(turnDetection["silence_duration_ms"] as? Int, 800)
+        XCTAssertEqual(turnDetection["prefix_padding_ms"] as? Int, 300)
+        let threshold = try XCTUnwrap(turnDetection["threshold"] as? Double)
+        XCTAssertEqual(threshold, 0.6, accuracy: 0.0001)
+        XCTAssertGreaterThan(threshold, 0.5)
 
         let transcription = try XCTUnwrap(input["transcription"] as? [String: Any])
         XCTAssertEqual(transcription["model"] as? String, "gpt-4o-transcribe")
         XCTAssertEqual(transcription["language"] as? String, "en")
         // 短い発話の言語誤判定対策のヒント
         XCTAssertTrue((transcription["prompt"] as? String ?? "").contains("English"))
+    }
+
+    /// `Double` をそのまま渡すと 0.6 が `0.59999999999999998`（17 桁）と書かれ、
+    /// OpenAI に "max decimal places exceeded"（上限 16 桁）で弾かれた回帰。
+    /// パース後の値ではなく **JSON の文字列**を見ないと検出できない
+    func testTranscriptionThresholdIsSerializedWithFewDecimals() throws {
+        let data = try OpenAITranscriptionClientEvent.sessionUpdate(
+            configuration: OpenAITranscriptionConfiguration())
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertTrue(json.contains("\"threshold\":0.6"), json)
+
+        for value in [0.0, 0.5, 0.55, 0.65, 1.0] {
+            var configuration = OpenAITranscriptionConfiguration()
+            configuration.vadThreshold = value
+            let text = try XCTUnwrap(String(
+                data: try OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration),
+                encoding: .utf8))
+            let digits = try XCTUnwrap(
+                text.split(separator: "\"threshold\":").last?.prefix { $0 != "," })
+            XCTAssertLessThanOrEqual(
+                digits.split(separator: ".").last.map { $0.count } ?? 0, 16, "threshold=\(value)")
+        }
     }
 
     func testTranscriptionWebsocketURLUsesTranscriptionIntent() {
