@@ -136,13 +136,17 @@ struct ChatRoomView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
             }
+            // 起動直後は履歴復元の直後に最下部から始める
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .scrollDismissesKeyboard(.interactively)
-            .onScrollPhaseChange { _, newPhase, context in
+            .onScrollPhaseChange { oldPhase, newPhase, context in
                 switch newPhase {
                 case .tracking, .interacting:
                     // ユーザーがスクロールを始めた（コンテンツ追記による自動移動はここに来ない）
                     isAutoScrollEnabled = false
-                case .idle:
+                case .idle where oldPhase.isUserDriven:
+                    // 指を離して止まった位置で判定する。プログラム側スクロールの
+                    // 完了（.animating → .idle）で誤って追従を切らないよう限定する
                     let geometry = context.geometry
                     isAutoScrollEnabled =
                         geometry.contentOffset.y + geometry.containerSize.height
@@ -153,6 +157,16 @@ struct ChatRoomView: View {
             }
             .onChange(of: store.timelineRevision) {
                 scrollToBottom(proxy)
+            }
+            .task {
+                // 履歴復元は .onAppear（初期レイアウト後）に走り、LazyVStack は
+                // 画面外セルを推定高さで扱うため初期位置がずれる。
+                // 高さが確定するまで数フレーム、アニメーション無しで最下部へ寄せ直す
+                for _ in 0..<3 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    guard isAutoScrollEnabled else { return }
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                }
             }
             .onChange(of: store.partialTranscript) {
                 if !store.partialTranscript.isEmpty { scrollToBottom(proxy) }
@@ -216,6 +230,16 @@ struct ChatRoomView: View {
         guard !topic.isEmpty else { return }
         store.startSession(topic: topic, fromCard: customTopicCardID)
         customTopicCardID = nil
+    }
+}
+
+private extension ScrollPhase {
+    /// 指の操作に由来するフェーズ（プログラム側の `.animating` と区別する）。
+    var isUserDriven: Bool {
+        switch self {
+        case .tracking, .interacting, .decelerating: return true
+        default: return false
+        }
     }
 }
 

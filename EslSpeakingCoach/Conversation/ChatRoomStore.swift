@@ -232,6 +232,7 @@ final class ChatRoomStore {
               case .topicCard(var card) = timeline[index] else { return }
         mutate(&card)
         timeline[index] = .topicCard(card)
+        timelineRevision += 1
     }
 
     // MARK: - セッション開始・終了

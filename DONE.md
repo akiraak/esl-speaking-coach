@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-26 新しい会話が表示されたら自動で1番下までスクロール（既存実装が効いていなかったのを修正） [plan](docs/plans/archive/chat-auto-scroll.md)
+  - 起動直後: 履歴復元がビューの `.onAppear`（初期レイアウト後）に走り `LazyVStack` の推定高さでズレていた。`ScrollView` に `.defaultScrollAnchor(.bottom, for: .initialOffset)` を付け、さらに `.task` で高さ確定を待ちながらアニメーション無しの `scrollTo` を数回かけ直す
+  - 追従が途中で止まる: `onScrollPhaseChange` の `.idle` 再判定がプログラム側スクロール完了（`.animating` → `.idle`）でも走り、追記中の古いジオメトリで `isAutoScrollEnabled` を false に落としていた。`ScrollPhase.isUserDriven`（tracking / interacting / decelerating）だったときのみ再判定するよう限定
+  - トピックカードの候補到着で伸びても追従しなかった: `ChatRoomStore.updateCard` が `timelineRevision` を増やしていなかったため（`updateFeedbackCard` と挙動を統一）
+  - ビルド + 単体テスト全 100 件パス。シミュレータで起動直後（最下部のトピックカード全体が見える）・会話中の発話追記・フィードバックカード生成後の追従を確認。**手動で遡っている間は追従しない挙動と実機での確認は未実施**
 - 2026-07-26 キャラの記憶の現状実装の調査と改善: セッション横断の記憶（ローリング記憶ノート）を実装 [plan](docs/plans/archive/character-memory.md)
   - 調査で「セッション内記憶は完全 / セッション横断はゼロ / データ自体は端末に全部ある」を確認し、方式比較の上ローリング記憶ノート方式を採用
   - セッション正常終了時に `MemoryUpdateClient`（sonnet-5・structured outputs・SSE 蓄積）が「前回ノート + 今回 transcript → 更新済みノート（英語箇条書き・約 400 語以内・2 部構成）」を生成し、SwiftData の単一レコードへ上書き保存（`CharacterMemoryStore`。発話 2 未満スキップ・best effort・usage kind `memory` で料金記録）
