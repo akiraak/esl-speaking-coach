@@ -38,7 +38,7 @@ enum TopicSuggestionError: Error, LocalizedError {
 /// 生成件数は渡した割り当て（`assignments`）の件数に従う
 /// （初回起動・🔄 は 3 件、セッション終了後の補充は 1 件。docs/plans/topic-card-carry-over.md）。
 /// claude-sonnet-5 / 非ストリーミング / effort low / output_config.format の structured outputs。
-/// 「フリートーク」は生成せず、アプリ側で固定候補として追加する。
+/// 固定候補「話しかける」は生成せず、アプリ側で追加する。
 struct TopicSuggestionClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 

@@ -95,13 +95,20 @@ final class ChatRoomStore {
     }
 
     /// アプリ側の固定候補（生成はしない）。
-    static let freeTalkCandidate = TopicCandidate(
-        title: "フリートーク", hook: "話したいことをそのまま話そう。")
+    /// これを選んだセッションだけ AI の開始ターンを出さず、最初のターンを学習者から始める
+    /// （docs/plans/learner-first-topic.md）。
+    static let talkFirstCandidate = TopicCandidate(
+        title: "話しかける", hook: "自分から話しかけてみよう。")
+
+    /// 学習者から始めるトピックか（固定候補と同じタイトルの自作トピックも同じ扱いにする）。
+    static func isLearnerFirstTopic(_ title: String) -> Bool {
+        title == talkFirstCandidate.title
+    }
 
     /// サンプリング時に除外する直近ジャンルの件数（カタログが尽きない範囲に留める）
     static let recentGenreLimit = 8
 
-    /// トピックカードに出す生成候補の件数（別枠のフリートークは含まない）
+    /// トピックカードに出す生成候補の件数（別枠の固定候補「話しかける」は含まない）
     static let topicCandidateCount = 3
 
     private static let inputModeKey = "chatRoomInputMode"
@@ -189,7 +196,7 @@ final class ChatRoomStore {
         postTopicCard()
         #if DEBUG
         if DebugLaunchArguments.shouldStartConversation {
-            startSession(topic: Self.freeTalkCandidate.title, fromCard: nil)
+            startSession(topic: Self.talkFirstCandidate.title, fromCard: nil)
         }
         #endif
     }
@@ -326,7 +333,7 @@ final class ChatRoomStore {
     }
 
     /// セッション開始で消費されなかった候補（= 次のカードへ持ち越すぶん）。
-    /// 自作トピック・フリートークでは何も消費されないので先頭から詰める。
+    /// 自作トピック・固定候補では何も消費されないので先頭から詰める。
     /// 常に「持ち越し + 生成 1 件」の形にするため `topicCandidateCount - 1` 件までに切る。
     static func carryOverCandidates(
         from card: TopicCard?, selectedTitle: String
@@ -358,7 +365,7 @@ final class ChatRoomStore {
         let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         guard session == nil, !trimmed.isEmpty else { return }
         canResumeAfterFailure = false
-        // 生成候補から選んだときだけジャンルが分かる（自作トピック・フリートークは nil）
+        // 生成候補から選んだときだけジャンルが分かる（自作トピック・固定候補は nil）
         let genre = cardID
             .flatMap(findCard)?
             .candidates.first { $0.title == trimmed }?
@@ -391,7 +398,13 @@ final class ChatRoomStore {
         activeSessionID = sessionID
         activeMemoryNote = memoryStore.currentNote()
         historyStore.beginSession(id: sessionID, topicTitle: trimmed, topicGenre: genre)
-        launchSession(initialTopic: trimmed, initialHistory: [])
+        if Self.isLearnerFirstTopic(trimmed) {
+            // AI が黙ったまま listening になるので、待ち受けであることを 1 行だけ伝える
+            appendItem(.systemNotice(id: UUID(), text: "自分から話しかけてみよう"))
+            launchSession(opening: .learnerFirst, initialHistory: [])
+        } else {
+            launchSession(opening: .assistantFirst(topic: trimmed), initialHistory: [])
+        }
     }
 
     /// タイムライン下端に固定表示される「このトピックを終了」ボタン（確認アラート経由）。
@@ -417,15 +430,18 @@ final class ChatRoomStore {
         if let activeSessionID {
             historyStore.resumeSession(id: activeSessionID)
         }
-        launchSession(initialTopic: nil, initialHistory: rebuildHistory(topic: topic))
+        launchSession(opening: .resume, initialHistory: rebuildHistory(topic: topic))
     }
 
-    private func launchSession(initialTopic: String?, initialHistory: [ConversationMessage]) {
+    private func launchSession(
+        opening: TurnBasedVoiceSession.Opening,
+        initialHistory: [ConversationMessage]
+    ) {
         var configuration = TurnBasedVoiceSession.Configuration()
         #if DEBUG
         configuration.ttsProvider = DebugLaunchArguments.ttsProviderOverride ?? .gemini
         #endif
-        configuration.initialTopic = initialTopic
+        configuration.opening = opening
         configuration.memoryNote = activeMemoryNote
         configuration.initialHistory = initialHistory
         configuration.voiceInputEnabled = inputMode == .voice && !isVoicePaused
@@ -441,7 +457,7 @@ final class ChatRoomStore {
                 (try? KeychainStore().read(account: KeychainStore.geminiAPIKeyAccount)) ?? nil
             })
         DiagnosticsLog.record(
-            "session: 開始 topic=\(initialTopic ?? activeTopicTitle ?? "-") "
+            "session: 開始 topic=\(activeTopicTitle ?? "-") opening=\(opening) "
             + "mode=\(inputMode.rawValue) 再開=\(initialHistory.isEmpty ? "no" : "yes")")
         session = newSession
         isSessionActive = true
@@ -619,21 +635,34 @@ final class ChatRoomStore {
     /// タイムラインの現在セッション区間（最後の区切り以降）から API 用の会話履歴を組み立てる。
     /// 連続する AI 発話は 1 つのタグ付き台本メッセージへ再直列化する。
     /// 先頭はセッション開始時と同じ合成メッセージ（[Memory: ...] + [New topic: X]）にする。
+    /// 学習者ファーストのセッションでは開始時と同じく [Memory: ...] だけ（無ければ何も置かない）。
     private func rebuildHistory(topic: String) -> [ConversationMessage] {
         var sessionItems: [TimelineItem] = []
         for item in timeline.reversed() {
             if case .sessionDivider = item { break }
             sessionItems.append(item)
         }
-        var history = [ConversationMessage(
-            role: .user,
-            text: SessionOpeningMessage.compose(topic: topic, memoryNote: activeMemoryNote))]
+        var history: [ConversationMessage] = []
+        if Self.isLearnerFirstTopic(topic) {
+            if let memoryLine = SessionOpeningMessage.composeMemoryOnly(
+                memoryNote: activeMemoryNote)
+            {
+                history.append(ConversationMessage(role: .user, text: memoryLine))
+            }
+        } else {
+            history.append(ConversationMessage(
+                role: .user,
+                text: SessionOpeningMessage.compose(topic: topic, memoryNote: activeMemoryNote)))
+        }
         var pendingScript: [String] = []
         func flushScript() {
             guard !pendingScript.isEmpty else { return }
+            // 先頭が assistant の履歴は Anthropic API が受け付けないため落とす
+            // （学習者ファーストで第一声が残っていないケース。実際にはまず起きない）
+            defer { pendingScript = [] }
+            guard !history.isEmpty else { return }
             history.append(ConversationMessage(
                 role: .assistant, text: pendingScript.joined(separator: "\n")))
-            pendingScript = []
         }
         for item in sessionItems.reversed() {
             switch item {

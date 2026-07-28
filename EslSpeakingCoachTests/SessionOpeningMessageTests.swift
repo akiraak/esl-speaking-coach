@@ -30,4 +30,27 @@ final class SessionOpeningMessageTests: XCTestCase {
             SessionOpeningMessage.compose(topic: "Free talk", memoryNote: "\n- Likes ramen. \n"),
             "[Memory: - Likes ramen.]\n[New topic: Free talk]")
     }
+
+    // MARK: - 学習者ファースト（トピックを渡さない開始）
+
+    /// 記憶ノートだけを積む。[New topic: ...] が無いので AI の開始ターンは起きない
+    /// （docs/plans/learner-first-topic.md）。
+    func testComposeMemoryOnlyKeepsMemoryPart() {
+        XCTAssertEqual(
+            SessionOpeningMessage.composeMemoryOnly(memoryNote: "- Likes ramen."),
+            "[Memory: - Likes ramen.]")
+    }
+
+    func testComposeMemoryOnlyTrimsMemoryNote() {
+        XCTAssertEqual(
+            SessionOpeningMessage.composeMemoryOnly(memoryNote: "\n- Likes ramen. \n"),
+            "[Memory: - Likes ramen.]")
+    }
+
+    /// ノートが空なら何も積まない = 履歴は学習者の第一声から始まる。
+    func testComposeMemoryOnlyReturnsNilWithoutMemoryNote() {
+        XCTAssertNil(SessionOpeningMessage.composeMemoryOnly(memoryNote: nil))
+        XCTAssertNil(SessionOpeningMessage.composeMemoryOnly(memoryNote: ""))
+        XCTAssertNil(SessionOpeningMessage.composeMemoryOnly(memoryNote: "  \n"))
+    }
 }

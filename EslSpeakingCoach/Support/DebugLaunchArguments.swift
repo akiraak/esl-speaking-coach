@@ -23,7 +23,8 @@ enum DebugLaunchArguments {
         }
     }
 
-    /// 起動時にフリートークセッションを自動開始する（権限 → STT モデル → マイクの起動パス確認用）。
+    /// 起動時に固定候補「話しかける」でセッションを自動開始する
+    /// （権限 → STT モデル → マイクの起動パス確認用。AI の開始ターンは出ないので -send-text から始まる）。
     static var shouldStartConversation: Bool {
         ProcessInfo.processInfo.arguments.contains("-start-conversation")
     }

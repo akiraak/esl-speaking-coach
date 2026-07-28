@@ -19,10 +19,12 @@ import UIKit
 /// 入力モード: setVoiceInputEnabled で STT + マイクだけを起動 / 停止できる（TTS 再生は常に有効）。
 /// テキストモードでは STT 非接続のまま listening になり、submitTypedUserTurn でターンを進める。
 ///
-/// セッションフロー: Configuration.initialTopic があると、ready 後に制御メッセージ
-/// [New topic: X] を履歴に積んで AI 側から開始ターンを生成する。学習者の goodbye で台本に
-/// 制御行 [end] が現れたら、closing の読み上げ完了後に sessionEndDetected を通知する
-/// （表示・読み上げはしない）。
+/// セッションフロー: Configuration.opening が ready 後の始まり方を決める。
+/// assistantFirst は制御メッセージ [New topic: X] を履歴に積んで AI 側から開始ターンを生成し、
+/// learnerFirst は Claude ターンを起こさず listening のまま学習者の第一声を待つ
+/// （記憶ノートがあれば [Memory: ...] だけを履歴へ積んでおく）。
+/// 学習者の goodbye で台本に制御行 [end] が現れたら、closing の読み上げ完了後に
+/// sessionEndDetected を通知する（表示・読み上げはしない）。
 ///
 /// 寿命: start〜stop の間は切断・割り込みから自力で復帰する。stop 後の再 start はできない（毎回作り直す）。
 ///
@@ -32,15 +34,25 @@ import UIKit
 ///   - 回復可能（Claude ターン 1 回の失敗・TTS 1 文の失敗・STT 1 セグメントの失敗）→ .info 通知で継続
 @MainActor
 final class TurnBasedVoiceSession: VoiceSession {
+    /// セッションの始まり方（ready 直後に一度だけ適用する）。
+    enum Opening: Sendable {
+        /// 既定。[New topic: X] を積んで AI が口火を切る
+        case assistantFirst(topic: String)
+        /// 学習者の第一声を待つ（Claude ターンを起こさない）
+        case learnerFirst
+        /// エラー後の再開。initialHistory を引き継ぐので開始ターンは無い
+        case resume
+    }
+
     struct Configuration: Sendable {
         var transcription = OpenAITranscriptionConfiguration()
         /// 採用構成は Gemini TTS（2026-07-25 決定）。OpenAI TTS へは聞き比べ用に切替可
         var ttsProvider: TTSProvider = .gemini
         var openAITTS = OpenAITTSConfiguration()
         var geminiTTS = GeminiTTSConfiguration()
-        /// ready 後に AI 側から開始するトピック（[New topic: X] を送る）
-        var initialTopic: String?
-        /// セッション横断の記憶ノート。initialTopic の開始メッセージに [Memory: ...] として合成する
+        /// ready 後の始まり方（既定は再開 = 開始ターンを起こさない）
+        var opening: Opening = .resume
+        /// セッション横断の記憶ノート。開始メッセージに [Memory: ...] として合成する
         /// （空なら省略。docs/plans/character-memory.md）
         var memoryNote: String?
         /// 開始時点の音声入力（STT + マイク）の有効 / 無効
@@ -86,7 +98,8 @@ final class TurnBasedVoiceSession: VoiceSession {
     private var history: [ConversationMessage] = []
     private var turnUtterances: [TurnUtterance] = []
     private var scriptEndDetected = false
-    private var pendingInitialTopic: String?
+    /// ready 後に一度だけ適用する開始のしかた（適用後は nil）
+    private var pendingOpening: Opening?
     private var isVoiceInputEnabled: Bool
     private var transcriber: (any StreamingSpeechTranscriber)?
     private var sttEventTask: Task<Void, Never>?
@@ -122,7 +135,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         self.claudeKeyProvider = claudeKeyProvider
         self.openAIKeyProvider = openAIKeyProvider
         self.geminiKeyProvider = geminiKeyProvider
-        self.pendingInitialTopic = configuration.initialTopic
+        self.pendingOpening = configuration.opening
         self.isVoiceInputEnabled = configuration.voiceInputEnabled
         self.history = configuration.initialHistory
         switch configuration.ttsProvider {
@@ -226,7 +239,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             connectSTT()
         } else {
             state = .listening
-            startInitialTopicIfNeeded()
+            startOpeningIfNeeded()
             playListeningCueIfListening()
         }
     }
@@ -391,7 +404,7 @@ final class TurnBasedVoiceSession: VoiceSession {
                 state = .listening
                 eventContinuation.yield(.info(
                     "接続完了（STT: \(configuration.transcription.model), TTS: \(speaker.modelDescription), LLM: \(client.parameters.model)）"))
-                startInitialTopicIfNeeded()
+                startOpeningIfNeeded()
                 playListeningCueIfListening()
             case .reconnecting:
                 state = .listening
@@ -500,17 +513,30 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     // MARK: - Turn commit → Claude
 
-    /// ready 直後に AI 側から開始ターンを生成する（トピックカードでの選択に対応）。
-    /// 記憶ノートがあれば [Memory: ...] を同じ user メッセージに合成する
+    /// ready 直後に開始のしかた（Configuration.opening）を一度だけ適用する。
+    /// 記憶ノートがあれば [Memory: ...] を先頭の user メッセージに合成する
     /// （messages 先頭で不変にし、system prompt のキャッシュを壊さない）。
-    private func startInitialTopicIfNeeded() {
-        guard let topic = pendingInitialTopic else { return }
-        pendingInitialTopic = nil
-        state = .thinking
-        metrics = TurnMetricsBuilder()
-        appendUserMessage(SessionOpeningMessage.compose(
-            topic: topic, memoryNote: configuration.memoryNote))
-        startClaudeTurn()
+    private func startOpeningIfNeeded() {
+        guard let opening = pendingOpening else { return }
+        pendingOpening = nil
+        switch opening {
+        case .assistantFirst(let topic):
+            state = .thinking
+            metrics = TurnMetricsBuilder()
+            appendUserMessage(SessionOpeningMessage.compose(
+                topic: topic, memoryNote: configuration.memoryNote))
+            startClaudeTurn()
+        case .learnerFirst:
+            // Claude ターンは起こさず listening のまま待つ。記憶ノートだけ先に積んでおくと、
+            // 学習者の第一声が appendUserMessage で結合され 1 通の user メッセージとして届く
+            if let memoryLine = SessionOpeningMessage.composeMemoryOnly(
+                memoryNote: configuration.memoryNote)
+            {
+                appendUserMessage(memoryLine)
+            }
+        case .resume:
+            break
+        }
     }
 
     private func commitText(_ text: String) {

@@ -31,7 +31,7 @@ final class ChatSessionRecord {
     @Attribute(.unique) var id: UUID
     var topicTitle: String
     /// 生成時に割り当てられた `TopicCatalog` のジャンル id。
-    /// 自作トピック・フリートークは nil（ジャンル不明として次回の除外対象にしない）
+    /// 自作トピック・固定候補は nil（ジャンル不明として次回の除外対象にしない）
     var topicGenre: String?
     var startedAt: Date
     /// nil はセッション中（アプリ強制終了で残った場合は次回起動時に閉じる）

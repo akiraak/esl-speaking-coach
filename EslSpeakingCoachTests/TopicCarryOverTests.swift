@@ -21,11 +21,12 @@ final class TopicCarryOverTests: XCTestCase {
         XCTAssertEqual(carried.map(\.title), ["A", "C"])
     }
 
-    /// 自作トピック・フリートークでは候補が消費されないので、先頭 2 件だけ持ち越す
+    /// 自作トピック・固定候補「話しかける」では候補が消費されないので、先頭 2 件だけ持ち越す
     /// （常に「持ち越し + 生成 1 件」の形にするため）。
     func testKeepsAtMostTwoWhenNothingWasConsumed() {
         let carried = ChatRoomStore.carryOverCandidates(
-            from: makeCard(["A", "B", "C"]), selectedTitle: "フリートーク")
+            from: makeCard(["A", "B", "C"]),
+            selectedTitle: ChatRoomStore.talkFirstCandidate.title)
         XCTAssertEqual(carried.map(\.title), ["A", "B"])
     }
 
@@ -40,6 +41,17 @@ final class TopicCarryOverTests: XCTestCase {
         let carried = ChatRoomStore.carryOverCandidates(
             from: makeCard(["A"]), selectedTitle: "A")
         XCTAssertTrue(carried.isEmpty)
+    }
+
+    // MARK: - 固定候補「話しかける」
+
+    /// 固定候補を選んだセッションだけ、最初のターンを学習者から始める
+    /// （docs/plans/learner-first-topic.md）。
+    func testLearnerFirstOnlyForTalkFirstCandidate() {
+        XCTAssertTrue(
+            ChatRoomStore.isLearnerFirstTopic(ChatRoomStore.talkFirstCandidate.title))
+        XCTAssertFalse(ChatRoomStore.isLearnerFirstTopic("週末の予定"))
+        XCTAssertFalse(ChatRoomStore.isLearnerFirstTopic(""))
     }
 
     // MARK: - 生成ぶんとのマージ

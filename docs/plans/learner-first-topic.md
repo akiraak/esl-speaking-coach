@@ -109,20 +109,27 @@ AI が黙ったまま listening になるので、開始直後にシステム通
 
 ## Phase
 
-- [ ] **Phase 1: 固定候補の置き換え**
+2026-07-27: Phase 1〜3 と Phase 4 の実機確認以外を実装済み。
+`Opening` は `Configuration` ではなく `TurnBasedVoiceSession` 直下の enum として定義した
+（`Configuration.opening` から参照する形は同じ）。
+`SessionOpeningMessage.composeMemoryOnly(memoryNote:)` を追加し、`compose(topic:memoryNote:)` はこれを使う。
+`rebuildHistory` は学習者ファーストで履歴が空になりうるため、先頭が assistant になる直列化を落とすガードを入れた。
+
+- [x] **Phase 1: 固定候補の置き換え**
   - `freeTalkCandidate` → `talkFirstCandidate`（タイトル・フック・参照箇所・コメント）
   - この時点では挙動は今までどおり（AI が `[New topic: 話しかける]` で開始する）
   - ビルド + 既存テストが通ること
-- [ ] **Phase 2: 学習者ファーストの開始経路**
+- [x] **Phase 2: 学習者ファーストの開始経路**
   - `Configuration.Opening` の導入と `startInitialTopicIfNeeded` の分岐
   - `SessionOpeningMessage` のトピック無し合成
   - `ChatRoomStore.startSession` / `launchSession` / `rebuildHistory` の対応
-- [ ] **Phase 3: 開始直後のシステム通知**
+- [x] **Phase 3: 開始直後のシステム通知**
   - 「自分から話しかけてみよう」を 1 行出す
 - [ ] **Phase 4: テスト・確認・仕様反映**
-  - 単体テスト追加・更新、`xcodebuild test` 全件パス
-  - シミュレータ E2E（テキスト入力で開始 → AI が先に喋らないこと → 送信で会話が始まること）
-  - 実機確認（音声で最初のターンを学習者から / 記憶ノートが効いているか / 応答が不自然でないか）
+  - [x] 単体テスト追加・更新、`xcodebuild test` 全件パス（169 件）
+  - [x] シミュレータ E2E（`-start-conversation` で AI が黙って listening → `-send-text` で会話開始。
+    Naruko の返しに記憶ノート由来の言及があり `[Memory: ...]` + 第一声が 1 通で届いていることも確認）
+  - [ ] 実機確認（音声で最初のターンを学習者から / 記憶ノートが効いているか / 応答が不自然でないか）
   - 仕様書更新（`conversation-design.md` / `screen-layout.md`）、プランを `docs/plans/archive/` へ、`TODO.md` → `DONE.md`
 
 ## テスト方針

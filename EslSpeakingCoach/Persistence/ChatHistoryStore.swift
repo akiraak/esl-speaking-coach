@@ -161,7 +161,7 @@ final class ChatHistoryStore {
     }
 
     /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。
-    /// ジャンル不明（自作トピック・フリートーク）のセッションは含めない。
+    /// ジャンル不明（自作トピック・固定候補）のセッションは含めない。
     func recentTopicGenres(limit: Int) -> [String] {
         Array(fetchSessions().compactMap(\.topicGenre).suffix(limit))
     }
