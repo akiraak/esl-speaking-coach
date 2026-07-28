@@ -53,16 +53,38 @@ enum DebugLaunchArguments {
         return TTSProvider(rawValue: args[index + 1])
     }
 
+    /// 診断ログのクラッシュ記録が生きているかを確かめるためのわざと落とす起動引数。
+    /// 例: -crash-test exception（Objective-C 例外）/ -crash-test fatal（Swift の実行時エラー）
+    /// 起動 3 秒後に落とす（ログの初期化と画面表示を跨いだ状態を模す）。
+    static func scheduleCrashTestIfNeeded() {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-crash-test") else { return }
+        let kind = index + 1 < args.count ? args[index + 1] : "exception"
+        DiagnosticsLog.record("crash-test: \(kind) を 3 秒後に発生させます")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if kind == "fatal" {
+                fatalError("診断ログのクラッシュ記録テスト")
+            }
+            NSException(
+                name: NSExceptionName("DiagnosticsCrashTest"),
+                reason: "診断ログのクラッシュ記録テスト", userInfo: nil
+            ).raise()
+        }
+    }
+
     /// 起動時に管理画面を開く（シミュレータでの表示確認用）。
-    /// 例: -open-admin / -open-admin usage（料金タブで開く）
+    /// 例: -open-admin / -open-admin 料金 / -open-admin 診断（タブ名は AdminView.Tab の表示名）
     static var shouldOpenAdmin: Bool {
         ProcessInfo.processInfo.arguments.contains("-open-admin")
     }
 
-    static var adminOpensOnUsageTab: Bool {
+    /// タブ指定が無い / 不明な名前なら会話タブで開く。
+    static var adminInitialTab: AdminView.Tab {
         let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of: "-open-admin"), index + 1 < args.count else { return false }
-        return args[index + 1] == "usage"
+        guard let index = args.firstIndex(of: "-open-admin"), index + 1 < args.count else {
+            return .sessions
+        }
+        return AdminView.Tab(rawValue: args[index + 1]) ?? .sessions
     }
 }
 #endif

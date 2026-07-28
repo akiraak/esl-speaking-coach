@@ -55,6 +55,12 @@ final class StreamingAudioPlayer {
     /// そのバッファの再生が実際に始まるタイミングで onMarkerReached が発火する。
     func enqueue(pcm16Data: Data, marker: UUID? = nil) {
         guard let buffer = Self.makeBuffer(pcm16Data: pcm16Data, format: format) else { return }
+        if !engine.isRunning {
+            // 停止済みエンジンへの scheduleBuffer / play は AVAudioEngine のアサートで abort する。
+            // 起きるとしたら「読み上げ中に会話終了」の直後なので、落ちる直前の 1 行として残す
+            // （docs/plans/end-session-crash.md H1。挙動は変えず記録だけする）
+            DiagnosticsLog.record("!! player: エンジン停止中に enqueue が呼ばれた（クラッシュしうる）")
+        }
         let wasIdle = pendingBuffers == 0
         pendingBuffers += 1
         markerQueue.append(marker)
@@ -100,10 +106,14 @@ final class StreamingAudioPlayer {
     }
 
     func shutdown() {
+        DiagnosticsLog.record(
+            "player: shutdown 開始 running=\(engine.isRunning) playing=\(player.isPlaying) "
+            + "pending=\(pendingBuffers)")
         turnID += 1
         player.stop()
         cuePlayer.stop()
         engine.stop()
+        DiagnosticsLog.record("player: shutdown 完了")
     }
 
     private func handleBufferFinished(turnID: Int) {

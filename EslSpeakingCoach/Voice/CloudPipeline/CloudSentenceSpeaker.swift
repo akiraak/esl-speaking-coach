@@ -91,6 +91,8 @@ final class CloudSentenceSpeaker {
     }
 
     func shutdown() {
+        DiagnosticsLog.record(
+            "speaker: shutdown 開始 未読み上げ=\(sentenceQueue.count) 取得中=\(fetchTask != nil)")
         turnID += 1
         sentenceQueue.removeAll()
         fetchTask?.cancel()

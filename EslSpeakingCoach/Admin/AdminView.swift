@@ -7,10 +7,11 @@ struct AdminView: View {
     let usageStore: UsageStore
     let memoryStore: CharacterMemoryStore
 
-    private enum Tab: String, CaseIterable, Identifiable {
+    enum Tab: String, CaseIterable, Identifiable {
         case sessions = "会話"
         case memory = "記憶"
         case usage = "料金"
+        case diagnostics = "診断"
         var id: String { rawValue }
     }
 
@@ -19,12 +20,12 @@ struct AdminView: View {
 
     init(
         historyStore: ChatHistoryStore, usageStore: UsageStore,
-        memoryStore: CharacterMemoryStore, startOnUsage: Bool = false
+        memoryStore: CharacterMemoryStore, initialTab: Tab = .sessions
     ) {
         self.historyStore = historyStore
         self.usageStore = usageStore
         self.memoryStore = memoryStore
-        _tab = State(initialValue: startOnUsage ? .usage : .sessions)
+        _tab = State(initialValue: initialTab)
     }
 
     var body: some View {
@@ -46,6 +47,8 @@ struct AdminView: View {
                     MemoryAdminView(memoryStore: memoryStore)
                 case .usage:
                     UsageDashboardView(usageStore: usageStore)
+                case .diagnostics:
+                    DiagnosticsLogView()
                 }
             }
             .navigationTitle("管理")

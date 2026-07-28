@@ -330,9 +330,18 @@ final class ChatRoomStore {
 
     /// タイムライン下端に固定表示される「このトピックを終了」ボタン（確認アラート経由）。
     func endSession() {
-        guard let session else { return }
+        guard let session else {
+            DiagnosticsLog.record("end: ボタン押下（セッション無し・何もしない）")
+            return
+        }
+        // 落ちたときにどの状況で押したかを特定するための足跡（docs/plans/end-session-crash.md）
+        DiagnosticsLog.record(
+            "end: ボタン押下 state=\(voiceState) mode=\(inputMode.rawValue) "
+            + "paused=\(isVoicePaused) 学習者発話=\(sessionTranscript().learnerTurnCount) "
+            + "translation=\(isTranslationVisible)")
         isEndingSession = true
         session.stop()
+        DiagnosticsLog.record("end: session.stop() から復帰")
     }
 
     /// 致命的エラー後の再開。タイムラインから会話履歴を組み立てて新しいセッションに引き継ぐ。
@@ -365,6 +374,9 @@ final class ChatRoomStore {
             geminiKeyProvider: {
                 (try? KeychainStore().read(account: KeychainStore.geminiAPIKeyAccount)) ?? nil
             })
+        DiagnosticsLog.record(
+            "session: 開始 topic=\(initialTopic ?? activeTopicTitle ?? "-") "
+            + "mode=\(inputMode.rawValue) 再開=\(initialHistory.isEmpty ? "no" : "yes")")
         session = newSession
         isSessionActive = true
         // 会話中の放置で画面ロック → バックグラウンド遷移して会話が切れるのを防ぐ
@@ -381,6 +393,7 @@ final class ChatRoomStore {
 
     private func handleSessionFinished() {
         let wasEnding = isEndingSession
+        DiagnosticsLog.record("end: セッション終了を検知 wasEnding=\(wasEnding)")
         isEndingSession = false
         session = nil
         eventTask = nil
@@ -397,16 +410,20 @@ final class ChatRoomStore {
             activeSessionID = nil
             activeMemoryNote = nil
             historyStore.endActiveSession()
+            DiagnosticsLog.record("end: 履歴セッションを閉じた session=\(endedSessionID?.uuidString ?? "-")")
             // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
             // フィードバックは生成中表示で即投稿し、完了を待たずに次のトピックを選べるようにする
             if let endedTopic {
                 postFeedbackCard(topic: endedTopic, sessionID: endedSessionID)
+                DiagnosticsLog.record("end: フィードバックカード投稿まで完了")
                 updateCharacterMemory(topic: endedTopic, sessionID: endedSessionID)
             }
             // 終了時にも訳を埋めきる（区切りは動いていないので対象は今のセッションのまま）
             scheduleTranslationFlush()
             postTopicCard()
+            DiagnosticsLog.record("end: 終了処理を完了")
         } else {
+            DiagnosticsLog.record("end: 致命的エラーによる終了（再開待ち）")
             // 致命的エラー。タイムラインは残っているので履歴を引き継いで再開できる
             // （永続化セッションも開いたままにし、再開後の発話を追記する）
             canResumeAfterFailure = activeTopicTitle != nil

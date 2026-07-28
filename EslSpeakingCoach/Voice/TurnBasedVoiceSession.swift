@@ -232,7 +232,15 @@ final class TurnBasedVoiceSession: VoiceSession {
     }
 
     func stop() {
-        guard !isStopped else { return }
+        guard !isStopped else {
+            DiagnosticsLog.record("stop: 二重呼び出し（無視）")
+            return
+        }
+        // 停止のどの段で落ちたかを特定できるよう 1 段ずつ足跡を残す
+        // （docs/plans/end-session-crash.md Phase 0）
+        DiagnosticsLog.record(
+            "stop: 開始 state=\(state) mic=\(isMicStreaming) vp=\(isVoiceProcessingActive) "
+            + "claude=\(claudeTask != nil) stt=\(transcriber != nil)")
         isStopped = true
         for token in observerTokens {
             NotificationCenter.default.removeObserver(token)
@@ -243,14 +251,19 @@ final class TurnBasedVoiceSession: VoiceSession {
         tearDownSTT()
         levelTask?.cancel()
         levelTask = nil
+        DiagnosticsLog.record("stop: STT・Claude を停止")
         speaker.shutdown()
+        DiagnosticsLog.record("stop: 読み上げを停止")
         microphone.router.detachRaw()
         microphone.stop()
+        DiagnosticsLog.record("stop: マイクを停止")
         // 会話中に奪っていたオーディオを他アプリ（音楽等）へ返す
         try? AVAudioSession.sharedInstance().setActive(
             false, options: .notifyOthersOnDeactivation)
+        DiagnosticsLog.record("stop: オーディオセッションを解除")
         state = .idle
         eventContinuation.finish()
+        DiagnosticsLog.record("stop: 完了")
     }
 
     /// 復帰不能なエラー。failure を通知してセッションを終了する

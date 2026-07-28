@@ -34,7 +34,7 @@ struct ChatRoomView: View {
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,
                 memoryStore: store.memoryStore,
-                startOnUsage: DebugLaunchArguments.adminOpensOnUsageTab)
+                initialTab: DebugLaunchArguments.adminInitialTab)
             #else
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,

@@ -171,9 +171,15 @@ final class MicrophoneCapture {
     }
 
     func stop() {
-        guard isRunning else { return }
+        guard isRunning else {
+            DiagnosticsLog.record("mic: stop（未起動のため何もしない）")
+            return
+        }
+        // 入力エンジンの停止順序はクラッシュ調査の対象（docs/plans/end-session-crash.md H2）
+        DiagnosticsLog.record("mic: stop 開始 buffers=\(router.bufferCount)")
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRunning = false
+        DiagnosticsLog.record("mic: stop 完了")
     }
 }
