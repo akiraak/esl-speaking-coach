@@ -222,34 +222,26 @@ struct TopicCardView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(ChatTheme.accent)
 
-            // 持ち越し候補があるときは丸ごと隠さず、出したまま残り 1 件の生成を待つ
+            // 生成済み・持ち越しの候補は出せるものから出し、残りの生成を待つ
             // （待たずに選び始められる。docs/plans/topic-card-carry-over.md）
-            if card.isLoading && card.candidates.isEmpty {
+            ForEach(card.candidates, id: \.title) { candidate in
+                topicPill(candidate)
+            }
+            if card.isLoading {
                 HStack(spacing: 8) {
                     ProgressView()
-                    Text("候補を考え中…")
+                    Text(card.candidates.isEmpty ? "候補を考え中…" : "もう 1 件を追加中…")
                         .font(.caption)
                         .foregroundStyle(ChatTheme.systemText)
                 }
-                .padding(.vertical, 8)
-            } else {
-                ForEach(card.candidates + [ChatRoomStore.talkFirstCandidate], id: \.title) { candidate in
-                    topicPill(candidate)
-                }
-                if card.isLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("もう 1 件を追加中…")
-                            .font(.caption)
-                            .foregroundStyle(ChatTheme.systemText)
-                    }
-                    .padding(.top, 2)
-                }
-                if let errorText = card.errorText {
-                    Text(errorText)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                }
+                .padding(.vertical, 4)
+            }
+            // 固定候補は生成を待たないので、生成中でも常に選べる状態で出す
+            topicPill(ChatRoomStore.talkFirstCandidate)
+            if let errorText = card.errorText {
+                Text(errorText)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
             }
 
             HStack(spacing: 10) {
