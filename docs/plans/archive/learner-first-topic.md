@@ -129,7 +129,9 @@ AI が黙ったまま listening になるので、開始直後にシステム通
   - [x] 単体テスト追加・更新、`xcodebuild test` 全件パス（169 件）
   - [x] シミュレータ E2E（`-start-conversation` で AI が黙って listening → `-send-text` で会話開始。
     Naruko の返しに記憶ノート由来の言及があり `[Memory: ...]` + 第一声が 1 通で届いていることも確認）
-  - [ ] 実機確認（音声で最初のターンを学習者から / 記憶ノートが効いているか / 応答が不自然でないか）
+  - [x] 実機確認（音声で最初のターンを学習者から / 記憶ノートが効いているか / 応答が不自然でないか）
+    - 2026-07-27 確認済み。応答は不自然でなかったため、リスク欄に残していた
+      `## App control messages` への `[Learner starts]` 追加は**見送り**（system prompt は変更なし）
   - 仕様書更新（`conversation-design.md` / `screen-layout.md`）、プランを `docs/plans/archive/` へ、`TODO.md` → `DONE.md`
 
 ## テスト方針
