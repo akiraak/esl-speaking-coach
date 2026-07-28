@@ -519,11 +519,13 @@ final class ChatRoomStore {
     private func postFeedbackCard(topic: String, sessionID: UUID?) {
         let (transcript, learnerTurnCount) = sessionTranscript()
         guard learnerTurnCount >= 2 else {
+            DiagnosticsLog.record("feedback: 発話 \(learnerTurnCount) 件のためスキップ")
             appendItem(.systemNotice(id: UUID(), text: "発話が少なかったためフィードバックは省略しました"))
             return
         }
         let card = FeedbackCard(sessionID: sessionID, topicTitle: topic, transcript: transcript)
         let cardID = card.id
+        DiagnosticsLog.record("feedback: カード投稿 発話=\(learnerTurnCount)件 transcript=\(transcript.count)字")
         appendItem(.feedbackCard(card))
         Task { await fillFeedbackCard(cardID: cardID) }
     }
@@ -531,6 +533,7 @@ final class ChatRoomStore {
     /// 生成失敗時のリトライ（カード内ボタンから）。
     func retryFeedback(cardID: UUID) {
         guard let card = findFeedbackCard(cardID), !card.isLoading, card.feedback == nil else { return }
+        DiagnosticsLog.record("feedback: リトライ")
         updateFeedbackCard(cardID) {
             $0.isLoading = true
             $0.errorText = nil
@@ -541,6 +544,7 @@ final class ChatRoomStore {
     private func fillFeedbackCard(cardID: UUID) async {
         guard let card = findFeedbackCard(cardID) else { return }
         guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else {
+            DiagnosticsLog.record("!! feedback: Anthropic API キーが未設定")
             updateFeedbackCard(cardID) {
                 $0.isLoading = false
                 $0.errorText = "Anthropic API キーが未設定です。.secrets/anthropic-api-key を用意して再インストールしてください。"
@@ -561,7 +565,12 @@ final class ChatRoomStore {
                 $0.feedback = feedback
                 $0.errorText = nil
             }
+            // 表示に渡った総評そのもの（生の出力と突き合わせて、途切れが
+            // API 側かアプリ側かを切り分ける。docs/plans/feedback-truncated.md Phase 2）
+            DiagnosticsLog.record(
+                "feedback: カードへ反映 summary=\(DiagnosticsSnippet.make(feedback.summary, limit: 400))")
         } catch {
+            DiagnosticsLog.record("!! feedback: 生成に失敗 \(error.localizedDescription)")
             updateFeedbackCard(cardID) {
                 $0.isLoading = false
                 $0.errorText = "フィードバックの生成に失敗しました: \(error.localizedDescription)"

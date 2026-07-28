@@ -45,6 +45,15 @@ final class ClaudeSSEParserTests: XCTestCase {
         XCTAssertEqual(try ClaudeSSE.parse(line: #"data: {"type":"ping"}"#), [])
     }
 
+    /// 壊れた（= 途中で割れた）data 行は従来どおり捨てる。
+    /// 診断ログには残すが、挙動は変えない（docs/plans/feedback-truncated.md Phase 1）。
+    func testBrokenDataLineIsDroppedWithoutThrowing() throws {
+        let head = #"data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"前半"#
+        let tail = #"後半"}}"#
+        XCTAssertEqual(try ClaudeSSE.parse(line: head), [])
+        XCTAssertEqual(try ClaudeSSE.parse(line: tail), [])
+    }
+
     func testErrorEventThrows() {
         let line = #"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#
         XCTAssertThrowsError(try ClaudeSSE.parse(line: line)) { error in

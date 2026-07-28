@@ -148,6 +148,44 @@ enum DiagnosticsLog {
     }
 }
 
+// MARK: - スニペット整形
+
+/// API の生の応答など、長さも中身も信用できない文字列を診断ログへ埋め込むための整形
+/// （docs/plans/feedback-truncated.md Phase 1）。純関数なのでテストから直接叩ける。
+enum DiagnosticsSnippet {
+    /// 改行系をエスケープし、`limit` 文字を超えるぶんは中略する。
+    /// 中略は頭 2/3・尻 1/3 で残す（JSON なら先頭の壊れ方と閉じ括弧の有無が両方見える）。
+    static func make(_ text: String, limit: Int) -> String {
+        let escaped = escapeLineBreaks(text)
+        guard escaped.count > limit, limit >= 3 else { return escaped }
+        let headCount = limit * 2 / 3
+        let head = escaped.prefix(headCount)
+        let tail = escaped.suffix(limit - headCount)
+        return "\(head)…〈中略 全 \(escaped.count) 字〉…\(tail)"
+    }
+
+    /// 改行として扱われる文字を可視化する。ログを 1 行に保つためだけでなく、
+    /// **これらが生の応答に混ざっていること自体が容疑**（`bytes.lines` は LF/CR 以外の
+    /// VT・FF・NEL・LS・PS でも行を切る）なので、見える形で残す。
+    static func escapeLineBreaks(_ text: String) -> String {
+        var output = ""
+        output.reserveCapacity(text.unicodeScalars.count)
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\n": output += "\\n"
+            case "\r": output += "\\r"
+            case "\u{0B}": output += "\\u000b"
+            case "\u{0C}": output += "\\u000c"
+            case "\u{85}": output += "\\u0085"
+            case "\u{2028}": output += "\\u2028"
+            case "\u{2029}": output += "\\u2029"
+            default: output.unicodeScalars.append(scalar)
+            }
+        }
+        return output
+    }
+}
+
 // MARK: - クラッシュハンドラ
 
 /// 未捕捉の Objective-C 例外（AVFoundation のアサート等）と致命シグナルを診断ログへ残す。

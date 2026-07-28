@@ -177,11 +177,21 @@ enum ClaudeSSE {
     /// `data: {...}` 以外の行（event 行・空行・ping 等）は空配列を返す。
     /// API の error イベントは throw する。
     /// message_delta は usage → stop の順で 2 イベントになり得る。
+    ///
+    /// デコードできない `data:` 行は**捨てる**（挙動は従来どおり）が、
+    /// 捨てたことを診断ログへ残す。1 行が途中で割れるとその行のテキストが丸ごと消え、
+    /// それでも残りは JSON として通ってしまうため、文章だけが欠ける形になる
+    /// （docs/plans/feedback-truncated.md H1）。
     static func parse(line: String) throws -> [ClaudeStreamEvent] {
         guard line.hasPrefix("data:") else { return [] }
         let json = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
         guard !json.isEmpty, let data = json.data(using: .utf8) else { return [] }
-        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return [] }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else {
+            DiagnosticsLog.record(
+                "!! sse: data 行を解釈できず破棄 len=\(json.count) "
+                + "body=\(DiagnosticsSnippet.make(String(json), limit: 200))")
+            return []
+        }
 
         switch payload.type {
         case "content_block_delta":
@@ -200,7 +210,9 @@ enum ClaudeSSE {
             events.append(.messageStopped(stopReason: payload.delta?.stopReason))
             return events
         case "error":
-            throw ClaudeClientError.apiError(payload.error?.message ?? "unknown error")
+            let message = payload.error?.message ?? "unknown error"
+            DiagnosticsLog.record("!! sse: error イベント type=\(payload.error?.type ?? "-") \(message)")
+            throw ClaudeClientError.apiError(message)
         default:
             return []
         }

@@ -109,8 +109,15 @@ struct SessionFeedbackClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try Self.makeRequestBody(topic: topic, transcript: transcript)
 
+        // 文章が途切れる不具合の調査ログ（docs/plans/feedback-truncated.md Phase 1）。
+        // 生成は 1 セッションに 1 回なので、生の応答まで含めて残す
+        let transcriptLines = transcript.isEmpty ? 0 : transcript.split(separator: "\n").count
+        DiagnosticsLog.record(
+            "feedback: 生成開始 topic=\(topic) transcript=\(transcript.count)字/\(transcriptLines)行")
+
         let (bytes, response) = try await Self.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
+            DiagnosticsLog.record("!! feedback: HTTP 応答が不正")
             throw SessionFeedbackError.invalidResponse
         }
         guard http.statusCode == 200 else {
@@ -119,17 +126,21 @@ struct SessionFeedbackClient: Sendable {
                 body += line
                 if body.count > 2000 { break }
             }
+            DiagnosticsLog.record(
+                "!! feedback: HTTP \(http.statusCode) \(DiagnosticsSnippet.make(body, limit: 500))")
             throw SessionFeedbackError.httpError(statusCode: http.statusCode, body: body)
         }
 
         var text = ""
         var stopReason: String?
         var tokenUsage = ClaudeTokenUsage()
+        var deltaCount = 0
         for try await line in bytes.lines {
             for event in try ClaudeSSE.parse(line: line) {
                 switch event {
                 case .textDelta(let delta):
                     text += delta
+                    deltaCount += 1
                 case .messageStopped(let reason):
                     stopReason = reason
                 case .usageUpdated(let usage):
@@ -137,7 +148,25 @@ struct SessionFeedbackClient: Sendable {
                 }
             }
         }
-        let feedback = try Self.parseResult(text: text, stopReason: stopReason)
+        DiagnosticsLog.record(
+            "feedback: SSE 完了 stop=\(stopReason ?? "-") deltas=\(deltaCount) text=\(text.count)字 "
+            + "in=\(tokenUsage.inputTokens.map(String.init) ?? "-") "
+            + "out=\(tokenUsage.outputTokens.map(String.init) ?? "-")")
+        // 生の出力（= 途切れが API から届いた時点で起きているのか、
+        // 手前の SSE 処理で欠けたのかを切り分ける決め手）
+        DiagnosticsLog.record("feedback: 生の出力 \(DiagnosticsSnippet.make(text, limit: 4000))")
+
+        let feedback: SessionFeedback
+        do {
+            feedback = try Self.parseResult(text: text, stopReason: stopReason)
+        } catch {
+            DiagnosticsLog.record(
+                "!! feedback: 応答を解釈できず失敗 \(error.localizedDescription) stop=\(stopReason ?? "-")")
+            throw error
+        }
+        DiagnosticsLog.record(
+            "feedback: 解釈 OK summary=\(feedback.summary.count)字 "
+            + "corrections=\(feedback.corrections.count) phrases=\(feedback.tryPhrases.count)")
         let usage: AIUsageEvent? = tokenUsage.isEmpty ? nil : AIUsageEvent(
             provider: .anthropic,
             model: "claude-opus-5",
