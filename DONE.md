@@ -1,5 +1,19 @@
 # DONE
 
+- 2026-07-28 イヤフォン（AirPods 等）で動くようにした [plan](docs/plans/archive/earphone-audio-route.md)
+  - 実機で AirPods を繋いで会話すると、**AI の読み上げが AirPods から出ず内蔵スピーカーから鳴っていた**。イヤフォンで練習できないと外出先や家族のいる場所で使えず、発話量を稼ぐという第一目的に直接効く
+  - 原因は `iPhoneOS26.5.sdk/AVAudioSessionTypes.h` を読んで確定した。設定は `.playAndRecord` / `mode: .voiceChat` / `options: [.defaultToSpeaker]` で、**Bluetooth の「出力」が有効になる経路がひとつも無かった**
+    - `mode: .voiceChat` は「side effect of setting `AllowBluetoothHFP`」＝ HFP が**入力**の候補として現れるだけ。PlayAndRecord での `AllowBluetoothHFP` はヘッダに「available route **for input**, while playing through the **category-appropriate output**」と明記されている
+    - `AllowBluetoothA2DP` は未設定で、PlayAndRecord では「defaults to **false**」＝ Bluetooth の**出力**ポートが候補にすら現れない
+    - `.defaultToSpeaker` は「routing to **Speaker** (instead of Receiver)」で、そのカテゴリ既定の出力＝内蔵スピーカーに固定する。「入力は AirPods・出力は内蔵スピーカー」という観測とちょうど一致した
+  - **`.defaultToSpeaker` を静的オプションから外し、動的なオーバーライドに置き換えた**。「出力が内蔵レシーバー（受話口）だけのとき」に限って `overrideOutputAudioPort(.speaker)` し、イヤフォン・Bluetooth・AirPlay があれば OS が選んだ経路に任せる
+  - `Voice/AudioRoutePolicy.swift`（新規）にオプション定義（`.allowBluetoothHFP` / `.allowBluetoothA2DP` / `.allowAirPlay`）と判定を置いた。判定は純関数 `needsSpeakerOverride(outputPortTypes:)` なので**ハードウェア無しでテストできる**。`.allowBluetoothHFP` は `.voiceChat` で暗黙に立つが依存を明示するために書いている
+  - `.allowBluetoothA2DP` を足したのはマイクを持たない Bluetooth ヘッドホン / スピーカーのため。AirPods のような HFP / A2DP 両対応機はヘッダ記載どおり **HFP が優先**されるので「マイクも AirPods」という望ましい形は崩れない。音質は HFP（AirPods は mSBC 16kHz）に落ちるが、**マイクとの同時使用が必須**な以上避けられない（A2DP を選ぶとマイクが内蔵に戻り口元から離れる）
+  - `TurnBasedVoiceSession` に `applyOutputRoute(context:)` を追加し、**開始（`setActive` 直後）/ 再開（`resume`）/ 経路変更**の 3 点で再評価する。`overrideOutputAudioPort` 自身が `.override` 理由の経路変更を発火するため、`.override` では再評価せず、直近の適用値（`currentOutputOverride`）と同じなら呼ばない（往復を断つ）。I/O 再起動の条件（`.oldDeviceUnavailable` / `.newDeviceAvailable`）は変えていない
+  - 経路が見えないと実機で「鳴らない」以上の情報が取れなかったので、現在の入出力ポート（種別 + 名前）とサンプルレートを診断ログと会話ログへ 1 行残すようにした（例: `route: 開始 出力=Speaker(Speaker) 入力=なし 48000Hz`）。シミュレータ経路（`.playback`）でも記録だけは行う
+  - `CLAUDE.md`「音声レイヤの方針」に「出力経路に `.defaultToSpeaker` を使わない」を決定として追記した
+  - `AudioRoutePolicyTests` 10 件追加・全 186 件パス。シミュレータ E2E で会話フローに退行が無いことと `route:` 行が残ることを確認。**実機で AirPods から鳴ることを確認済み**（Bluetooth の経路はシミュレータで再現できないため実機確認が必須だった）
+
 - 2026-07-27 トピックカードの固定候補を「話しかける」にした（最初のターンを学習者から） [plan](docs/plans/archive/learner-first-topic.md)
   - 旧「フリートーク」は選んでも `[New topic: フリートーク]` が送られて AI（Chobi / Naruko）が口火を切るため、「話す内容が決まっていないだけ」で開始のしかたは生成トピックと同じだった。発話量を稼ぐという第一目的に対して「**自分から話しかける・話題を自分で立てる**」練習の導線が無かったので、固定候補を「話しかける」（フック「自分から話しかけてみよう。」）へ置き換え、これを選んだセッションだけ AI の開始ターンを出さず listening のまま学習者の第一声を待つようにした
   - `TurnBasedVoiceSession.Configuration.initialTopic: String?` を `Opening`（`assistantFirst(topic:)` / `learnerFirst` / `resume`）へ置き換え、`nil` = エラー再開という暗黙の区別をやめた

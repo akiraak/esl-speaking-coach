@@ -115,6 +115,8 @@ final class TurnBasedVoiceSession: VoiceSession {
     private var isStopped = false
     private var isMicStreaming = false
     private var isVoiceProcessingActive = true
+    /// 直近に適用した出力オーバーライド。同じ値の再適用（＝余計な経路変更通知）を避けるために持つ
+    private var currentOutputOverride: AVAudioSession.PortOverride = .none
     /// サーバ VAD が発話中と判定している間 true
     private var isUserSpeaking = false
     /// speech_stopped 済みで確定テキスト待ちのセグメント数
@@ -206,6 +208,8 @@ final class TurnBasedVoiceSession: VoiceSession {
             fail("オーディオセッションの設定に失敗: \(error.localizedDescription)")
             return
         }
+        // .playback ではオーバーライドは不要（判定も .none になる）。経路の記録だけ実機と揃える
+        applyOutputRoute(context: "開始")
         #else
         if configuration.voiceInputEnabled {
             guard await AVAudioApplication.requestRecordPermission() else {
@@ -215,13 +219,17 @@ final class TurnBasedVoiceSession: VoiceSession {
         }
         do {
             let audioSession = AVAudioSession.sharedInstance()
+            // `.defaultToSpeaker` は使わない。イヤフォン / Bluetooth があっても出力が内蔵スピーカーへ
+            // 引き寄せられるため（docs/plans/earphone-audio-route.md）。受話口しか無いときだけ
+            // applyOutputRoute() で明示的にスピーカーへ寄せる
             try audioSession.setCategory(
-                .playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker])
+                .playAndRecord, mode: .voiceChat, options: AudioRoutePolicy.categoryOptions)
             try audioSession.setActive(true)
         } catch {
             fail("オーディオセッションの設定に失敗: \(error.localizedDescription)")
             return
         }
+        applyOutputRoute(context: "開始")
         #endif
 
         guard !isStopped else { return }
@@ -805,6 +813,13 @@ final class TurnBasedVoiceSession: VoiceSession {
     private func handleRouteChange(reasonValue: UInt?) {
         guard let reasonValue,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+        // 理由によらず経路の再評価はする（イヤフォン接続時に確実に効かせる）。
+        // ただし自分の overrideOutputAudioPort が発火した .override では再評価しない
+        // （applyOutputRoute → 経路変更 → applyOutputRoute の往復を断つ）
+        if reason != .override {
+            applyOutputRoute(context: "経路変更(\(reason))")
+        }
+        // I/O の再起動は従来どおり抜き差しの 2 理由だけ
         switch reason {
         case .oldDeviceUnavailable:
             restartAudioIO(reason: "出力デバイスが外れました")
@@ -812,6 +827,31 @@ final class TurnBasedVoiceSession: VoiceSession {
             restartAudioIO(reason: "新しいオーディオデバイスが接続されました")
         default:
             break
+        }
+    }
+
+    /// 現在の経路を診断ログ / 会話ログへ残し、必要ならスピーカーへオーバーライドする。
+    /// 受話口しか出力が無いときだけ `.speaker` にし、イヤフォン・Bluetooth があれば OS の選択に任せる
+    /// （docs/plans/earphone-audio-route.md）。
+    private func applyOutputRoute(context: String) {
+        let session = AVAudioSession.sharedInstance()
+        let route = session.currentRoute
+        let summary = AudioRoutePolicy.describe(route, sampleRate: session.sampleRate)
+        DiagnosticsLog.record("route: \(context) \(summary)")
+        eventContinuation.yield(.info("オーディオ経路: \(summary)"))
+
+        let desired: AVAudioSession.PortOverride =
+            AudioRoutePolicy.needsSpeakerOverride(
+                outputPortTypes: route.outputs.map(\.portType)) ? .speaker : .none
+        // 望む値が今と同じなら呼ばない（余計な .override 通知と経路の作り直しを避ける）
+        guard desired != currentOutputOverride else { return }
+        do {
+            try session.overrideOutputAudioPort(desired)
+            currentOutputOverride = desired
+            DiagnosticsLog.record(
+                "route: 出力を \(desired == .speaker ? "スピーカー" : "既定") へ切り替えた")
+        } catch {
+            DiagnosticsLog.record("!! route: 出力の切り替えに失敗: \(error.localizedDescription)")
         }
     }
 
@@ -837,6 +877,8 @@ final class TurnBasedVoiceSession: VoiceSession {
                 "オーディオセッションを再開できませんでした（次の機会に再試行）: \(error.localizedDescription)"))
             return
         }
+        // 中断中にイヤフォンを抜き差しされている可能性があるので経路を評価し直す
+        applyOutputRoute(context: "再開")
         do {
             try speaker.prepare()
         } catch {
