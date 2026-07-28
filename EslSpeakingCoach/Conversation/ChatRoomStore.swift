@@ -101,6 +101,9 @@ final class ChatRoomStore {
     /// サンプリング時に除外する直近ジャンルの件数（カタログが尽きない範囲に留める）
     static let recentGenreLimit = 8
 
+    /// トピックカードに出す生成候補の件数（別枠のフリートークは含まない）
+    static let topicCandidateCount = 3
+
     private static let inputModeKey = "chatRoomInputMode"
     private static let translationVisibleKey = "chatRoomTranslationVisible"
     /// 1 リクエストで訳す発話数の上限（並列にはせず、このチャンクを順に投げる）
@@ -147,6 +150,9 @@ final class ChatRoomStore {
     private var recentTopicTitles: [String] = []
     /// 多様性のために避ける直近ジャンル（起動時に復元。カタログが尽きない範囲で 8 件）
     private var recentTopicGenres: [String] = []
+    /// 次のトピックカードへ持ち越す候補（今回のセッションで選ばなかったぶん）。
+    /// メモリ上のみ = 再起動したら持ち越し無しで 3 件生成に戻る
+    private var carryOverCandidates: [TopicCandidate] = []
     /// 現在セッションの開始時に読み込んだ記憶ノート（エラー再開の rebuildHistory でも同じものを使う）
     private var activeMemoryNote: String?
     /// 翻訳の生成対象（タイムライン末尾のセッション区切り以降の発話 ID）。
@@ -158,6 +164,8 @@ final class ChatRoomStore {
     private var isFlushingTranslations = false
     #if DEBUG
     private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
+    /// -start-from-card は最初のカードでだけ発火させる
+    private var didAutoStartFromCard = false
     #endif
 
     init(container: ModelContainer = AppModelContainer.shared) {
@@ -222,15 +230,20 @@ final class ChatRoomStore {
     // MARK: - トピックカード
 
     /// 初回起動時とセッション終了直後に自動投稿する。
+    /// 直前のセッションを始めたカードの未使用候補は持ち越し、生成は補充ぶんの 1 件だけにする
+    /// （docs/plans/topic-card-carry-over.md）。持ち越しが無ければ従来どおり 3 件生成する。
     private func postTopicCard() {
         var card = TopicCard()
+        card.candidates = carryOverCandidates
         card.isLoading = true
         let cardID = card.id
+        let carried = carryOverCandidates
+        carryOverCandidates = []
         appendItem(.topicCard(card))
-        Task { await fillTopicCard(cardID: cardID, excluding: []) }
+        Task { await fillTopicCard(cardID: cardID, carryOver: carried) }
     }
 
-    /// 「🔄 他の候補」。表示中の候補も除外リストに加えて同カードを差し替える。
+    /// 「🔄 他の候補」。表示中の候補も除外リストに加えて全件を差し替える。
     func regenerateTopics(cardID: UUID) {
         guard let card = findCard(cardID), !card.isUsed, !card.isLoading else { return }
         let shownTitles = card.candidates.map(\.title)
@@ -238,10 +251,20 @@ final class ChatRoomStore {
             $0.isLoading = true
             $0.errorText = nil
         }
-        Task { await fillTopicCard(cardID: cardID, excluding: shownTitles) }
+        Task {
+            await fillTopicCard(cardID: cardID, carryOver: [], excludingTitles: shownTitles)
+        }
     }
 
-    private func fillTopicCard(cardID: UUID, excluding extraTitles: [String]) async {
+    /// カードの候補を埋める。carryOver があるぶんだけ生成件数を減らし、後ろに足す。
+    private func fillTopicCard(
+        cardID: UUID, carryOver: [TopicCandidate], excludingTitles extraTitles: [String] = []
+    ) async {
+        let missing = max(0, Self.topicCandidateCount - carryOver.count)
+        guard missing > 0 else {
+            updateCard(cardID) { $0.isLoading = false }
+            return
+        }
         guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else {
             updateCard(cardID) {
                 $0.isLoading = false
@@ -249,28 +272,68 @@ final class ChatRoomStore {
             }
             return
         }
-        // 🔄 のたびに引き直すので、同じカードでもジャンル・話し方の組み合わせが入れ替わる
+        // 🔄 のたびに引き直すので、同じカードでもジャンル・話し方の組み合わせが入れ替わる。
+        // 持ち越しと同じジャンルが並ばないよう、その genre も除外に足す
         var rng = SystemRandomNumberGenerator()
         let assignments = TopicAssignmentSampler.sample(
-            excludingGenreIDs: recentTopicGenres, using: &rng)
+            count: missing,
+            excludingGenreIDs: recentTopicGenres + carryOver.compactMap(\.genre),
+            using: &rng)
         do {
             let (topics, usage) = try await TopicSuggestionClient().suggestTopics(
-                apiKey: apiKey, recentTitles: recentTopicTitles + extraTitles,
+                apiKey: apiKey,
+                recentTitles: recentTopicTitles + extraTitles + carryOver.map(\.title),
                 assignments: assignments)
             if let usage {
                 usageStore.record(usage, sessionID: nil)
             }
             updateCard(cardID) {
                 $0.isLoading = false
-                $0.candidates = topics
+                // 生成を待つ間に持ち越し候補が選ばれていたら、そのカードには足さない
+                guard !$0.isUsed else { return }
+                $0.candidates = Self.mergedCandidates(carryOver: carryOver, generated: topics)
                 $0.errorText = nil
             }
+            #if DEBUG
+            // 最初の 1 枚だけ（終了後のカードまで自動で始めると持ち越しの確認ができない）
+            if DebugLaunchArguments.shouldStartFromTopicCard, !didAutoStartFromCard,
+               session == nil, let candidate = findCard(cardID)?.candidates.first {
+                didAutoStartFromCard = true
+                startSession(topic: candidate.title, fromCard: cardID)
+            }
+            #endif
         } catch {
             updateCard(cardID) {
+                // 生成に失敗しても持ち越しは残す（カードが空にならない）
                 $0.isLoading = false
+                guard !$0.isUsed else { return }
                 $0.errorText = "候補の生成に失敗しました: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// 持ち越しの後ろに生成ぶんを足す（タイトル重複は落とし、上限 `topicCandidateCount` まで）。
+    static func mergedCandidates(
+        carryOver: [TopicCandidate], generated: [TopicCandidate]
+    ) -> [TopicCandidate] {
+        var merged = carryOver
+        var seen = Set(carryOver.map(\.title))
+        for candidate in generated where !seen.contains(candidate.title) {
+            merged.append(candidate)
+            seen.insert(candidate.title)
+        }
+        return Array(merged.prefix(topicCandidateCount))
+    }
+
+    /// セッション開始で消費されなかった候補（= 次のカードへ持ち越すぶん）。
+    /// 自作トピック・フリートークでは何も消費されないので先頭から詰める。
+    /// 常に「持ち越し + 生成 1 件」の形にするため `topicCandidateCount - 1` 件までに切る。
+    static func carryOverCandidates(
+        from card: TopicCard?, selectedTitle: String
+    ) -> [TopicCandidate] {
+        guard let card else { return [] }
+        let remaining = card.candidates.filter { $0.title != selectedTitle }
+        return Array(remaining.prefix(topicCandidateCount - 1))
     }
 
     private func findCard(_ cardID: UUID) -> TopicCard? {
@@ -301,6 +364,9 @@ final class ChatRoomStore {
             .candidates.first { $0.title == trimmed }?
             .genre
             .flatMap { TopicCatalog.genre(id: $0)?.id }
+        // 選ばなかった候補は次のカードへ持ち越す（生成は補充の 1 件だけで済む）
+        carryOverCandidates = Self.carryOverCandidates(
+            from: cardID.flatMap(findCard), selectedTitle: trimmed)
         // 未使用のカードはすべてグレーアウトして履歴に残す（選んだピルのハイライトは該当カードのみ）
         for index in timeline.indices {
             guard case .topicCard(var card) = timeline[index], !card.isUsed else { continue }

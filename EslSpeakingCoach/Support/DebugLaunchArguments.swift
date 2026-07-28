@@ -28,6 +28,12 @@ enum DebugLaunchArguments {
         ProcessInfo.processInfo.arguments.contains("-start-conversation")
     }
 
+    /// トピックカードの候補が揃ったら 1 件目を選んで開始する。
+    /// カード経由でしか通らない導線（候補の持ち越し）をシミュレータで確認するため。
+    static var shouldStartFromTopicCard: Bool {
+        ProcessInfo.processInfo.arguments.contains("-start-from-card")
+    }
+
     /// セッションが listening になるたびに、指定順で 1 つずつ user ターンとして自動送信する。
     /// 複数指定で複数ターンの会話を自動再現できる（フィードバック生成の E2E 確認用）。
     /// 例: -start-conversation -send-text "Hello" -send-text "Goodbye, see you!"

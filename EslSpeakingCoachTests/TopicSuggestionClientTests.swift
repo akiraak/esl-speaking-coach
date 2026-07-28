@@ -52,6 +52,27 @@ final class TopicSuggestionClientTests: XCTestCase {
             """)
     }
 
+    /// 補充ぶんの 1 件だけを頼むリクエスト（セッション終了後の持ち越し + 1 件生成）。
+    /// 生成件数は割り当ての件数で決まる。
+    func testRequestBodyWithSingleAssignment() throws {
+        let data = try TopicSuggestionClient.makeRequestBody(
+            recentTitles: ["朝のルーティン"], assignments: [assignments[0]])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+        XCTAssertEqual(
+            messages[0]["content"] as? String,
+            """
+            Recent topics: 朝のルーティン
+
+            Assignments:
+            1. genre_id: mishaps | genre: mishaps | angle: recall a past experience | difficulty: easy
+            """)
+        // system prompt が 3 件固定を要求していないこと（1 件補充が壊れる）
+        let system = try XCTUnwrap(json["system"] as? String)
+        XCTAssertFalse(system.contains("exactly three"))
+        XCTAssertTrue(system.contains("one topic candidate per assignment"))
+    }
+
     func testRequestBodyWithNoRecentTopics() throws {
         let data = try TopicSuggestionClient.makeRequestBody(
             recentTitles: [], assignments: [])

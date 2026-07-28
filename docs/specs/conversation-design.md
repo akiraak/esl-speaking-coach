@@ -89,11 +89,16 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 
 ## トピック生成
 
-- 会話とは別の呼び出し。`claude-sonnet-5` / 非ストリーミング / `effort: low` / structured outputs（付録 B のスキーマ）で候補 3 件を生成
+- 会話とは別の呼び出し。`claude-sonnet-5` / 非ストリーミング / `effort: low` / structured outputs（付録 B のスキーマ）で候補を生成する。**生成件数は user メッセージの割り当ての件数に従う**（カードに出す候補は常に 3 件 + フリートーク）
 - 各候補は **日本語タイトル（4〜12 文字）+ 日本語フック 1 文（20 文字以内）**。会話は英語だがカードは一目で選べることを優先する。トピックカードのピルにはタイトルを表示し、フック文を添える
 - 「フリートーク」は生成せず、アプリ側で固定候補として常に追加する
-- **呼び出しタイミング**: 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時（screen-layout の決定どおり）
-- **重複回避**: user メッセージに直近トピックのタイトル一覧を渡す（永続化前は同一起動内のメモリ、永続化後は直近 20 件程度）。🔄 再生成時は表示中の候補タイトルも除外リストに加える
+- **呼び出しタイミングと件数**
+  | 契機 | 生成件数 |
+  | --- | --- |
+  | 初回起動時 | 3 件 |
+  | セッション終了直後 | **1 件**（残り 2 件は前のカードから持ち越す。下記） |
+  | 「🔄 他の候補」タップ時 | 3 件（表示中の 3 件をすべて入れ替える） |
+- **重複回避**: user メッセージに直近トピックのタイトル一覧を渡す（永続化前は同一起動内のメモリ、永続化後は直近 20 件程度）。🔄 再生成時は表示中の候補タイトルも、補充生成時は持ち越し候補のタイトルも除外リストに加える
 
 ### 多様性の仕組み（2026-07-26 追加）
 
@@ -105,6 +110,17 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 - **同ジャンル連発の抑止**: 直近 8 セッションで使ったジャンルはサンプリングから除外する。除外しきって候補が足りなくなる場合はリセットして全件から引く
 - ジャンルは `ChatSessionRecord.topicGenre`（ジャンル id）に永続化する。応答スキーマに `genre` を持たせ、モデルが実際に使った割り当てを受け取る。自作トピック・フリートークは `nil`（除外対象にしない）
 - 記憶ノートから学習者の興味を種にする案は、同じ興味へ収束して単調さが悪化しうるため採らない
+
+### 候補の持ち越し（2026-07-27 追加）
+
+選ばなかった候補は「話してもよかった」候補なので、毎回 3 件を作り直さず**やった 1 件だけを落として持ち越す**。
+
+- セッション終了後のカード = **前カードの未使用候補（最大 2 件）+ 新規生成 1 件**
+- 自作トピック・フリートークで始めた場合は候補が消費されないので、表示順の先頭 2 件を持ち越す（生成は必ず 1 件）
+- 持ち越しのタイトルは新規 1 件の除外リストへ、持ち越しのジャンルはサンプラーの除外ジャンルへ渡す（同ジャンルが並ばないように）
+- 生成が失敗しても持ち越しは残す（カードが空にならない）。生成待ちの間も持ち越し 2 件は選べる状態で表示する
+- 持ち越しはメモリ上のみ。アプリを再起動したら持ち越し無し = 3 件生成に戻る
+- タイムライン上の過去カードはこれまでどおりグレーアウトして残す（履歴として読めるため）
 
 ## 会話の翻訳
 
@@ -237,7 +253,7 @@ Remember: short turns, exactly one question every turn, English only, no teachin
 system prompt（固定英文）:
 
 ```
-You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese adult learner practices spoken English with two AI friends. Generate exactly three topic candidates the learner can pick from. The conversation itself happens in English, but the learner picks a topic from a card before speaking, so write title and hook in natural Japanese the learner can grasp at a glance.
+You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese adult learner practices spoken English with two AI friends. The user message lists assignments; generate exactly one topic candidate per assignment, in the same order (sometimes a single candidate is requested to refill a card, sometimes a full set of three). The conversation itself happens in English, but the learner picks a topic from a card before speaking, so write title and hook in natural Japanese the learner can grasp at a glance.
 
 Each request assigns every candidate a genre, a speaking angle, and a difficulty. Follow the assignments: candidate 1 uses assignment 1, and so on. The genre says what the topic is about; the angle says what the learner will be doing with English while talking about it (recalling, comparing, imagining, planning ...). Two topics in the same genre must feel different when the angle differs.
 
@@ -249,7 +265,8 @@ Rules:
 - genre: echo the genre_id of the assignment you used, verbatim.
 ```
 
-user メッセージ（1 行目は直近トピックのタイトルをカンマ区切り。🔄 時は表示中候補も含める）:
+user メッセージ（1 行目は直近トピックのタイトルをカンマ区切り。🔄 時は表示中候補、補充生成時は持ち越し候補も含める。
+Assignments の行数がそのまま生成件数になる = 補充生成では 1 行だけ載せる）:
 
 ```
 Recent topics: 友達に教えたいコツ, もしも無人島旅行

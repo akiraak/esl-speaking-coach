@@ -34,7 +34,9 @@ enum TopicSuggestionError: Error, LocalizedError {
     }
 }
 
-/// 会話とは別の軽量呼び出しでトピック候補 3 件を生成する（conversation-design.md「トピック生成」）。
+/// 会話とは別の軽量呼び出しでトピック候補を生成する（conversation-design.md「トピック生成」）。
+/// 生成件数は渡した割り当て（`assignments`）の件数に従う
+/// （初回起動・🔄 は 3 件、セッション終了後の補充は 1 件。docs/plans/topic-card-carry-over.md）。
 /// claude-sonnet-5 / 非ストリーミング / effort low / output_config.format の structured outputs。
 /// 「フリートーク」は生成せず、アプリ側で固定候補として追加する。
 struct TopicSuggestionClient: Sendable {
@@ -43,10 +45,11 @@ struct TopicSuggestionClient: Sendable {
     /// システムプロンプト（固定英文。付録 B）。
     static let systemPrompt = """
     You generate conversation topic candidates for "ESL Group", a voice chat app where a Japanese \
-    adult learner practices spoken English with two AI friends. Generate exactly three topic \
-    candidates the learner can pick from. The conversation itself happens in English, but the \
-    learner picks a topic from a card before speaking, so write title and hook in natural Japanese \
-    the learner can grasp at a glance.
+    adult learner practices spoken English with two AI friends. The user message lists assignments; \
+    generate exactly one topic candidate per assignment, in the same order (sometimes a single \
+    candidate is requested to refill a card, sometimes a full set of three). The conversation \
+    itself happens in English, but the learner picks a topic from a card before speaking, so write \
+    title and hook in natural Japanese the learner can grasp at a glance.
 
     Each request assigns every candidate a genre, a speaking angle, and a difficulty. Follow the \
     assignments: candidate 1 uses assignment 1, and so on. The genre says what the topic is about; \
@@ -73,7 +76,8 @@ struct TopicSuggestionClient: Sendable {
         return URLSession(configuration: configuration)
     }()
 
-    /// 候補 3 件を生成する。recentTitles には重複回避のため直近トピック + 表示中候補のタイトルを渡す。
+    /// 割り当ての件数ぶん候補を生成する。
+    /// recentTitles には重複回避のため直近トピック + 表示中 / 持ち越し候補のタイトルを渡す。
     /// assignments はアプリ側でサンプリングしたジャンル × 話し方 × 難易度の割り当て。
     /// usage は非ストリーミング応答の usage フィールド（取れなければ nil）。
     func suggestTopics(
