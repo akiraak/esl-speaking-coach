@@ -71,14 +71,6 @@ enum PracticeMode: String, Sendable, CaseIterable {
         }
     }
 
-    /// 切り替え先（2 値なのでヘッダのピルはメニューを出さずトグルする）。
-    var toggled: PracticeMode {
-        switch self {
-        case .conversation: return .word
-        case .word: return .conversation
-        }
-    }
-
     /// 永続化した値の復元（未知・未保存は会話モード）。
     init(storedValue: String?) {
         self = storedValue.flatMap(PracticeMode.init(rawValue:)) ?? .conversation

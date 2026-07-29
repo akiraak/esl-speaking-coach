@@ -103,15 +103,26 @@ struct ChatRoomView: View {
                 .ignoresSafeArea(edges: .top))
     }
 
-    /// 練習モード（会話 / 単語）のトグル。2 値なのでメニューは出さずタップで入れ替える。
+    /// 練習モード（会話 / 単語）の選択。タップで両方を並べて出し、選んだほうへ切り替える
+    /// （押すまで何になるか分からないトグルより、開いて選ぶほうが分かりやすい）。
     /// セッション中・エラー再開待ちは無効（会話の途中でキャラの役割が変わると破綻するため）。
     private var modePill: some View {
-        Button {
-            store.setPracticeMode(store.practiceMode.toggled)
+        Menu {
+            // インラインの Picker にすると現在のモードにチェックが付く（印を自前で描かない）
+            Picker("練習モード", selection: practiceModeSelection) {
+                ForEach(PracticeMode.allCases, id: \.self) { mode in
+                    Label(mode.displayName, systemImage: mode.symbolName)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.inline)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: store.practiceMode.symbolName)
                 Text(store.practiceMode.displayName)
+                // 押すとメニューが開くことを見た目で示す
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.bold))
             }
             .font(.caption.weight(.bold))
             .foregroundStyle(ChatTheme.topicPillSelectedText)
@@ -120,11 +131,20 @@ struct ChatRoomView: View {
             .background(ChatTheme.topicPill, in: Capsule())
             .contentShape(Capsule())
         }
+        .menuStyle(.button)
         .buttonStyle(.plain)
         .disabled(!store.canChangePracticeMode)
         .opacity(store.canChangePracticeMode ? 1 : 0.45)
         .accessibilityLabel("練習モード: \(store.practiceMode.displayName)")
-        .accessibilityHint("タップで会話 / 単語を切り替えます")
+        .accessibilityHint("タップで会話 / 単語を選びます")
+    }
+
+    /// 同じモードを選んだときは setPracticeMode 側の guard で何も起きない
+    /// （カードの差し替えも走らない）。
+    private var practiceModeSelection: Binding<PracticeMode> {
+        Binding(
+            get: { store.practiceMode },
+            set: { store.setPracticeMode($0) })
     }
 
     // MARK: - タイムライン

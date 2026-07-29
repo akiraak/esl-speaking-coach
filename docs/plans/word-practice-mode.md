@@ -83,6 +83,8 @@ enum PracticeMode: String, Sendable, CaseIterable {
 ```
 
 - タップで `.conversation` ⇄ `.word` をトグルする（2 値なのでメニューは出さない）
+  - **2026-07-28 変更**: タップしたら 2 つを並べて選ぶ形にした（押すまで何になるか
+    分からないため）。`docs/plans/practice-mode-picker.md`
 - **セッション中は無効**（薄く表示・タップ不可）。会話の途中でキャラの役割が変わるのは破綻するため。
   同じ理由でエラー再開待ち（`canResumeAfterFailure`）の間も無効にする
 - 切替時の副作用は「**末尾の未使用カードを現モードのカードに差し替える**」だけ。

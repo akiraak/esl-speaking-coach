@@ -20,9 +20,9 @@ final class PracticeModeTests: XCTestCase {
         XCTAssertEqual(PracticeMode(storedValue: "phrase"), .conversation)
     }
 
-    func testToggleSwapsBetweenTwoModes() {
-        XCTAssertEqual(PracticeMode.conversation.toggled, .word)
-        XCTAssertEqual(PracticeMode.word.toggled, .conversation)
+    /// ヘッダのメニューは allCases をそのまま並べる（2 値・並び順は会話 → 単語）。
+    func testAllCasesOrder() {
+        XCTAssertEqual(PracticeMode.allCases, [.conversation, .word])
     }
 
     /// 単語モードは終了ボタンだけで終わる（goodbye の [end] では終わらせない）。
