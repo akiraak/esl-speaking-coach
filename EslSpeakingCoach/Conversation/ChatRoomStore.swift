@@ -52,9 +52,13 @@ final class ChatRoomStore {
 
     struct TopicCard: Identifiable {
         let id = UUID()
-        /// 投稿時の練習モード。単語モードのカードは候補も 🔄 も持たず、入力ボタンだけを出す
+        /// 投稿時の練習モード。単語モードのカードは生成候補も 🔄 も持たず、
+        /// 前に練習した語のピル（`wordSuggestions`）と入力ボタンだけを出す
         var mode: PracticeMode = .conversation
         var candidates: [TopicCandidate] = []
+        /// 単語モードのカードに出す「前に練習した語」（新しい順・重複除去済み）。
+        /// 生成はせず履歴から引くだけなので、投稿時に確定して以後は変わらない
+        var wordSuggestions: [String] = []
         var isLoading = false
         var errorText: String?
         /// このカードから選んだトピック（選択済みピルのハイライト用）
@@ -115,6 +119,11 @@ final class ChatRoomStore {
 
     /// トピックカードに出す生成候補の件数（別枠の固定候補「話しかける」は含まない）
     static let topicCandidateCount = 3
+
+    /// 単語カードに出す「前に練習した語」の件数（多すぎるとカードが縦に伸びる）
+    static let wordSuggestionCount = 6
+    /// 重複を畳む前に履歴から読む単語セッションの件数（同じ語を繰り返し練習しても上限まで埋まるよう多めに取る）
+    static let wordSuggestionScanLimit = 40
 
     private static let inputModeKey = "chatRoomInputMode"
     private static let practiceModeKey = "chatRoomPracticeMode"
@@ -272,7 +281,20 @@ final class ChatRoomStore {
     /// 単語モードでは候補を生成しない（練習語はユーザーが入力する）ので入力ボタンだけのカードを出す。
     private func postTopicCard() {
         guard practiceMode == .conversation else {
-            appendItem(.topicCard(TopicCard(mode: .word)))
+            var card = TopicCard(mode: .word)
+            card.wordSuggestions = Self.practicedWordSuggestions(
+                from: historyStore.recentWords(limit: Self.wordSuggestionScanLimit))
+            let wordCardID = card.id
+            appendItem(.topicCard(card))
+            #if DEBUG
+            // -start-from-card は単語カードでは「前に練習した語」の 1 件目をタップした扱いにする
+            // （ピルからの再練習を E2E で通すため。最初の 1 枚だけ）
+            if DebugLaunchArguments.shouldStartFromTopicCard, !didAutoStartFromCard,
+               session == nil, let word = card.wordSuggestions.first {
+                didAutoStartFromCard = true
+                startSession(topic: word, fromCard: wordCardID)
+            }
+            #endif
             return
         }
         var card = TopicCard()
@@ -377,6 +399,32 @@ final class ChatRoomStore {
         guard let card else { return [] }
         let remaining = card.candidates.filter { $0.title != selectedTitle }
         return Array(remaining.prefix(topicCandidateCount - 1))
+    }
+
+    /// 単語カードに出す「前に練習した語」（純関数）。
+    /// 入力は新しい順の練習語（`ChatHistoryStore.recentWords`）、出力は表示するピル。
+    /// 同じ語を何度練習しても履歴には都度残るので、正規化キーで畳んで**新しい方の表記**だけを残す。
+    static func practicedWordSuggestions(
+        from recentWords: [String], limit: Int = wordSuggestionCount
+    ) -> [String] {
+        guard limit > 0 else { return [] }
+        var seen = Set<String>()
+        var suggestions: [String] = []
+        for word in recentWords {
+            let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = normalizedWordKey(trimmed)
+            guard seen.insert(key).inserted else { continue }
+            suggestions.append(trimmed)
+            if suggestions.count >= limit { break }
+        }
+        return suggestions
+    }
+
+    /// 練習語の重複判定キー（小文字化 + 前後空白の除去 + 連続空白の畳み込み）。
+    /// 表記ゆれ（"Get around to" / "get  around to"）を同じ語として扱う。
+    static func normalizedWordKey(_ word: String) -> String {
+        word.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     private func findCard(_ cardID: UUID) -> TopicCard? {

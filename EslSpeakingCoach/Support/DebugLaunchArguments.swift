@@ -31,6 +31,7 @@ enum DebugLaunchArguments {
 
     /// トピックカードの候補が揃ったら 1 件目を選んで開始する。
     /// カード経由でしか通らない導線（候補の持ち越し）をシミュレータで確認するため。
+    /// 単語モードでは「前に練習した語」ピルの 1 件目を選んで開始する（再練習の導線の確認）。
     static var shouldStartFromTopicCard: Bool {
         ProcessInfo.processInfo.arguments.contains("-start-from-card")
     }

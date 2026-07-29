@@ -178,7 +178,8 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(
             store.recentSessions(limit: 10).map(\.mode),
             [.conversation, .word, .conversation, .word])
-        XCTAssertEqual(store.recentWords(limit: 10), ["get around to", "look forward to"])
+        // 単語カードのピルにそのまま並べるので新しい順で返す
+        XCTAssertEqual(store.recentWords(limit: 10), ["look forward to", "get around to"])
         XCTAssertEqual(store.recentWords(limit: 1), ["look forward to"])
         XCTAssertEqual(
             store.recentTopicTitles(limit: 10), ["Morning routines", "Weekend plans"])

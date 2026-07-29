@@ -166,10 +166,11 @@ final class ChatHistoryStore {
         fetchSessions().filter { $0.mode == .conversation }.suffix(limit).map(\.topicTitle)
     }
 
-    /// 単語練習モードで練習した語（古い順・最大 limit 件）。
-    /// 今は管理・参照用で、出題制御（重複回避・復習）には使わない。
+    /// 単語練習モードで練習した語（**新しい順**・最大 limit 件）。
+    /// 単語カードの「前に練習した語」ピルの元データ（docs/plans/vocabulary-continuity.md）。
+    /// 重複除去は `ChatRoomStore.practicedWordSuggestions` で行うので、ここは履歴のまま返す。
     func recentWords(limit: Int) -> [String] {
-        fetchSessions().filter { $0.mode == .word }.suffix(limit).map(\.topicTitle)
+        fetchSessions().reversed().filter { $0.mode == .word }.prefix(limit).map(\.topicTitle)
     }
 
     /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。

@@ -303,10 +303,24 @@ struct TopicCardView: View {
                 .background(
                     ChatTheme.topicPillSelected,
                     in: RoundedRectangle(cornerRadius: 16))
-        } else {
+        } else if card.wordSuggestions.isEmpty {
             Text("練習したい単語や熟語を入力してください（英語）")
                 .font(.caption)
                 .foregroundStyle(ChatTheme.systemText)
+        } else {
+            // 前に練習した語（新しい順）。タップで入力アラートを挟まずそのまま始める
+            // （docs/plans/vocabulary-continuity.md）
+            Text("前に練習した単語（タップでもう一度）")
+                .font(.caption)
+                .foregroundStyle(ChatTheme.systemText)
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 130), spacing: 8, alignment: .leading)],
+                alignment: .leading, spacing: 8
+            ) {
+                ForEach(card.wordSuggestions, id: \.self) { word in
+                    wordPill(word)
+                }
+            }
         }
 
         Button(action: onCustomTopic) {
@@ -317,6 +331,24 @@ struct TopicCardView: View {
         .buttonBorderShape(.capsule)
         .tint(ChatTheme.accent)
         .disabled(card.isUsed)
+    }
+
+    /// 前に練習した語のピル（フックが無いぶんトピック候補より小さく、折り返して並べる）。
+    private func wordPill(_ word: String) -> some View {
+        Button {
+            onSelect(word)
+        } label: {
+            Text(word)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(ChatTheme.aiText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ChatTheme.topicPill, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
     }
 
     private func topicPill(_ candidate: TopicCandidate) -> some View {
