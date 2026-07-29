@@ -179,6 +179,11 @@ final class ChatRoomStore {
     private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
     /// -start-from-card は最初のカードでだけ発火させる
     private var didAutoStartFromCard = false
+    /// -end-session は最初のセッションでだけ発火させる
+    private var didAutoEndSession = false
+    /// AI の開始ターンを待っているあいだは -send-text を送らない
+    /// （STT 接続直後の listening で送ると開始ターンを barge-in で潰してしまう）
+    private var awaitsOpeningTurn = false
     #endif
 
     init(container: ModelContainer = AppModelContainer.shared) {
@@ -210,7 +215,9 @@ final class ChatRoomStore {
         scheduleTranslationFlush()
         postTopicCard()
         #if DEBUG
-        if DebugLaunchArguments.shouldStartConversation {
+        if let word = DebugLaunchArguments.startWord {
+            startSession(topic: word, fromCard: nil)
+        } else if DebugLaunchArguments.shouldStartConversation {
             startSession(topic: Self.talkFirstCandidate.title, fromCard: nil)
         }
         #endif
@@ -224,7 +231,8 @@ final class ChatRoomStore {
         for record in historyStore.recentSessions(limit: 10) {
             appendItem(.sessionDivider(
                 id: UUID(),
-                text: "\(Self.dividerDateText(for: record.startedAt)) \(record.topicTitle)",
+                text: "\(Self.dividerDateText(for: record.startedAt)) "
+                    + Self.dividerLabel(mode: record.mode, title: record.topicTitle),
                 topic: record.topicTitle))
             let messages = record.messages.sorted { $0.orderIndex < $1.orderIndex }
             for message in messages {
@@ -421,13 +429,17 @@ final class ChatRoomStore {
             }
         }
         appendItem(.sessionDivider(
-            id: UUID(), text: "\(Self.dividerDateText(for: Date())) \(trimmed)", topic: trimmed))
+            id: UUID(),
+            text: "\(Self.dividerDateText(for: Date())) \(Self.dividerLabel(mode: practiceMode, title: trimmed))",
+            topic: trimmed))
         let sessionID = UUID()
         activeSessionID = sessionID
-        activeMemoryNote = memoryStore.currentNote()
+        // 単語モードでは記憶ノートを注入しない（更新もしないので対称。Phase 4 でスキップを入れる）
+        activeMemoryNote = practiceMode.injectsMemoryNote ? memoryStore.currentNote() : nil
         historyStore.beginSession(
             id: sessionID, topicTitle: trimmed, topicGenre: genre, mode: practiceMode)
-        if Self.isLearnerFirstTopic(trimmed) {
+        // 単語モードは常に Chobi の導入ターンから始める（学習者ファーストは使わない）
+        if practiceMode == .conversation, Self.isLearnerFirstTopic(trimmed) {
             // AI が黙ったまま listening になるので、待ち受けであることを 1 行だけ伝える
             appendItem(.systemNotice(id: UUID(), text: "自分から話しかけてみよう"))
             launchSession(opening: .learnerFirst, initialHistory: [])
@@ -469,8 +481,11 @@ final class ChatRoomStore {
         var configuration = TurnBasedVoiceSession.Configuration()
         #if DEBUG
         configuration.ttsProvider = DebugLaunchArguments.ttsProviderOverride ?? .gemini
+        // AI から始まるセッションでは、開始ターンの最初の発話が出るまで -send-text を止める
+        if case .assistantFirst = opening { awaitsOpeningTurn = true }
         #endif
         configuration.opening = opening
+        configuration.practiceMode = practiceMode
         configuration.memoryNote = activeMemoryNote
         configuration.initialHistory = initialHistory
         configuration.voiceInputEnabled = inputMode == .voice && !isVoicePaused
@@ -487,6 +502,7 @@ final class ChatRoomStore {
             })
         DiagnosticsLog.record(
             "session: 開始 topic=\(activeTopicTitle ?? "-") opening=\(opening) "
+            + "practice=\(practiceMode.rawValue) "
             + "mode=\(inputMode.rawValue) 再開=\(initialHistory.isEmpty ? "no" : "yes")")
         session = newSession
         isSessionActive = true
@@ -674,6 +690,7 @@ final class ChatRoomStore {
     /// 連続する AI 発話は 1 つのタグ付き台本メッセージへ再直列化する。
     /// 先頭はセッション開始時と同じ合成メッセージ（[Memory: ...] + [New topic: X]）にする。
     /// 学習者ファーストのセッションでは開始時と同じく [Memory: ...] だけ（無ければ何も置かない）。
+    /// 単語モードは開始時と同じく [New word: X] の 1 行だけ（学習者ファーストにはならない）。
     private func rebuildHistory(topic: String) -> [ConversationMessage] {
         var sessionItems: [TimelineItem] = []
         for item in timeline.reversed() {
@@ -681,7 +698,7 @@ final class ChatRoomStore {
             sessionItems.append(item)
         }
         var history: [ConversationMessage] = []
-        if Self.isLearnerFirstTopic(topic) {
+        if practiceMode == .conversation, Self.isLearnerFirstTopic(topic) {
             if let memoryLine = SessionOpeningMessage.composeMemoryOnly(
                 memoryNote: activeMemoryNote)
             {
@@ -690,7 +707,8 @@ final class ChatRoomStore {
         } else {
             history.append(ConversationMessage(
                 role: .user,
-                text: SessionOpeningMessage.compose(topic: topic, memoryNote: activeMemoryNote)))
+                text: SessionOpeningMessage.compose(
+                    mode: practiceMode, topic: topic, memoryNote: activeMemoryNote)))
         }
         var pendingScript: [String] = []
         func flushScript() {
@@ -946,8 +964,14 @@ final class ChatRoomStore {
                 scheduleTranslationFlush()
             }
             #if DEBUG
-            if newState == .listening, !pendingAutoTexts.isEmpty {
-                sendText(pendingAutoTexts.removeFirst())
+            if newState == .listening, !awaitsOpeningTurn {
+                if !pendingAutoTexts.isEmpty {
+                    sendText(pendingAutoTexts.removeFirst())
+                } else if DebugLaunchArguments.shouldEndSession, !didAutoEndSession, session != nil {
+                    // 自動送信ぶんを送り終えた。終了ボタンと同じ導線でセッションを閉じる
+                    didAutoEndSession = true
+                    endSession()
+                }
             }
             #endif
         case .userPartialTranscript(let text):
@@ -958,6 +982,9 @@ final class ChatRoomStore {
             appendItem(.userMessage(UserMessage(id: messageID, text: text)))
             historyStore.appendMessage(id: messageID, speaker: .user, text: text)
         case .assistantUtteranceBegan(let id, let speaker, let text):
+            #if DEBUG
+            awaitsOpeningTurn = false
+            #endif
             appendItem(.aiMessage(AIMessage(id: id, speaker: speaker, text: text)))
             historyStore.appendMessage(id: id, speaker: MessageSpeaker(character: speaker), text: text)
             speakingUtteranceID = id
@@ -1009,6 +1036,14 @@ final class ChatRoomStore {
 
     private func readKey(_ account: String) -> String? {
         (try? KeychainStore().read(account: account)) ?? nil
+    }
+
+    /// セッション区切りの日付以降の文言（単語モードは練習語だと分かるよう `単語:` を前置する）。
+    static func dividerLabel(mode: PracticeMode, title: String) -> String {
+        switch mode {
+        case .conversation: return title
+        case .word: return "単語: \(title)"
+        }
     }
 
     private static func dividerDateText(for date: Date) -> String {

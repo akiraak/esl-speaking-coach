@@ -34,6 +34,24 @@ enum PracticeMode: String, Sendable, CaseIterable {
         }
     }
 
+    /// セッションに渡す system prompt。会話用は 1 文字も変えない（プロンプトキャッシュ維持）。
+    var systemPrompt: String {
+        switch self {
+        case .conversation: return CoachSystemPrompt.text
+        case .word: return WordCoachSystemPrompt.text
+        }
+    }
+
+    /// 開始メッセージに記憶ノート（`[Memory: ...]`）を混ぜるか。
+    /// 単語モードは混ぜない ―― ノートは身の回りの事実を貯めるもので 1 語の練習には効かず、
+    /// 先頭が長くなるぶんレイテンシと料金だけを食うため（更新もしないので対称）。
+    var injectsMemoryNote: Bool {
+        switch self {
+        case .conversation: return true
+        case .word: return false
+        }
+    }
+
     /// 学習者の goodbye（台本の制御行 `[end]`）でセッションを終わらせるか。
     /// 単語モードは終了ボタンだけで終わり、学習者が止めるまで練習を続ける。
     var endsOnGoodbye: Bool {

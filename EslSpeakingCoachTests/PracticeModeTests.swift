@@ -35,4 +35,29 @@ final class PracticeModeTests: XCTestCase {
         XCTAssertEqual(PracticeMode.conversation.openingControlKey, "New topic")
         XCTAssertEqual(PracticeMode.word.openingControlKey, "New word")
     }
+
+    /// 会話用の system prompt は 1 文字も変えない（プロンプトキャッシュを作り直さないため）。
+    func testSystemPromptPerMode() {
+        XCTAssertEqual(PracticeMode.conversation.systemPrompt, CoachSystemPrompt.text)
+        XCTAssertEqual(PracticeMode.word.systemPrompt, WordCoachSystemPrompt.text)
+        XCTAssertNotEqual(PracticeMode.conversation.systemPrompt, PracticeMode.word.systemPrompt)
+    }
+
+    /// 単語モードの system prompt が守るべき前提（キャラの立ち位置と終了の扱い）。
+    func testWordSystemPromptContract() {
+        let text = WordCoachSystemPrompt.text
+        // 出力形式は会話モードと同一（ScriptStreamChunker / TTS を変えないための前提）
+        XCTAssertTrue(text.contains("\"Chobi: \" or \"Naruko: \""))
+        // 練習語は制御メッセージで渡す（プロンプトに可変要素を埋め込まない）
+        XCTAssertTrue(text.contains("[New word: get around to]"))
+        // 自分からは終わらせない = [end] の規定を持たない
+        XCTAssertFalse(text.contains("[end]"))
+        XCTAssertTrue(text.contains("Never end the session yourself."))
+    }
+
+    /// 単語モードは記憶ノートを注入しない（更新もしないので対称）。
+    func testOnlyConversationInjectsMemoryNote() {
+        XCTAssertTrue(PracticeMode.conversation.injectsMemoryNote)
+        XCTAssertFalse(PracticeMode.word.injectsMemoryNote)
+    }
 }

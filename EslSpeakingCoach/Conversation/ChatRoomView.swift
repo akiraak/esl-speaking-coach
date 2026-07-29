@@ -42,7 +42,10 @@ struct ChatRoomView: View {
             #endif
         }
         // ボタンはセッション終了で消えるので、ダイアログはボタンではなく画面側に付ける
-        .alert("このトピックを終了しますか？", isPresented: $isConfirmingEndSession) {
+        .alert(
+            isWordMode ? "この単語を終了しますか？" : "このトピックを終了しますか？",
+            isPresented: $isConfirmingEndSession
+        ) {
             Button("終了する") { store.endSession() }
             Button("キャンセル", role: .cancel) {}
         } message: {
@@ -193,6 +196,7 @@ struct ChatRoomView: View {
                     TimelineBottomBar(
                         isTranslationVisible: store.isTranslationVisible,
                         isSessionActive: isEndSessionButtonVisible,
+                        practiceMode: store.practiceMode,
                         onToggleTranslation: {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 store.setTranslationVisible(!store.isTranslationVisible)
@@ -206,7 +210,8 @@ struct ChatRoomView: View {
         }
     }
 
-    /// 入力アラートの文言の出し分け（カードは常に現在のモードのものなのでモードだけ見る）。
+    /// 入力アラート・終了アラートの文言の出し分け
+    /// （カードは常に現在のモードのもので、セッション中はモードを切り替えられないのでモードだけ見る）。
     private var isWordMode: Bool {
         store.practiceMode == .word
     }

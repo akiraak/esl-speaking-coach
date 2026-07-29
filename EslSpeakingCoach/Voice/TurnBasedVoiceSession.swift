@@ -25,6 +25,8 @@ import UIKit
 /// （記憶ノートがあれば [Memory: ...] だけを履歴へ積んでおく）。
 /// 学習者の goodbye で台本に制御行 [end] が現れたら、closing の読み上げ完了後に
 /// sessionEndDetected を通知する（表示・読み上げはしない）。
+/// 単語モード（Configuration.practiceMode）では [end] を無視して練習を続ける
+/// （終了は下端バーのボタンだけ）。
 ///
 /// 寿命: start〜stop の間は切断・割り込みから自力で復帰する。stop 後の再 start はできない（毎回作り直す）。
 ///
@@ -52,6 +54,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         var geminiTTS = GeminiTTSConfiguration()
         /// ready 後の始まり方（既定は再開 = 開始ターンを起こさない）
         var opening: Opening = .resume
+        /// 練習モード（会話 / 単語）。system prompt・開始の制御メッセージ・[end] の扱いが変わる
+        /// （docs/plans/word-practice-mode.md）
+        var practiceMode: PracticeMode = .conversation
         /// セッション横断の記憶ノート。開始メッセージに [Memory: ...] として合成する
         /// （空なら省略。docs/plans/character-memory.md）
         var memoryNote: String?
@@ -532,6 +537,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             state = .thinking
             metrics = TurnMetricsBuilder()
             appendUserMessage(SessionOpeningMessage.compose(
+                mode: configuration.practiceMode,
                 topic: topic, memoryNote: configuration.memoryNote))
             startClaudeTurn()
         case .learnerFirst:
@@ -573,7 +579,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         turnUtterances = []
         scriptEndDetected = false
         let stream = client.streamReply(
-            apiKey: apiKey, system: CoachSystemPrompt.text, messages: history)
+            apiKey: apiKey, system: configuration.practiceMode.systemPrompt, messages: history)
 
         claudeTask = Task { [weak self] in
             guard let self else { return }
@@ -735,10 +741,15 @@ final class TurnBasedVoiceSession: VoiceSession {
     private func handleTurnFinished() {
         guard state == .thinking || state == .speaking else { return }
         let endDetected = commitAssistantTurn(onlyBegun: false)
-        if endDetected {
+        if endDetected, configuration.practiceMode.endsOnGoodbye {
             // goodbye。呼び出し側が stop() してセッション終了処理（フィードバック → 次トピック）へ進む
             eventContinuation.yield(.sessionEndDetected)
             return
+        }
+        if endDetected {
+            // 単語モードは終了ボタンだけで終わる。プロンプトが誤って [end] を吐いても
+            // 握り潰して練習を続ける（表示・読み上げからは chunker が既に除去済み）
+            eventContinuation.yield(.info("[end] を検知しましたが単語モードのため継続します"))
         }
         state = .listening
         // AI の発話中に確定した user セグメントが残っていれば次のターンを始める

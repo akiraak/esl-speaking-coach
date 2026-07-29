@@ -53,6 +53,22 @@ enum DebugLaunchArguments {
         return texts
     }
 
+    /// 起動時に指定の単語で単語練習セッションを自動開始する（`-practice-mode word` と併用する）。
+    /// 例: -practice-mode word -start-word "get around to"
+    static var startWord: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-start-word"), index + 1 < args.count else {
+            return nil
+        }
+        return args[index + 1]
+    }
+
+    /// -send-text をすべて送り終えたあと、終了ボタンと同じ導線でセッションを終了する。
+    /// 単語モードは goodbye で終わらないため、E2E から終了を起こす手段として要る。
+    static var shouldEndSession: Bool {
+        ProcessInfo.processInfo.arguments.contains("-end-session")
+    }
+
     /// 練習モード指定（保存はせずその起動のあいだだけ上書きする）。
     /// 例: -practice-mode word / -practice-mode conversation
     static var practiceModeOverride: PracticeMode? {

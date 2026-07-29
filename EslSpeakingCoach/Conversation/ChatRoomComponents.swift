@@ -464,6 +464,8 @@ struct FeedbackCardView: View {
 struct TimelineBottomBar: View {
     let isTranslationVisible: Bool
     let isSessionActive: Bool
+    /// 終了ボタンの文言の出し分け（会話 = このトピックを終了 / 単語 = この単語を終了）
+    var practiceMode: PracticeMode = .conversation
     let onToggleTranslation: () -> Void
     let onEndSession: () -> Void
 
@@ -490,7 +492,9 @@ struct TimelineBottomBar: View {
 
             if isSessionActive {
                 Button(action: onEndSession) {
-                    Label("このトピックを終了", systemImage: "flag.checkered")
+                    Label(
+                        practiceMode == .word ? "この単語を終了" : "このトピックを終了",
+                        systemImage: "flag.checkered")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(ChatTheme.userText)
                         .frame(maxWidth: .infinity, minHeight: 44)

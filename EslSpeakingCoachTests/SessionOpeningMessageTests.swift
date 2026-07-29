@@ -31,6 +31,31 @@ final class SessionOpeningMessageTests: XCTestCase {
             "[Memory: - Likes ramen.]\n[New topic: Free talk]")
     }
 
+    // MARK: - 単語モード（docs/plans/word-practice-mode.md）
+
+    /// 練習語は [New word: X] で渡す。
+    func testComposeWordModeUsesNewWordKey() {
+        XCTAssertEqual(
+            SessionOpeningMessage.compose(mode: .word, topic: "get around to", memoryNote: nil),
+            "[New word: get around to]")
+    }
+
+    /// 単語モードには記憶ノートを混ぜない（ノートは 1 語の練習に効かず先頭が長くなるだけ）。
+    func testComposeWordModeOmitsMemoryNote() {
+        XCTAssertEqual(
+            SessionOpeningMessage.compose(
+                mode: .word, topic: "get around to",
+                memoryNote: "About the learner\n- Name is Akira."),
+            "[New word: get around to]")
+    }
+
+    /// mode 省略時は従来どおり会話モード（既存の呼び出しの意味を変えない）。
+    func testComposeDefaultsToConversationMode() {
+        XCTAssertEqual(
+            SessionOpeningMessage.compose(topic: "Free talk", memoryNote: nil),
+            SessionOpeningMessage.compose(mode: .conversation, topic: "Free talk", memoryNote: nil))
+    }
+
     // MARK: - 学習者ファースト（トピックを渡さない開始）
 
     /// 記憶ノートだけを積む。[New topic: ...] が無いので AI の開始ターンは起きない

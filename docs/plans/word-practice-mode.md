@@ -274,12 +274,44 @@ enum PracticeMode: String, Sendable, CaseIterable {
   ロジックは `cardReplacement` の単体テストで押さえてあるが、Phase 5 の実機確認で
   「切替 → カードが入れ替わる / セッション中は無効」を実際に触って確認する
 
-### Phase 3: 単語モードのセッション
+### Phase 3: 単語モードのセッション（完了 2026-07-28）
 
 - `WordCoachSystemPrompt` 追加（付録 A）、`Configuration.practiceMode`、system prompt 差し替え
 - `SessionOpeningMessage.compose(mode:...)` で `[New word: X]`、Memory 未注入
 - `PracticeMode.endsOnGoodbye` による `[end]` 抑止（単語モードは終了ボタンのみ）
 - `rebuildHistory` のモード対応、区切り・終了ボタンの文言
+
+実装メモ:
+
+- `WordCoachSystemPrompt.text` は **2,330 トークン**（`count_tokens` で実測）。
+  キャッシュ最小プレフィックス（`claude-sonnet-5` = 1024）を満たすので `cache_control` は
+  従来どおり付けたまま（`ClaudeMessagesClient` は無条件に付けるので変更なし）
+- 記憶ノートは 2 か所で止めている: `PracticeMode.injectsMemoryNote`（compose 側の保険）と、
+  `startSession` で単語モードのとき `activeMemoryNote` に nil を入れる（そもそも読まない）。
+  後者があるので `rebuildHistory` も自動的に Memory 行なしで組み直る
+- 単語モードは `isLearnerFirstTopic` を見ない（練習語がたまたま「話しかける」でも
+  Chobi の導入ターンから始める）。`rebuildHistory` も同じ条件で揃えた
+- 区切り文言は純関数 `ChatRoomStore.dividerLabel(mode:title:)` に切り出し、
+  起動時の履歴復元（`ChatSessionRecord.mode`）でも同じ表記になるようにした（プラン外）
+- E2E 用に `-start-word "<単語>"` / `-end-session` を追加。あわせて **`-send-text` が
+  AI の開始ターンを barge-in で潰す問題**を直した（STT 接続直後の listening で送っていた）。
+  `awaitsOpeningTurn` を立て、最初の発話が出るまで自動送信を止める（DEBUG のみ）
+
+確認:
+
+- 単体テスト 7 件追加（`PracticeModeTests` に systemPrompt / プロンプトの前提 / injectsMemoryNote、
+  `SessionOpeningMessageTests` に単語モード 3 件、`PracticeModeCardTests` に区切り文言）。
+  XCTest 196 件 + swift-testing 10 件すべてパス
+- シミュレータ E2E（単語）: `-practice-mode word -start-word "get around to" -send-text ... \
+  -send-text "Okay, goodbye! I am tired now." -end-session`
+  → 導入（意味 + 例文）→ Naruko のお手本 → 学習者ターン → 別文脈で使い直し →
+  **goodbye でも終わらず「Before you go, tell me quickly, ...」と質問が続く** →
+  ボタン終了 → フィードバックカード、まで通った。
+  永続化も `mode=word` / `topicTitle=get around to` で確認
+- シミュレータ E2E（会話・退行確認）: goodbye で従来どおり締めて自動終了し、
+  フィードバックまで生成される（`[end]` の分岐を壊していない）
+- **実際に `[end]` が出るケースは未観測**（プロンプト側の「自分から終わらせない」が効いて
+  モデルが吐かなかった）。実装側の抑止は `endsOnGoodbye` の単体テストのみ
 
 ### Phase 4: セッション後
 

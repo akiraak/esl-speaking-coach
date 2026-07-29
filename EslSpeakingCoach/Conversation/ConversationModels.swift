@@ -1,14 +1,21 @@
 import Foundation
 
-/// セッション先頭に置く user 制御メッセージ（[Memory: ...] + [New topic: ...]）の合成。
+/// セッション先頭に置く user 制御メッセージ（[Memory: ...] + [New topic: ...] / [New word: ...]）の合成。
 /// 通常開始（TurnBasedVoiceSession.startOpeningIfNeeded）とエラー後の再開
 /// （ChatRoomStore.rebuildHistory）で同じ形になるようここに集約する。
 enum SessionOpeningMessage {
     /// AI が口火を切る開始（`Opening.assistantFirst`）。
     /// 記憶ノートが空（未生成・空白のみ）のときは Memory 部を省略して [New topic: X] のみ。
-    static func compose(topic: String, memoryNote: String?) -> String {
-        let topicLine = "[New topic: \(topic)]"
-        guard let memoryLine = composeMemoryOnly(memoryNote: memoryNote) else { return topicLine }
+    /// 単語モードは記憶ノートを渡されても混ぜず、常に [New word: X] の 1 行だけになる。
+    static func compose(
+        mode: PracticeMode = .conversation, topic: String, memoryNote: String?
+    ) -> String {
+        let topicLine = "[\(mode.openingControlKey): \(topic)]"
+        guard mode.injectsMemoryNote,
+              let memoryLine = composeMemoryOnly(memoryNote: memoryNote)
+        else {
+            return topicLine
+        }
         return memoryLine + "\n" + topicLine
     }
 

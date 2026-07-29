@@ -10,7 +10,8 @@
     - 実機でのマイグレーション確認は未実施 → Phase 5 へ持ち越し
   - [x] Phase 2: 切替 UI とカード（ヘッダのモードピル / `TopicCard.mode` と単語カード / 入力アラートの文言 / 切替時のカード差し替え）
     - ピルのタップ切替は実機で確認する（simctl でタップできないため未確認）→ Phase 5
-  - [ ] Phase 3: 単語モードのセッション（`WordCoachSystemPrompt` / `Configuration.practiceMode` / `[New word: X]` / `[end]` 抑止 / `rebuildHistory` と文言）
+  - [x] Phase 3: 単語モードのセッション（`WordCoachSystemPrompt` / `Configuration.practiceMode` / `[New word: X]` / `[end]` 抑止 / `rebuildHistory` と文言）
+    - `[end]` が実際に出るケースは未観測（モデルが吐かなかった）→ 実装側の抑止は単体テストのみ
   - [ ] Phase 4: セッション後（フィードバックの `Practice word:` / 記憶ノート更新のスキップ / 管理画面のモード表示）
   - [ ] Phase 5: 検証と後片付け（単体テスト / シミュレータ E2E / 実機確認 / `docs/specs/word-practice.md` / 仕様書更新）
 
