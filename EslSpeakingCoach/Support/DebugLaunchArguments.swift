@@ -53,6 +53,16 @@ enum DebugLaunchArguments {
         return texts
     }
 
+    /// 練習モード指定（保存はせずその起動のあいだだけ上書きする）。
+    /// 例: -practice-mode word / -practice-mode conversation
+    static var practiceModeOverride: PracticeMode? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-practice-mode"), index + 1 < args.count else {
+            return nil
+        }
+        return PracticeMode(rawValue: args[index + 1])
+    }
+
     /// TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai
     static var ttsProviderOverride: TTSProvider? {
         let args = ProcessInfo.processInfo.arguments

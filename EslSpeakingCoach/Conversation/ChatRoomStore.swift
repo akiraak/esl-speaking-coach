@@ -52,6 +52,8 @@ final class ChatRoomStore {
 
     struct TopicCard: Identifiable {
         let id = UUID()
+        /// 投稿時の練習モード。単語モードのカードは候補も 🔄 も持たず、入力ボタンだけを出す
+        var mode: PracticeMode = .conversation
         var candidates: [TopicCandidate] = []
         var isLoading = false
         var errorText: String?
@@ -188,6 +190,12 @@ final class ChatRoomStore {
         // 既定は会話モード
         practiceMode = PracticeMode(
             storedValue: UserDefaults.standard.string(forKey: Self.practiceModeKey))
+        #if DEBUG
+        // シミュレータ確認用の上書き（保存はしない）
+        if let override = DebugLaunchArguments.practiceModeOverride {
+            practiceMode = override
+        }
+        #endif
         // 既定は OFF（会話中の視界を汚さない）
         isTranslationVisible = UserDefaults.standard.bool(forKey: Self.translationVisibleKey)
     }
@@ -243,10 +251,15 @@ final class ChatRoomStore {
 
     // MARK: - トピックカード
 
-    /// 初回起動時とセッション終了直後に自動投稿する。
+    /// 初回起動時・セッション終了直後・モード切替時に自動投稿する。
     /// 直前のセッションを始めたカードの未使用候補は持ち越し、生成は補充ぶんの 1 件だけにする
     /// （docs/plans/topic-card-carry-over.md）。持ち越しが無ければ従来どおり 3 件生成する。
+    /// 単語モードでは候補を生成しない（練習語はユーザーが入力する）ので入力ボタンだけのカードを出す。
     private func postTopicCard() {
+        guard practiceMode == .conversation else {
+            appendItem(.topicCard(TopicCard(mode: .word)))
+            return
+        }
         var card = TopicCard()
         card.candidates = carryOverCandidates
         card.isLoading = true
@@ -259,7 +272,8 @@ final class ChatRoomStore {
 
     /// 「🔄 他の候補」。表示中の候補も除外リストに加えて全件を差し替える。
     func regenerateTopics(cardID: UUID) {
-        guard let card = findCard(cardID), !card.isUsed, !card.isLoading else { return }
+        guard let card = findCard(cardID), card.mode == .conversation,
+              !card.isUsed, !card.isLoading else { return }
         let shownTitles = card.candidates.map(\.title)
         updateCard(cardID) {
             $0.isLoading = true
@@ -378,9 +392,12 @@ final class ChatRoomStore {
             .candidates.first { $0.title == trimmed }?
             .genre
             .flatMap { TopicCatalog.genre(id: $0)?.id }
-        // 選ばなかった候補は次のカードへ持ち越す（生成は補充の 1 件だけで済む）
-        carryOverCandidates = Self.carryOverCandidates(
-            from: cardID.flatMap(findCard), selectedTitle: trimmed)
+        // 選ばなかった候補は次のカードへ持ち越す（生成は補充の 1 件だけで済む）。
+        // 単語モードのカードには候補が無いので触らない（会話モードで戻した持ち越しを消さない）
+        if practiceMode == .conversation {
+            carryOverCandidates = Self.carryOverCandidates(
+                from: cardID.flatMap(findCard), selectedTitle: trimmed)
+        }
         // 未使用のカードはすべてグレーアウトして履歴に残す（選んだピルのハイライトは該当カードのみ）
         for index in timeline.indices {
             guard case .topicCard(var card) = timeline[index], !card.isUsed else { continue }
@@ -389,9 +406,13 @@ final class ChatRoomStore {
             timeline[index] = .topicCard(card)
         }
         activeTopicTitle = trimmed
-        recentTopicTitles.append(trimmed)
-        if recentTopicTitles.count > 20 {
-            recentTopicTitles.removeFirst(recentTopicTitles.count - 20)
+        // 重複回避リストはトピック生成用なので練習語は混ぜない
+        // （起動時の復元でも単語モードのセッションは除外している）
+        if practiceMode == .conversation {
+            recentTopicTitles.append(trimmed)
+            if recentTopicTitles.count > 20 {
+                recentTopicTitles.removeFirst(recentTopicTitles.count - 20)
+            }
         }
         if let genre {
             recentTopicGenres.append(genre)
@@ -724,6 +745,47 @@ final class ChatRoomStore {
         guard practiceMode != mode, canChangePracticeMode else { return }
         practiceMode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: Self.practiceModeKey)
+        replaceTrailingCard(with: mode)
+    }
+
+    /// モード切替の副作用は「末尾の未使用カードを現モードのカードに差し替える」だけ
+    /// （システム通知は出さない。ヘッダの表示とカードが変わることで十分伝わる）。
+    /// 生成中のカードを捨てた場合、生成完了時の `updateCard` は対象を見つけられず何もしない
+    /// = 1 回ぶんの無駄打ちになるが、切替は頻繁ではないので許容する（キャンセルはしない）。
+    private func replaceTrailingCard(with mode: PracticeMode) {
+        let replacement = Self.cardReplacement(in: timeline, newMode: mode)
+        guard let index = replacement.removedIndex else { return }
+        if let carryOver = replacement.carryOver {
+            carryOverCandidates = carryOver
+        }
+        timeline.remove(at: index)
+        postTopicCard()
+    }
+
+    /// モード切替でカードをどう差し替えるか（純関数）。
+    /// 対象は末尾の未使用トピックカードだけで、使用済みカード（過去の履歴）には触らない。
+    struct CardReplacement {
+        /// 取り除くカードの位置（差し替え不要なら nil）
+        var removedIndex: Int?
+        /// 持ち越しへ戻す候補（戻さない = 現状維持なら nil）。
+        /// 会話カードを捨てるときだけ値が入り、会話モードへ帰ってきたときに生きる
+        var carryOver: [TopicCandidate]?
+    }
+
+    static func cardReplacement(
+        in timeline: [TimelineItem], newMode: PracticeMode
+    ) -> CardReplacement {
+        guard let index = timeline.lastIndex(where: {
+            if case .topicCard = $0 { return true } else { return false }
+        }), case .topicCard(let card) = timeline[index],
+            !card.isUsed, card.mode != newMode
+        else {
+            return CardReplacement()
+        }
+        return CardReplacement(
+            removedIndex: index,
+            carryOver: card.mode == .conversation
+                ? Array(card.candidates.prefix(topicCandidateCount)) : nil)
     }
 
     /// 音声モードの ⏸ / 再開。

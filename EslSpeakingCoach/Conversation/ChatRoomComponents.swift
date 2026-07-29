@@ -208,7 +208,8 @@ struct CharacterAvatar: View {
 
 // MARK: - トピックカード
 
-/// トピック候補 3 件 + 固定候補「話しかける」。選択でセッション開始、🔄 で差し替え、＋で自作入力。
+/// 会話モード: トピック候補 3 件 + 固定候補「話しかける」。選択でセッション開始、🔄 で差し替え、＋で自作入力。
+/// 単語モード: 候補を生成しないので、練習する単語の入力ボタンだけを出す。
 /// 選択済み・過去のカードはグレーアウトして履歴に残す（タップ無効）。
 struct TopicCardView: View {
     let card: ChatRoomStore.TopicCard
@@ -218,50 +219,14 @@ struct TopicCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("📌 次のトピック")
+            Text(card.mode == .word ? "📖 次に練習する単語" : "📌 次のトピック")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(ChatTheme.accent)
 
-            // 生成済み・持ち越しの候補は出せるものから出し、残りの生成を待つ
-            // （待たずに選び始められる。docs/plans/topic-card-carry-over.md）
-            ForEach(card.candidates, id: \.title) { candidate in
-                topicPill(candidate)
-            }
-            if card.isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text(card.candidates.isEmpty ? "候補を考え中…" : "もう 1 件を追加中…")
-                        .font(.caption)
-                        .foregroundStyle(ChatTheme.systemText)
-                }
-                .padding(.vertical, 4)
-            }
-            // 固定候補は生成を待たないので、生成中でも常に選べる状態で出す
-            topicPill(ChatRoomStore.talkFirstCandidate)
-            if let errorText = card.errorText {
-                Text(errorText)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-            }
-
-            HStack(spacing: 10) {
-                Button(action: onRegenerate) {
-                    Label("他の候補", systemImage: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .tint(ChatTheme.accent)
-                .disabled(card.isUsed || card.isLoading)
-
-                Button(action: onCustomTopic) {
-                    Label("自分で作る", systemImage: "plus")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .tint(ChatTheme.accent)
-                .disabled(card.isUsed)
+            if card.mode == .word {
+                wordBody
+            } else {
+                conversationBody
             }
         }
         .padding(14)
@@ -276,6 +241,82 @@ struct TopicCardView: View {
         .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
         .opacity(card.isUsed ? 0.55 : 1)
         .allowsHitTesting(!card.isUsed)
+    }
+
+    /// 会話モードのカード本体（候補ピル + 生成中行 + 固定候補 + 🔄 / ＋）。
+    @ViewBuilder
+    private var conversationBody: some View {
+        // 生成済み・持ち越しの候補は出せるものから出し、残りの生成を待つ
+        // （待たずに選び始められる。docs/plans/topic-card-carry-over.md）
+        ForEach(card.candidates, id: \.title) { candidate in
+            topicPill(candidate)
+        }
+        if card.isLoading {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text(card.candidates.isEmpty ? "候補を考え中…" : "もう 1 件を追加中…")
+                    .font(.caption)
+                    .foregroundStyle(ChatTheme.systemText)
+            }
+            .padding(.vertical, 4)
+        }
+        // 固定候補は生成を待たないので、生成中でも常に選べる状態で出す
+        topicPill(ChatRoomStore.talkFirstCandidate)
+        if let errorText = card.errorText {
+            Text(errorText)
+                .font(.caption2)
+                .foregroundStyle(.red)
+        }
+
+        HStack(spacing: 10) {
+            Button(action: onRegenerate) {
+                Label("他の候補", systemImage: "arrow.clockwise")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(ChatTheme.accent)
+            .disabled(card.isUsed || card.isLoading)
+
+            Button(action: onCustomTopic) {
+                Label("自分で作る", systemImage: "plus")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(ChatTheme.accent)
+            .disabled(card.isUsed)
+        }
+    }
+
+    /// 単語モードのカード本体（候補は生成しないので入力ボタンだけ）。
+    /// 使用済みのカードには練習した語を残す（履歴を遡ったときに何を練習したか分かる）。
+    @ViewBuilder
+    private var wordBody: some View {
+        if let selectedTitle = card.selectedTitle {
+            Text(selectedTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(ChatTheme.topicPillSelectedText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    ChatTheme.topicPillSelected,
+                    in: RoundedRectangle(cornerRadius: 16))
+        } else {
+            Text("練習したい単語や熟語を入力してください（英語）")
+                .font(.caption)
+                .foregroundStyle(ChatTheme.systemText)
+        }
+
+        Button(action: onCustomTopic) {
+            Label("単語を入力", systemImage: "plus")
+                .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .tint(ChatTheme.accent)
+        .disabled(card.isUsed)
     }
 
     private func topicPill(_ candidate: TopicCandidate) -> some View {
@@ -494,9 +535,11 @@ struct ChatInputBar: View {
                 .ignoresSafeArea(edges: .bottom))
     }
 
-    /// セッション未開始（トピック選択待ち）。
+    /// セッション未開始（トピック選択・単語入力待ち）。
     private var idleBar: some View {
-        Text("トピックカードから話題を選んでスタート")
+        Text(store.practiceMode == .word
+            ? "カードから練習する単語を入力してスタート"
+            : "トピックカードから話題を選んでスタート")
             .font(.footnote)
             .foregroundStyle(ChatTheme.systemText)
             .frame(maxWidth: .infinity, minHeight: 36)

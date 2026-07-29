@@ -48,13 +48,13 @@ struct ChatRoomView: View {
         } message: {
             Text("会話をまとめてフィードバックを作ります")
         }
-        .alert("自分でトピックを作る", isPresented: $isShowingTopicInput) {
-            TextField("例: 好きなラーメン屋", text: $customTopicText)
+        .alert(isWordMode ? "練習する単語を入力" : "自分でトピックを作る", isPresented: $isShowingTopicInput) {
+            TextField(isWordMode ? "例: get around to" : "例: 好きなラーメン屋", text: $customTopicText)
                 .autocorrectionDisabled()
             Button("開始") { submitCustomTopic() }
             Button("キャンセル", role: .cancel) { customTopicText = "" }
         } message: {
-            Text("話したいトピックを英語で入力してください")
+            Text(isWordMode ? "英語の単語・熟語を入力してください" : "話したいトピックを英語で入力してください")
         }
         .onAppear {
             store.onAppear()
@@ -79,6 +79,7 @@ struct ChatRoomView: View {
                     .foregroundStyle(ChatTheme.nameLabel)
             }
             Spacer()
+            modePill
             Button {
                 isShowingAdmin = true
             } label: {
@@ -90,12 +91,37 @@ struct ChatRoomView: View {
             }
             .accessibilityLabel("管理画面")
         }
+        .animation(.easeOut(duration: 0.15), value: store.practiceMode)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(
             ChatTheme.barBackground
                 .shadow(color: ChatTheme.bubbleShadow, radius: 3, y: 1)
                 .ignoresSafeArea(edges: .top))
+    }
+
+    /// 練習モード（会話 / 単語）のトグル。2 値なのでメニューは出さずタップで入れ替える。
+    /// セッション中・エラー再開待ちは無効（会話の途中でキャラの役割が変わると破綻するため）。
+    private var modePill: some View {
+        Button {
+            store.setPracticeMode(store.practiceMode.toggled)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: store.practiceMode.symbolName)
+                Text(store.practiceMode.displayName)
+            }
+            .font(.caption.weight(.bold))
+            .foregroundStyle(ChatTheme.topicPillSelectedText)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(ChatTheme.topicPill, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!store.canChangePracticeMode)
+        .opacity(store.canChangePracticeMode ? 1 : 0.45)
+        .accessibilityLabel("練習モード: \(store.practiceMode.displayName)")
+        .accessibilityHint("タップで会話 / 単語を切り替えます")
     }
 
     // MARK: - タイムライン
@@ -178,6 +204,11 @@ struct ChatRoomView: View {
                 }
             }
         }
+    }
+
+    /// 入力アラートの文言の出し分け（カードは常に現在のモードのものなのでモードだけ見る）。
+    private var isWordMode: Bool {
+        store.practiceMode == .word
     }
 
     /// 下端バーを出す条件（翻訳トグルは常時表示。エラー再開バー表示中だけは引っ込める）。
