@@ -37,6 +37,11 @@ try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaul
 
 `.defaultToSpeaker` を**カテゴリオプションから外し**、代わりに
 「**出力が内蔵レシーバー（受話口）しか無いときだけ** `overrideOutputAudioPort(.speaker)` する」形に置き換える。
+
+> **2026-07-28 修正**: この判定はイヤフォン無しの実機で破綻していた（オーバーライドが効くと
+> 出力が `builtInSpeaker` になり、次の評価で自分のオーバーライドを取り消して往復する →
+> AVAudioEngine が止まり無音）。判定を「**本体内蔵（受話口 / スピーカー）だけなら寄せる**」に
+> 直した。詳細: `docs/plans/speaker-no-audio.md`
 イヤフォン・Bluetooth・AirPlay が繋がっていればオーバーライドしない（＝ OS の選んだ経路に任せる）。
 
 ```swift

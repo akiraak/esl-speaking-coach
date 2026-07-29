@@ -25,14 +25,19 @@ enum AudioRoutePolicy {
         .allowBluetoothHFP, .allowBluetoothA2DP, .allowAirPlay,
     ]
 
-    /// 内蔵レシーバー（受話口）だけが出力のときに true。
+    /// 出力が**本体内蔵（受話口 / スピーカー）だけ**のときに true。
     /// このときだけ `overrideOutputAudioPort(.speaker)` して、端末を耳に当てずに聞けるようにする。
     ///
-    /// イヤフォン・Bluetooth・AirPlay・スピーカーが混ざっていればオーバーライドせず、
+    /// イヤフォン・Bluetooth・AirPlay 等が 1 つでも居ればオーバーライドせず、
     /// OS が選んだ経路をそのまま使う。空（まだ経路が確定していない）のときも触らない。
+    ///
+    /// **内蔵スピーカーでも true を返すのが要点**（docs/plans/speaker-no-audio.md）。
+    /// オーバーライドが効くと出力は `builtInSpeaker` になるので、「スピーカーなら不要」と
+    /// 判定すると自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復が始まる。
+    /// その往復で AVAudioEngine が止まり、読み上げが一切鳴らなくなっていた。
     static func needsSpeakerOverride(outputPortTypes: [AVAudioSession.Port]) -> Bool {
         guard !outputPortTypes.isEmpty else { return false }
-        return outputPortTypes.allSatisfy { $0 == .builtInReceiver }
+        return outputPortTypes.allSatisfy { $0 == .builtInReceiver || $0 == .builtInSpeaker }
     }
 
     /// 診断ログ / 会話ログ用の 1 行要約。「なぜ聞こえないか」を実機でその場で読むためのもの。

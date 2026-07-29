@@ -26,9 +26,26 @@ struct AudioRoutePolicyTests {
         #expect(!AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.headphones]))
     }
 
-    @Test("既にスピーカーならオーバーライド不要")
-    func builtInSpeakerNeedsNoOverride() {
-        #expect(!AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.builtInSpeaker]))
+    /// オーバーライドが効くと出力は builtInSpeaker になる。ここで false を返すと
+    /// 自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復が始まって
+    /// AVAudioEngine が止まる（= 読み上げが一切鳴らない。docs/plans/speaker-no-audio.md）
+    @Test("内蔵スピーカーでもスピーカー指定を維持する（往復防止）")
+    func builtInSpeakerKeepsOverride() {
+        #expect(AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.builtInSpeaker]))
+        // 冪等: 判定 → オーバーライド → 再判定 で結論が変わらない
+        #expect(AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.builtInReceiver])
+            == AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.builtInSpeaker]))
+    }
+
+    @Test("AirPlay が居るならオーバーライドしない")
+    func airPlayKeepsRoute() {
+        #expect(!AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.airPlay]))
+    }
+
+    @Test("内蔵スピーカーと外部が混ざっていればオーバーライドしない")
+    func speakerWithExternalKeepsRoute() {
+        #expect(!AudioRoutePolicy.needsSpeakerOverride(
+            outputPortTypes: [.builtInSpeaker, .bluetoothA2DP]))
     }
 
     @Test("受話口と他の経路が混ざっていればオーバーライドしない")

@@ -55,12 +55,11 @@ final class StreamingAudioPlayer {
     /// そのバッファの再生が実際に始まるタイミングで onMarkerReached が発火する。
     func enqueue(pcm16Data: Data, marker: UUID? = nil) {
         guard let buffer = Self.makeBuffer(pcm16Data: pcm16Data, format: format) else { return }
-        if !engine.isRunning {
-            // 停止済みエンジンへの scheduleBuffer / play は AVAudioEngine のアサートで abort する。
-            // 起きるとしたら「読み上げ中に会話終了」の直後なので、落ちる直前の 1 行として残す
-            // （docs/plans/end-session-crash.md H1。挙動は変えず記録だけする）
-            DiagnosticsLog.record("!! player: エンジン停止中に enqueue が呼ばれた（クラッシュしうる）")
-        }
+        // 停止済みエンジンへの scheduleBuffer / play は AVAudioEngine のアサートで abort する
+        // （docs/plans/end-session-crash.md H1）。経路変更でエンジンが止まったまま積み続けて
+        // 無音になっていたので、まず起こし直し、起こせなければ積まずに捨てる
+        // （docs/plans/speaker-no-audio.md）
+        guard ensureEngineRunning() else { return }
         let wasIdle = pendingBuffers == 0
         pendingBuffers += 1
         markerQueue.append(marker)
@@ -77,6 +76,21 @@ final class StreamingAudioPlayer {
         }
         if wasIdle {
             fireMarkerAtHead()
+        }
+    }
+
+    /// エンジンが止まっていたら起こす（経路変更で停止することがある）。
+    /// 起こせなかった場合だけ false ―― セッション終了直後など、もう鳴らす先が無いケース。
+    private func ensureEngineRunning() -> Bool {
+        if engine.isRunning { return true }
+        do {
+            try prepare()
+            DiagnosticsLog.record("player: エンジンが止まっていたので再起動した")
+            return true
+        } catch {
+            DiagnosticsLog.record(
+                "!! player: エンジンを再起動できず音声を破棄した: \(error.localizedDescription)")
+            return false
         }
     }
 

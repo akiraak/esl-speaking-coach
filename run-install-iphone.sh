@@ -1,6 +1,8 @@
 #!/bin/bash
 # 実機 iPhone へビルド＆インストール＆起動する（無線接続で可）。
 # project.yml が正なので毎回 xcodegen で .xcodeproj を生成し直してからビルドする。
+# 追加の起動引数はそのまま渡せる（run-simulator.sh と同じ）:
+#   ./run-install-iphone.sh -practice-mode word -start-word "get around to" -end-session
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -58,5 +60,5 @@ xcrun devicectl device install app --device "$DEVICE_ID" "$APP_PATH"
 echo "==> 起動..."
 # アプリへの起動引数は "--" 以降に置く（devicectl 自身のオプションと区別するため）
 xcrun devicectl device process launch --terminate-existing --device "$DEVICE_ID" "$BUNDLE_ID" \
-  -- ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"}
+  -- ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"} "$@"
 echo "==> 完了"
