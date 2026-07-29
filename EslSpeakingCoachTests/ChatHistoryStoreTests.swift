@@ -160,6 +160,46 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertTrue(store.recentSessions(limit: 10).isEmpty)
     }
 
+    /// 練習モードはセッションに記録され、単語モードのぶんだけ recentWords で引ける。
+    /// トピック重複回避のタイトルには練習語を混ぜない。
+    func testPracticeModeIsRecordedAndWordsAreListedSeparately() throws {
+        let store = try makeStore()
+        for (title, mode) in [
+            ("Morning routines", PracticeMode.conversation),
+            ("get around to", .word),
+            ("Weekend plans", .conversation),
+            ("look forward to", .word),
+        ] {
+            store.beginSession(id: UUID(), topicTitle: title, mode: mode)
+            store.appendMessage(id: UUID(), speaker: .user, text: "hi")
+            store.endActiveSession()
+        }
+
+        XCTAssertEqual(
+            store.recentSessions(limit: 10).map(\.mode),
+            [.conversation, .word, .conversation, .word])
+        XCTAssertEqual(store.recentWords(limit: 10), ["get around to", "look forward to"])
+        XCTAssertEqual(store.recentWords(limit: 1), ["look forward to"])
+        XCTAssertEqual(
+            store.recentTopicTitles(limit: 10), ["Morning routines", "Weekend plans"])
+    }
+
+    /// モード導入前に保存されたセッション（modeRawValue が nil）は会話モードとして扱う。
+    func testSessionWithoutModeIsTreatedAsConversation() throws {
+        let store = try makeStore()
+        store.beginSession(id: UUID(), topicTitle: "Legacy")
+        store.appendMessage(id: UUID(), speaker: .user, text: "hi")
+        store.endActiveSession()
+
+        // 既存ストアの行を模して列を空にする
+        let session = try XCTUnwrap(store.recentSessions(limit: 1).first)
+        session.modeRawValue = nil
+
+        XCTAssertEqual(session.mode, .conversation)
+        XCTAssertEqual(store.recentTopicTitles(limit: 10), ["Legacy"])
+        XCTAssertTrue(store.recentWords(limit: 10).isEmpty)
+    }
+
     func testDeleteSessionCascadesMessages() throws {
         let store = try makeStore()
         let sessionID = UUID()

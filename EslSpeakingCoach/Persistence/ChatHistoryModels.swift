@@ -26,6 +26,7 @@ enum MessageSpeaker: String, Sendable {
 }
 
 /// 1 トピック分の会話セッション（区切り〜終了まで）。端末内のみ・iCloud 同期なし。
+/// 単語練習モードのセッションもここに入る（`topicTitle` に練習語がそのまま入る）。
 @Model
 final class ChatSessionRecord {
     @Attribute(.unique) var id: UUID
@@ -33,6 +34,9 @@ final class ChatSessionRecord {
     /// 生成時に割り当てられた `TopicCatalog` のジャンル id。
     /// 自作トピック・固定候補は nil（ジャンル不明として次回の除外対象にしない）
     var topicGenre: String?
+    /// `PracticeMode.rawValue`。optional なので既存ストアはライトウェイトマイグレーションで開ける
+    /// （モード導入前のセッション = nil = 会話モード）
+    var modeRawValue: String?
     var startedAt: Date
     /// nil はセッション中（アプリ強制終了で残った場合は次回起動時に閉じる）
     var endedAt: Date?
@@ -46,12 +50,18 @@ final class ChatSessionRecord {
 
     init(
         id: UUID = UUID(), topicTitle: String, topicGenre: String? = nil,
-        startedAt: Date = Date()
+        mode: PracticeMode = .conversation, startedAt: Date = Date()
     ) {
         self.id = id
         self.topicTitle = topicTitle
         self.topicGenre = topicGenre
+        self.modeRawValue = mode.rawValue
         self.startedAt = startedAt
+    }
+
+    /// 記録されたモード（モード導入前のセッションは会話モードとして扱う）。
+    var mode: PracticeMode {
+        PracticeMode(storedValue: modeRawValue)
     }
 }
 

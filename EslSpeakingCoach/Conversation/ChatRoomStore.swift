@@ -112,6 +112,7 @@ final class ChatRoomStore {
     static let topicCandidateCount = 3
 
     private static let inputModeKey = "chatRoomInputMode"
+    private static let practiceModeKey = "chatRoomPracticeMode"
     private static let translationVisibleKey = "chatRoomTranslationVisible"
     /// 1 リクエストで訳す発話数の上限（並列にはせず、このチャンクを順に投げる）
     static let translationChunkSize = 20
@@ -130,6 +131,9 @@ final class ChatRoomStore {
     /// 致命的エラーでセッションが落ちた（履歴を保持したまま再開できる）
     private(set) var canResumeAfterFailure = false
     private(set) var inputMode: InputMode
+    /// 練習モード（会話 / 単語）。アプリ再起動をまたいで保持する（UserDefaults）。
+    /// セッション中は切り替えない（途中でキャラの役割が変わると会話が破綻するため）
+    private(set) var practiceMode: PracticeMode
     /// 音声モードの一時停止（⏸）。聞き取りだけを止める
     private(set) var isVoicePaused = false
     /// 訳の表示 ON / OFF（アプリ再起動をまたいで保持する）。
@@ -181,6 +185,9 @@ final class ChatRoomStore {
         memoryStore = CharacterMemoryStore(container: container)
         let stored = UserDefaults.standard.string(forKey: Self.inputModeKey)
         inputMode = stored.flatMap(InputMode.init(rawValue:)) ?? .voice
+        // 既定は会話モード
+        practiceMode = PracticeMode(
+            storedValue: UserDefaults.standard.string(forKey: Self.practiceModeKey))
         // 既定は OFF（会話中の視界を汚さない）
         isTranslationVisible = UserDefaults.standard.bool(forKey: Self.translationVisibleKey)
     }
@@ -397,7 +404,8 @@ final class ChatRoomStore {
         let sessionID = UUID()
         activeSessionID = sessionID
         activeMemoryNote = memoryStore.currentNote()
-        historyStore.beginSession(id: sessionID, topicTitle: trimmed, topicGenre: genre)
+        historyStore.beginSession(
+            id: sessionID, topicTitle: trimmed, topicGenre: genre, mode: practiceMode)
         if Self.isLearnerFirstTopic(trimmed) {
             // AI が黙ったまま listening になるので、待ち受けであることを 1 行だけ伝える
             appendItem(.systemNotice(id: UUID(), text: "自分から話しかけてみよう"))
@@ -704,6 +712,18 @@ final class ChatRoomStore {
         UserDefaults.standard.set(mode.rawValue, forKey: Self.inputModeKey)
         if mode == .voice { isVoicePaused = false }
         session?.setVoiceInputEnabled(mode == .voice)
+    }
+
+    /// 練習モードを切り替えられるか（ヘッダのピルの有効 / 無効）。
+    /// 会話の途中でキャラの役割が変わるのは破綻するため、セッション中とエラー再開待ちは切り替えない。
+    var canChangePracticeMode: Bool {
+        session == nil && !canResumeAfterFailure
+    }
+
+    func setPracticeMode(_ mode: PracticeMode) {
+        guard practiceMode != mode, canChangePracticeMode else { return }
+        practiceMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.practiceModeKey)
     }
 
     /// 音声モードの ⏸ / 再開。

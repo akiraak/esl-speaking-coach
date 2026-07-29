@@ -65,9 +65,12 @@ final class ChatHistoryStore {
 
     // MARK: - アクティブセッションへの書き込み
 
-    func beginSession(id: UUID, topicTitle: String, topicGenre: String? = nil) {
+    func beginSession(
+        id: UUID, topicTitle: String, topicGenre: String? = nil,
+        mode: PracticeMode = .conversation
+    ) {
         let session = ChatSessionRecord(
-            id: id, topicTitle: topicTitle, topicGenre: topicGenre)
+            id: id, topicTitle: topicTitle, topicGenre: topicGenre, mode: mode)
         context.insert(session)
         activeSession = session
         activeMessagesByID = [:]
@@ -156,8 +159,15 @@ final class ChatHistoryStore {
     }
 
     /// トピック重複回避用の直近タイトル（古い順・最大 limit 件）。
+    /// 単語練習のセッションは除く（練習語をトピック生成の除外リストへ混ぜない）。
     func recentTopicTitles(limit: Int) -> [String] {
-        fetchSessions().suffix(limit).map(\.topicTitle)
+        fetchSessions().filter { $0.mode == .conversation }.suffix(limit).map(\.topicTitle)
+    }
+
+    /// 単語練習モードで練習した語（古い順・最大 limit 件）。
+    /// 今は管理・参照用で、出題制御（重複回避・復習）には使わない。
+    func recentWords(limit: Int) -> [String] {
+        fetchSessions().filter { $0.mode == .word }.suffix(limit).map(\.topicTitle)
     }
 
     /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。
