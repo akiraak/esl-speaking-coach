@@ -35,7 +35,7 @@ enum ChatCharacter: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .chobi:
             // "calm" が話速を引っ張っていたので "lively" に替え、速さの指示を足してある
-            // （実測 2.57 → 2.87 words/sec。docs/plans/chobi-voice-speed.md）
+            // （実測 2.57 → 2.87 words/sec。docs/plans/archive/chobi-voice-speed.md）
             return SpeechStyle(
                 voice: "Leda",
                 styleInstruction: """

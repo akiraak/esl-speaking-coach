@@ -1,5 +1,24 @@
 # DONE
 
+- 2026-07-28 Chobi の読み上げが遅い件を直した（スタイル前置文の "calm" を "lively" へ） [plan](docs/plans/archive/chobi-voice-speed.md)
+  - 実機で Chobi の読み上げが間延びして聞こえる。会話のテンポが落ちると学習者の発話の番が遠のくので、発話量を稼ぐという第一目的にも効く
+  - Gemini TTS を直接叩いて PCM のバイト数から秒数を出し（24kHz PCM16 mono = 48,000 bytes/秒）、**前後の無音を除いた発話区間**でも測って「話速そのもの」と「無音の混入」を分けた
+  - **話速を決めているのは voice ではなくスタイル前置文**だった。voice を入れ替えても前置文が同じならほぼ同じ話速になる（Leda + Chobi 用 2.86 / Aoede + Chobi 用 2.89、Aoede + Naruko 用 3.24 / Leda + Naruko 用 3.24 w/s）
+  - 当初の依頼は「Naruko が遅い」だったが、**実測では Naruko のほうが速い**（保存済みの実発話 15 件で Chobi 2.68 / Naruko 2.84 w/s）。ユーザーの訂正を受けて Chobi を対象にした
+  - **Chobi には速さの指示を足すだけでは効きが弱かった**（実発話 10 件で 2.62 → 2.78 w/s、+6%。同じ指示で Naruko は +14%）。前置文の **"calm" が話速を引っ張っていた**ので語ごと替えた（現行 2.52 / calm を残して速さの指示 2.74 / 強い速さの指示 2.74 / **"calm" → "lively" + 速さの指示 2.85**）
+  - 採用した前置文: `Read aloud in a warm, lively, gently cheerful voice, like a friendly teacher chatting with a student. Speak at a brisk, natural conversational pace, without dragging out words:`。現行と各 2 回で取り直して **2.57 → 2.87 w/s（+12%）**、最も遅い行も 1.92 → 2.15（Naruko の 2.84 と同程度）
+  - **Naruko は変更していない**（実測で遅くなく、対象でもない）。キャラ設定の「落ち着いて温かい」は system prompt 側で保ち、変えたのは読み上げの声色の指示だけ。voice の差し替え（Autonoe が最速で +9% 程度）は効きが小さいわりに声質が変わるので採らなかった
+  - 犯人でないと確認したもの: 再生側（24kHz 固定・キャラ分岐なし）・文中の長い間（300ms 以上は実測 0 秒）・声の高さ（F0 は Leda 180〜192Hz に対し Aoede 210〜227Hz で Naruko のほうが高い）
+  - `docs/specs/conversation-design.md` のキャラ表と決定履歴に反映。単体テストは前置文の文言に依存していない（`CloudPipelineProtocolTests` は `speechStyle.styleInstruction` を参照して前置を検証する）ので 198 件 + swift-testing 12 件そのままパス。**実機で速さをユーザーが確認済み**
+
+- 2026-07-28 ヘッダの練習モード切替をメニュー選択にした [plan](docs/plans/archive/practice-mode-picker.md)
+  - モードピルは単語練習モード Phase 2 の決定（2 値なのでメニューは出さない）でタップ即トグルだったが、**押すまで何になるか分からない**のが分かりにくかった。タップしたら会話・単語の 2 つを並べて選ぶ形にした（選び直さずに閉じられるようにもなる）
+  - `Menu` + `.pickerStyle(.inline)` の `Picker` で `PracticeMode.allCases` を並べた。**インラインの Picker にすると現在のモードに自動でチェックが付く**ので印を自前で描いていない。行のラベルはピルと同じ `Label(displayName, systemImage: symbolName)`
+  - 選択は `Binding(get: store.practiceMode, set: store.setPracticeMode)` で store へ流すだけなので、切替の副作用（末尾の未使用カードの差し替え・会話候補の持ち越し戻し）と切替可否（`canChangePracticeMode` による無効化 + 薄く表示）は従来の経路がそのまま動く。同じモードを選んでも `setPracticeMode` の guard で何も起きない
+  - ピルのラベルに `chevron.down` を足し、`.menuStyle(.button)` + `.buttonStyle(.plain)` で見た目（カプセル・色・高さ 30）は従来のまま
+  - 使い手が居なくなった `PracticeMode.toggled` は削除し、単体テストは「メニューは `allCases` をそのまま並べる（会話 → 単語の順）」に置き換えた
+  - シミュレータではピルの見た目のみ確認（simctl にタップ手段が無く、osascript 経由のクリックも補助アクセス未許可で不可）。**メニューの開閉・並び・チェックは実機でユーザーが確認済み**
+
 - 2026-07-28 実機でイヤフォン無しのとき読み上げが鳴らない不具合を直した [plan](docs/plans/archive/speaker-no-audio.md)
   - 実機（イヤフォン無し）で AI の読み上げが**一切鳴らない**。Bluetooth を繋いでいるときは鳴るので、直前のイヤフォン対応（`earphone-audio-route.md`）で入れた**オーバーライド経路そのもの**が壊れていた。端末の診断ログを `xcrun devicectl device copy from --domain-type appDataContainer` で回収して原因を確定した
   - **(A) 経路判定が冪等でなかった（根本原因）**: `AudioRoutePolicy.needsSpeakerOverride` は「出力が内蔵レシーバーだけなら true」だったので、オーバーライドが効いて出力が `Speaker` になると次の評価で false になり、**自分のオーバーライドを自分で取り消していた** → 受話口へ戻る → また true → … と往復する。`handleRouteChange` の `reason != .override` ガードは効かない ―― この端末では一連の経路変更が **`.categoryChange`（rawValue 3）** として通知されるため。ログでは `スピーカー → 既定 → スピーカー` を数百 ms のあいだ繰り返していた
