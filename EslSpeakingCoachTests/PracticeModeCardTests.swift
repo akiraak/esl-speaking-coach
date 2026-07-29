@@ -3,7 +3,7 @@ import XCTest
 @testable import EslSpeakingCoach
 
 /// モード切替の副作用は「末尾の未使用カードを現モードのカードに差し替える」だけ
-/// （docs/plans/word-practice-mode.md Phase 2）。
+/// （docs/specs/word-practice.md）。
 @MainActor
 final class PracticeModeCardTests: XCTestCase {
     private func makeCard(

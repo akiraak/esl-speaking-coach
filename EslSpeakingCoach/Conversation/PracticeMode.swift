@@ -1,6 +1,6 @@
 import Foundation
 
-/// トークルームの練習モード（docs/plans/word-practice-mode.md）。
+/// トークルームの練習モード（docs/specs/word-practice.md）。
 /// 会話モードは従来どおりのトピック雑談、単語モードは 1 語を Chobi（先生）と
 /// Naruko（学習者と一緒に学ぶ生徒）で練習する。
 ///

@@ -31,7 +31,7 @@ final class SessionOpeningMessageTests: XCTestCase {
             "[Memory: - Likes ramen.]\n[New topic: Free talk]")
     }
 
-    // MARK: - 単語モード（docs/plans/word-practice-mode.md）
+    // MARK: - 単語モード（docs/specs/word-practice.md）
 
     /// 練習語は [New word: X] で渡す。
     func testComposeWordModeUsesNewWordKey() {

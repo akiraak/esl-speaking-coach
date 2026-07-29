@@ -1,6 +1,6 @@
 import Foundation
 
-/// 単語練習モードの system prompt（docs/plans/word-practice-mode.md 付録 A）。
+/// 単語練習モードの system prompt（docs/specs/word-practice.md 付録 A）。
 /// 会話モード（`CoachSystemPrompt`）とはキャラの立ち位置がほぼ真逆で、
 /// Chobi = 先生 / Naruko = 学習者と一緒に学ぶ生徒として 1 語を練習する。
 ///

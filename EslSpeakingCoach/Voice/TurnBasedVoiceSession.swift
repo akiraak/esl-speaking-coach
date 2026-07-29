@@ -55,7 +55,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         /// ready 後の始まり方（既定は再開 = 開始ターンを起こさない）
         var opening: Opening = .resume
         /// 練習モード（会話 / 単語）。system prompt・開始の制御メッセージ・[end] の扱いが変わる
-        /// （docs/plans/word-practice-mode.md）
+        /// （docs/specs/word-practice.md）
         var practiceMode: PracticeMode = .conversation
         /// セッション横断の記憶ノート。開始メッセージに [Memory: ...] として合成する
         /// （空なら省略。docs/plans/character-memory.md）

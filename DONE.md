@@ -1,5 +1,19 @@
 # DONE
 
+- 2026-07-28 単語練習モードを作った（会話 / 単語の 2 モード） [plan](docs/plans/archive/word-practice-mode.md) [spec](docs/specs/word-practice.md)
+  - 会話モードは「トピックで雑談」1 本だけで、発話量を稼ぐという第一目的には合っているが**使える語彙が増えない**（自分の知っている表現の中だけで回してしまう）。同じトークルームの中で切り替えられる単語練習モードを足した
+  - **Chobi = 先生 / Naruko = 学習者と一緒に学ぶ生徒**（会話モードの no-teaching とはほぼ真逆）。1 セッション 1 語を、意味 → 例文 → 自分の文で使う → 別の文脈で使い直す、で回す。練習する語はユーザーが入力する（候補の自動生成はしない）
+  - モード差はすべて `PracticeMode`（`conversation` / `word`）のプロパティに寄せ、呼び出し側に `if mode == .word` を増やさない形にした（`systemPrompt` / `openingControlKey` / `usesMemoryNote` / `feedbackTopicLabel` / `endsOnGoodbye`）。`rawValue` を `UserDefaults` と `ChatSessionRecord.modeRawValue`（**nil = conversation** なのでライトウェイトマイグレーションで既存ストアがそのまま開く）に保存する
+  - system prompt は `WordCoachSystemPrompt`（新規・**2,330 トークン**でキャッシュ最小プレフィックスを満たすので `cache_control` は従来どおり）。**出力形式（`Chobi: ` / `Naruko: ` のタグ行・1 ターン 1 質問）は会話モードと完全に同一**にしたので、音声レイヤ（STT / TTS / チャンカー / 経路）・翻訳・料金記録は 1 行も変えていない。**会話用 system prompt も 1 文字も変えていない**（プロンプトキャッシュ維持）
+  - **終了は「この単語を終了」ボタンだけ**。プロンプトから `[end]` の規定を落とし、実装側も `endsOnGoodbye` で抑止する二重止め。E2E で goodbye と言っても終わらず「Before you go, tell me quickly, ...」と練習が続くことを確認した
+  - **記憶ノートは注入も更新もしない**（ノートは身の回りの事実を貯めるもので 1 語の練習に効かず、先頭が伸びるぶんレイテンシと料金だけ食う。単語練習の逐語が入ると会話モードの雑談品質も落ちる）。止める場所は compose 側の保険と `activeMemoryNote = nil` の 2 か所で、後者があるのでエラー再開の `rebuildHistory` も自動的に Memory 行なしで組み直る
+  - フィードバックは既存クライアントを流用し、**user メッセージの 1 行目だけ**を `Topic:` → `Practice word:` に出し分けた（system prompt は共通のままでキャッシュを保つ）。終了処理は `activeSessionMode`（開始時の値）で分岐し、`FeedbackCard.mode` を持たせて生成リトライがモード切替後でも開始時のモードで走るようにした
+  - 切替 UI はヘッダ 📊 の左のピル → メニュー（会話 / 単語）。切替の副作用は「末尾の**未使用**カードを差し替える」だけで、使用済みカード = 過去の履歴には触らない。会話カードを捨てるときは候補を持ち越しへ戻すので、戻ってきたときの生成が 0 件で済む。文言の出し分けは区切り（`単語: X`）・終了ボタン・入力アラート・カード見出し（📖）・未開始時の入力バーの 5 か所
+  - E2E 用に起動引数 `-practice-mode` / `-start-word` / `-end-session` を足した。あわせて **`-send-text` が AI の開始ターンを barge-in で潰す問題**（STT 接続直後の listening で送っていた）も直した
+  - 単体テスト（`PracticeModeTests` / `PracticeModeCardTests` / `SessionOpeningMessageTests` / `SessionFeedbackClientTests` / `ChatHistoryStoreTests`）を追加して XCTest 198 件パス。シミュレータ E2E は単語・会話（退行確認）の両方。**実機確認はユーザーが実施し OK**
+  - 未観測なのは「単語モードで実際に `[end]` が出るケース」だけ（プロンプト側が効いてモデルが吐かなかった）。抑止は単体テストで押さえてある
+  - 仕様は `docs/specs/word-practice.md` に新規作成し、`screen-layout.md` / `conversation-design.md` / `CLAUDE.md` にも差分を反映した
+
 - 2026-07-28 Chobi の読み上げが遅い件を直した（スタイル前置文の "calm" を "lively" へ） [plan](docs/plans/archive/chobi-voice-speed.md)
   - 実機で Chobi の読み上げが間延びして聞こえる。会話のテンポが落ちると学習者の発話の番が遠のくので、発話量を稼ぐという第一目的にも効く
   - Gemini TTS を直接叩いて PCM のバイト数から秒数を出し（24kHz PCM16 mono = 48,000 bytes/秒）、**前後の無音を除いた発話区間**でも測って「話速そのもの」と「無音の混入」を分けた
