@@ -58,7 +58,7 @@ final class StreamingAudioPlayer {
         // 停止済みエンジンへの scheduleBuffer / play は AVAudioEngine のアサートで abort する
         // （docs/plans/end-session-crash.md H1）。経路変更でエンジンが止まったまま積み続けて
         // 無音になっていたので、まず起こし直し、起こせなければ積まずに捨てる
-        // （docs/plans/speaker-no-audio.md）
+        // （docs/plans/archive/speaker-no-audio.md）
         guard ensureEngineRunning() else { return }
         let wasIdle = pendingBuffers == 0
         pendingBuffers += 1

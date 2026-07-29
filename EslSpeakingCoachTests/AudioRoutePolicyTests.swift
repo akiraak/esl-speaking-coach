@@ -28,7 +28,7 @@ struct AudioRoutePolicyTests {
 
     /// オーバーライドが効くと出力は builtInSpeaker になる。ここで false を返すと
     /// 自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復が始まって
-    /// AVAudioEngine が止まる（= 読み上げが一切鳴らない。docs/plans/speaker-no-audio.md）
+    /// AVAudioEngine が止まる（= 読み上げが一切鳴らない。docs/plans/archive/speaker-no-audio.md）
     @Test("内蔵スピーカーでもスピーカー指定を維持する（往復防止）")
     func builtInSpeakerKeepsOverride() {
         #expect(AudioRoutePolicy.needsSpeakerOverride(outputPortTypes: [.builtInSpeaker]))

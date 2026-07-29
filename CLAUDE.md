@@ -32,7 +32,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 - Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。この構成は Anthropic 公式の Claude アプリ音声モードと同型
 - 不採用にしたもの: iPhone 純正音声系（STT のモデル DL・シミュレータ検証不可・TTS 品質）、OpenAI Realtime / Gemini Live の speech-to-speech（会話相手が Claude でなくなる）。検証記録は `docs/plans/archive/voice-layer-spike.md`
 - ターン制のため会話中の音声レベルの発音指摘はしない（発音・表現のフィードバックはセッション後にテキストベースで行う）
-- **出力経路に `.defaultToSpeaker` を使わない**（2026-07-28 決定）。カテゴリは `.playAndRecord` / `mode: .voiceChat` / options は `AudioRoutePolicy.categoryOptions`（Bluetooth HFP・A2DP・AirPlay を許可）。スピーカーへは「出力が**本体内蔵（受話口 / スピーカー）だけのとき**」に `overrideOutputAudioPort(.speaker)` で寄せ、経路変更のたびに再評価する。**内蔵スピーカーを判定から外さない**（外すと自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復で AVAudioEngine が止まり無音になる。`docs/plans/speaker-no-audio.md`）。`.defaultToSpeaker` を付けるとイヤフォン / Bluetooth があっても出力が内蔵スピーカーへ固定される（`AudioRoutePolicy` / `docs/plans/archive/earphone-audio-route.md`）
+- **出力経路に `.defaultToSpeaker` を使わない**（2026-07-28 決定）。カテゴリは `.playAndRecord` / `mode: .voiceChat` / options は `AudioRoutePolicy.categoryOptions`（Bluetooth HFP・A2DP・AirPlay を許可）。スピーカーへは「出力が**本体内蔵（受話口 / スピーカー）だけのとき**」に `overrideOutputAudioPort(.speaker)` で寄せ、経路変更のたびに再評価する。**内蔵スピーカーを判定から外さない**（外すと自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復で AVAudioEngine が止まり無音になる。`docs/plans/archive/speaker-no-audio.md`）。`.defaultToSpeaker` を付けるとイヤフォン / Bluetooth があっても出力が内蔵スピーカーへ固定される（`AudioRoutePolicy` / `docs/plans/archive/earphone-audio-route.md`）
 
 **設計上の制約（引き続き有効）**: 音声入出力はプロトコル境界の裏に隠す。UI と会話ロジックが特定の音声 API に直接依存してはいけない。
 

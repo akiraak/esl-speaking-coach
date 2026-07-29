@@ -1,5 +1,17 @@
 # DONE
 
+- 2026-07-28 実機でイヤフォン無しのとき読み上げが鳴らない不具合を直した [plan](docs/plans/archive/speaker-no-audio.md)
+  - 実機（イヤフォン無し）で AI の読み上げが**一切鳴らない**。Bluetooth を繋いでいるときは鳴るので、直前のイヤフォン対応（`earphone-audio-route.md`）で入れた**オーバーライド経路そのもの**が壊れていた。端末の診断ログを `xcrun devicectl device copy from --domain-type appDataContainer` で回収して原因を確定した
+  - **(A) 経路判定が冪等でなかった（根本原因）**: `AudioRoutePolicy.needsSpeakerOverride` は「出力が内蔵レシーバーだけなら true」だったので、オーバーライドが効いて出力が `Speaker` になると次の評価で false になり、**自分のオーバーライドを自分で取り消していた** → 受話口へ戻る → また true → … と往復する。`handleRouteChange` の `reason != .override` ガードは効かない ―― この端末では一連の経路変更が **`.categoryChange`（rawValue 3）** として通知されるため。ログでは `スピーカー → 既定 → スピーカー` を数百 ms のあいだ繰り返していた
+  - **(B) 往復で止まった AVAudioEngine を誰も再起動しない（無音になる直接の原因）**: 経路変更でハードウェアのフォーマットが変わると AVAudioEngine は停止する。`restartAudioIO` は `.oldDeviceUnavailable` / `.newDeviceAvailable` の 2 理由でしか呼ばれないので、`.categoryChange` で止まったエンジンは起こされない。以降 `StreamingAudioPlayer.enqueue` は止まったエンジンへ積み続け（`!! player: エンジン停止中に enqueue` が **713 行**）、音は出ない
+  - 見落としの理由もログに出ていた: `earphone-audio-route.md` の実機確認は **AirPods を繋いだ状態でのみ**行っており、**イヤフォン無し = オーバーライドが走る唯一の経路**を実機で通していなかった。Bluetooth 接続時は判定が false でオーバーライドを一度も呼ばないため、往復も無音も起きない
+  - 判定を「**出力が本体内蔵（受話口 / スピーカー）だけなら寄せる**」に変えた。Speaker のときも desired が `.speaker` のままになるので、呼び出し側の「望む値が今と同じなら呼ばない」ガードで安定する（往復が起きない）。イヤフォン・Bluetooth・AirPlay が 1 つでも居れば従来どおり OS に任せる（`.defaultToSpeaker` を使わない方針は維持）
+  - `StreamingAudioPlayer` に `ensureEngineRunning()` を足し、`enqueue` の先頭で呼ぶ。止まっていたら起こし、**起こせなければ積まずに捨てる**。止まったエンジンへの `scheduleBuffer` は AVAudioEngine のアサートで abort しうるので、`docs/plans/end-session-crash.md` の H1 の経路もここで塞がる（当該タスクは別途検証が要るので閉じていない）
+  - `run-install-iphone.sh` に `"$@"` を足し、`run-simulator.sh` と同じく起動引数を渡せるようにした（実機で E2E を回すのに必要だった）
+  - `AudioRoutePolicyTests` を 3 件追加 / 1 件反転（「既にスピーカーならオーバーライド不要」は**バグの側を固定していたテスト**なので期待値を反転し、冪等性の確認を足した）。XCTest 198 件 + swift-testing 12 件パス
+  - 実機で確認: 単語モードのセッションを起動引数で自動実行し、往復（`出力を 既定 へ切り替えた`）**0 回**・`エンジン停止中に enqueue` **0 回**（直前の起動では 713 回）・終了時に `player: shutdown 開始 running=true playing=true`。**内蔵スピーカーから鳴ることをユーザーが確認済み**
+  - `CLAUDE.md`「音声レイヤの方針」に「内蔵スピーカーを判定から外さない」を追記した
+
 - 2026-07-28 イヤフォン（AirPods 等）で動くようにした [plan](docs/plans/archive/earphone-audio-route.md)
   - 実機で AirPods を繋いで会話すると、**AI の読み上げが AirPods から出ず内蔵スピーカーから鳴っていた**。イヤフォンで練習できないと外出先や家族のいる場所で使えず、発話量を稼ぐという第一目的に直接効く
   - 原因は `iPhoneOS26.5.sdk/AVAudioSessionTypes.h` を読んで確定した。設定は `.playAndRecord` / `mode: .voiceChat` / `options: [.defaultToSpeaker]` で、**Bluetooth の「出力」が有効になる経路がひとつも無かった**

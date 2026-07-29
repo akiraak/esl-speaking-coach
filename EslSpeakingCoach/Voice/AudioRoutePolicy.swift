@@ -31,7 +31,7 @@ enum AudioRoutePolicy {
     /// イヤフォン・Bluetooth・AirPlay 等が 1 つでも居ればオーバーライドせず、
     /// OS が選んだ経路をそのまま使う。空（まだ経路が確定していない）のときも触らない。
     ///
-    /// **内蔵スピーカーでも true を返すのが要点**（docs/plans/speaker-no-audio.md）。
+    /// **内蔵スピーカーでも true を返すのが要点**（docs/plans/archive/speaker-no-audio.md）。
     /// オーバーライドが効くと出力は `builtInSpeaker` になるので、「スピーカーなら不要」と
     /// 判定すると自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復が始まる。
     /// その往復で AVAudioEngine が止まり、読み上げが一切鳴らなくなっていた。
