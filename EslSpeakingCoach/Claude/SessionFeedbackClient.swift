@@ -98,22 +98,25 @@ struct SessionFeedbackClient: Sendable {
     }()
 
     /// フィードバックを生成する。transcript は話者ラベル付きの会話全文。
+    /// mode は評価対象の見出し（`Topic:` / `Practice word:`）だけを変える（system prompt は共通）。
     /// usage は SSE の message_start / message_delta から積み上げた利用量（取れなければ nil）。
     func generateFeedback(
-        apiKey: String, topic: String, transcript: String
+        apiKey: String, mode: PracticeMode = .conversation, topic: String, transcript: String
     ) async throws -> (feedback: SessionFeedback, usage: AIUsageEvent?) {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try Self.makeRequestBody(topic: topic, transcript: transcript)
+        request.httpBody = try Self.makeRequestBody(
+            mode: mode, topic: topic, transcript: transcript)
 
         // 文章が途切れる不具合の調査ログ（docs/plans/feedback-truncated.md Phase 1）。
         // 生成は 1 セッションに 1 回なので、生の応答まで含めて残す
         let transcriptLines = transcript.isEmpty ? 0 : transcript.split(separator: "\n").count
         DiagnosticsLog.record(
-            "feedback: 生成開始 topic=\(topic) transcript=\(transcript.count)字/\(transcriptLines)行")
+            "feedback: 生成開始 practice=\(mode.rawValue) topic=\(topic) "
+            + "transcript=\(transcript.count)字/\(transcriptLines)行")
 
         let (bytes, response) = try await Self.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -179,7 +182,9 @@ struct SessionFeedbackClient: Sendable {
     }
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
-    static func makeRequestBody(topic: String, transcript: String) throws -> Data {
+    static func makeRequestBody(
+        mode: PracticeMode = .conversation, topic: String, transcript: String
+    ) throws -> Data {
         let correctionSchema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -228,7 +233,10 @@ struct SessionFeedbackClient: Sendable {
                 ]
             ],
             "messages": [
-                ["role": "user", "content": "Topic: \(topic)\n\nTranscript:\n\(transcript)"]
+                [
+                    "role": "user",
+                    "content": "\(mode.feedbackTopicLabel): \(topic)\n\nTranscript:\n\(transcript)",
+                ]
             ],
         ]
         return try JSONSerialization.data(withJSONObject: payload)

@@ -10,6 +10,8 @@ final class ChatHistoryStore {
     struct SessionSummary: Identifiable, Sendable {
         let id: UUID
         let topicTitle: String
+        /// 練習モード（単語モードのセッションは topicTitle が練習語そのもの）
+        let mode: PracticeMode
         let startedAt: Date
         let endedAt: Date?
         let messageCount: Int
@@ -182,6 +184,7 @@ final class ChatHistoryStore {
             SessionSummary(
                 id: session.id,
                 topicTitle: session.topicTitle,
+                mode: session.mode,
                 startedAt: session.startedAt,
                 endedAt: session.endedAt,
                 messageCount: session.messages.count,

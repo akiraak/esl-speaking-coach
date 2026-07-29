@@ -67,6 +67,9 @@ final class ChatRoomStore {
         let id = UUID()
         /// 保存先セッション（復元カードでは生成済みのため保存には使わない）
         let sessionID: UUID?
+        /// そのセッションの練習モード（生成の見出しを `Topic:` / `Practice word:` で出し分ける。
+        /// リトライがモード切替後になっても開始時のモードで生成するようカードに持たせる）
+        var mode: PracticeMode = .conversation
         let topicTitle: String
         /// リトライ用に生成入力（話者ラベル付き会話全文）のスナップショットを保持する
         let transcript: String
@@ -159,6 +162,9 @@ final class ChatRoomStore {
     private var didAppear = false
     /// 永続化中のセッション ID（正常終了まで保持。エラー再開でも引き継ぐ）
     private var activeSessionID: UUID?
+    /// 現在セッションを始めたときのモード（終了処理の分岐に使う。
+    /// セッション中は practiceMode を変えられないが、終了後の切替と混ざらないよう開始時の値を持つ）
+    private var activeSessionMode: PracticeMode = .conversation
     /// 重複回避用の直近トピックタイトル（起動時に永続化済みセッションから復元。直近 20 件）
     private var recentTopicTitles: [String] = []
     /// 多様性のために避ける直近ジャンル（起動時に復元。カタログが尽きない範囲で 8 件）
@@ -249,7 +255,8 @@ final class ChatRoomStore {
             if let data = record.feedbackJSON,
                let feedback = try? JSONDecoder().decode(SessionFeedback.self, from: data) {
                 var card = FeedbackCard(
-                    sessionID: record.id, topicTitle: record.topicTitle, transcript: "")
+                    sessionID: record.id, mode: record.mode,
+                    topicTitle: record.topicTitle, transcript: "")
                 card.isLoading = false
                 card.feedback = feedback
                 appendItem(.feedbackCard(card))
@@ -434,8 +441,9 @@ final class ChatRoomStore {
             topic: trimmed))
         let sessionID = UUID()
         activeSessionID = sessionID
-        // 単語モードでは記憶ノートを注入しない（更新もしないので対称。Phase 4 でスキップを入れる）
-        activeMemoryNote = practiceMode.injectsMemoryNote ? memoryStore.currentNote() : nil
+        activeSessionMode = practiceMode
+        // 単語モードでは記憶ノートを注入しない（終了時の更新もしないので対称）
+        activeMemoryNote = practiceMode.usesMemoryNote ? memoryStore.currentNote() : nil
         historyStore.beginSession(
             id: sessionID, topicTitle: trimmed, topicGenre: genre, mode: practiceMode)
         // 単語モードは常に Chobi の導入ターンから始める（学習者ファーストは使わない）
@@ -533,6 +541,7 @@ final class ChatRoomStore {
         if wasEnding {
             let endedTopic = activeTopicTitle
             let endedSessionID = activeSessionID
+            let endedMode = activeSessionMode
             activeTopicTitle = nil
             activeSessionID = nil
             activeMemoryNote = nil
@@ -541,9 +550,15 @@ final class ChatRoomStore {
             // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
             // フィードバックは生成中表示で即投稿し、完了を待たずに次のトピックを選べるようにする
             if let endedTopic {
-                postFeedbackCard(topic: endedTopic, sessionID: endedSessionID)
+                postFeedbackCard(mode: endedMode, topic: endedTopic, sessionID: endedSessionID)
                 DiagnosticsLog.record("end: フィードバックカード投稿まで完了")
-                updateCharacterMemory(topic: endedTopic, sessionID: endedSessionID)
+                // 単語モードは記憶ノートを更新しない（注入もしないので対称）。
+                // 単語練習の逐語がノートに入ると会話モードの雑談品質が落ちるため
+                if endedMode.usesMemoryNote {
+                    updateCharacterMemory(topic: endedTopic, sessionID: endedSessionID)
+                } else {
+                    DiagnosticsLog.record("memory: 単語モードのため記憶ノートの更新をスキップ")
+                }
             }
             // 終了時にも訳を埋めきる（区切りは動いていないので対象は今のセッションのまま）
             scheduleTranslationFlush()
@@ -561,14 +576,15 @@ final class ChatRoomStore {
 
     /// セッション正常終了（手動 / goodbye）時に投稿する。
     /// 学習者の発話が 2 未満のセッションはスキップする（docs/specs/session-feedback.md）。
-    private func postFeedbackCard(topic: String, sessionID: UUID?) {
+    private func postFeedbackCard(mode: PracticeMode, topic: String, sessionID: UUID?) {
         let (transcript, learnerTurnCount) = sessionTranscript()
         guard learnerTurnCount >= 2 else {
             DiagnosticsLog.record("feedback: 発話 \(learnerTurnCount) 件のためスキップ")
             appendItem(.systemNotice(id: UUID(), text: "発話が少なかったためフィードバックは省略しました"))
             return
         }
-        let card = FeedbackCard(sessionID: sessionID, topicTitle: topic, transcript: transcript)
+        let card = FeedbackCard(
+            sessionID: sessionID, mode: mode, topicTitle: topic, transcript: transcript)
         let cardID = card.id
         DiagnosticsLog.record("feedback: カード投稿 発話=\(learnerTurnCount)件 transcript=\(transcript.count)字")
         appendItem(.feedbackCard(card))
@@ -598,7 +614,8 @@ final class ChatRoomStore {
         }
         do {
             let (feedback, usage) = try await SessionFeedbackClient().generateFeedback(
-                apiKey: apiKey, topic: card.topicTitle, transcript: card.transcript)
+                apiKey: apiKey, mode: card.mode, topic: card.topicTitle,
+                transcript: card.transcript)
             if let usage {
                 usageStore.record(usage, sessionID: card.sessionID)
             }

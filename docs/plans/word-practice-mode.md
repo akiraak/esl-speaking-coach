@@ -313,11 +313,46 @@ enum PracticeMode: String, Sendable, CaseIterable {
 - **実際に `[end]` が出るケースは未観測**（プロンプト側の「自分から終わらせない」が効いて
   モデルが吐かなかった）。実装側の抑止は `endsOnGoodbye` の単体テストのみ
 
-### Phase 4: セッション後
+### Phase 4: セッション後（完了 2026-07-28）
 
 - フィードバックの `Practice word:` 出し分け
 - 記憶ノート更新のスキップ
 - 管理画面のモード表示
+
+実装メモ:
+
+- `PracticeMode.injectsMemoryNote` を **`usesMemoryNote` に改名**した（注入と更新で同じ値の
+  boolean を 2 つ持つより、「記憶ノートを使うモードか」1 つで両方を説明できるため）
+- `PracticeMode.feedbackTopicLabel`（`Topic` / `Practice word`）を追加し、
+  `SessionFeedbackClient.makeRequestBody(mode:topic:transcript:)` で user メッセージの
+  1 行目だけを差し替える。**system prompt は 1 文字も変えていない**（キャッシュ維持）
+- `FeedbackCard.mode` を持たせた。カードにモードを載せたのは、**生成リトライが
+  モード切替後になっても開始時のモードで生成する**ため（復元カードは
+  `ChatSessionRecord.mode` から復元するが、復元カードは生成済みなので実際には効かない）
+- `ChatRoomStore.activeSessionMode` を追加し、終了処理（フィードバック・記憶ノート）は
+  この値で分岐する。`practiceMode` はセッション中に変えられない前提だが、
+  終了直後の切替と混ざらないよう開始時の値を持つ
+- 記憶ノートのスキップは `handleSessionFinished` の呼び出し側に置き、
+  `updateCharacterMemory` 自体は会話モード専用の処理のまま変えていない。
+  スキップしたことは診断ログに 1 行残す（何もしないので、痕跡が無いと切り分けられない）
+- `ChatHistoryStore.SessionSummary.mode` を追加し、管理画面のセッション一覧では
+  単語モードの行だけ見出しを `📖 <練習語>` にする（単語モードは `topicTitle` が
+  練習語そのものなので、印が無いと会話セッションと区別できない）
+
+確認:
+
+- 単体テスト: `PracticeModeTests` に `feedbackTopicLabel`、`SessionFeedbackClientTests` に
+  単語モードの 1 行目（`Practice word:` / system prompt が共通のまま）、
+  `ChatHistoryStoreTests` に `sessionSummaries().mode` を追加。
+  XCTest 198 件 + swift-testing 10 件すべてパス
+- シミュレータ E2E（単語）: `-practice-mode word -start-word "get around to"` で 3 ターン
+  練習 → ボタン終了まで通し、診断ログに
+  `memory: 単語モードのため記憶ノートの更新をスキップ` と
+  `feedback: 生成開始 practice=word topic=get around to` が出ることを確認。
+  記憶ノートのレコード（`ZUPDATEDAT` / 長さ）が終了前後で変わらないことと、
+  生成されたフィードバックが練習語（`get around to` の否定形・現在完了）の話になっていることも確認
+- シミュレータ E2E（会話・退行確認）: goodbye で自動終了 → `practice=conversation` で
+  フィードバックが生成され、記憶ノートが更新される（`ZUPDATEDAT` が進む）ことを確認
 
 ### Phase 5: 検証と後片付け
 

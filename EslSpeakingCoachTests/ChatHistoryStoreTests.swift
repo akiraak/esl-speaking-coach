@@ -182,6 +182,9 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(store.recentWords(limit: 1), ["look forward to"])
         XCTAssertEqual(
             store.recentTopicTitles(limit: 10), ["Morning routines", "Weekend plans"])
+        // 管理画面の一覧（新しい順）でもモードが分かる
+        XCTAssertEqual(
+            store.sessionSummaries().map(\.mode), [.word, .conversation, .word, .conversation])
     }
 
     /// モード導入前に保存されたセッション（modeRawValue が nil）は会話モードとして扱う。

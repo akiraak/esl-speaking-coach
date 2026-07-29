@@ -55,9 +55,15 @@ final class PracticeModeTests: XCTestCase {
         XCTAssertTrue(text.contains("Never end the session yourself."))
     }
 
-    /// 単語モードは記憶ノートを注入しない（更新もしないので対称）。
-    func testOnlyConversationInjectsMemoryNote() {
-        XCTAssertTrue(PracticeMode.conversation.injectsMemoryNote)
-        XCTAssertFalse(PracticeMode.word.injectsMemoryNote)
+    /// 単語モードは記憶ノートを使わない（開始時の注入も終了時の更新もしない）。
+    func testOnlyConversationUsesMemoryNote() {
+        XCTAssertTrue(PracticeMode.conversation.usesMemoryNote)
+        XCTAssertFalse(PracticeMode.word.usesMemoryNote)
+    }
+
+    /// フィードバック生成の 1 行目（system prompt は共通のまま見出しだけ変える）。
+    func testFeedbackTopicLabel() {
+        XCTAssertEqual(PracticeMode.conversation.feedbackTopicLabel, "Topic")
+        XCTAssertEqual(PracticeMode.word.feedbackTopicLabel, "Practice word")
     }
 }

@@ -12,7 +12,7 @@
     - ピルのタップ切替は実機で確認する（simctl でタップできないため未確認）→ Phase 5
   - [x] Phase 3: 単語モードのセッション（`WordCoachSystemPrompt` / `Configuration.practiceMode` / `[New word: X]` / `[end]` 抑止 / `rebuildHistory` と文言）
     - `[end]` が実際に出るケースは未観測（モデルが吐かなかった）→ 実装側の抑止は単体テストのみ
-  - [ ] Phase 4: セッション後（フィードバックの `Practice word:` / 記憶ノート更新のスキップ / 管理画面のモード表示）
+  - [x] Phase 4: セッション後（フィードバックの `Practice word:` / 記憶ノート更新のスキップ / 管理画面のモード表示）
   - [ ] Phase 5: 検証と後片付け（単体テスト / シミュレータ E2E / 実機確認 / `docs/specs/word-practice.md` / 仕様書更新）
 
 ## 不具合

@@ -38,7 +38,8 @@ struct SessionListView: View {
 
     private func row(_ summary: ChatHistoryStore.SessionSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(summary.topicTitle)
+            // 単語練習のセッションは topicTitle が練習語そのものなので、印が無いと区別できない
+            Text(summary.mode == .word ? "📖 \(summary.topicTitle)" : summary.topicTitle)
                 .font(.headline)
                 .lineLimit(1)
             HStack(spacing: 8) {

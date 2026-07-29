@@ -35,6 +35,23 @@ final class SessionFeedbackClientTests: XCTestCase {
         XCTAssertTrue(content.contains("Learner: I like ramen."))
     }
 
+    /// 単語モードは 1 行目だけを `Practice word:` に差し替える（system prompt は共通 = キャッシュ維持）。
+    func testWordModeUsesPracticeWordLabel() throws {
+        let transcript = "Learner: I finally got around to it.\nChobi: Nice!"
+        let data = try SessionFeedbackClient.makeRequestBody(
+            mode: .word, topic: "get around to", transcript: transcript)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+        let content = try XCTUnwrap(messages[0]["content"] as? String)
+        XCTAssertTrue(content.hasPrefix("Practice word: get around to"))
+        XCTAssertFalse(content.contains("Topic:"))
+        XCTAssertTrue(content.contains(transcript))
+
+        let system = try XCTUnwrap(json["system"] as? [[String: Any]])
+        XCTAssertEqual(system[0]["text"] as? String, SessionFeedbackClient.systemPrompt)
+    }
+
     func testParseResultDecodesFeedback() throws {
         let text = """
         {"summary":"今日はたくさん話せましたね。次は過去形を意識してみましょう。",\

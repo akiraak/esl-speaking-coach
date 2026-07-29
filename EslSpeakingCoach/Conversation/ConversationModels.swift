@@ -11,7 +11,7 @@ enum SessionOpeningMessage {
         mode: PracticeMode = .conversation, topic: String, memoryNote: String?
     ) -> String {
         let topicLine = "[\(mode.openingControlKey): \(topic)]"
-        guard mode.injectsMemoryNote,
+        guard mode.usesMemoryNote,
               let memoryLine = composeMemoryOnly(memoryNote: memoryNote)
         else {
             return topicLine

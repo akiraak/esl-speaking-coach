@@ -42,13 +42,23 @@ enum PracticeMode: String, Sendable, CaseIterable {
         }
     }
 
-    /// 開始メッセージに記憶ノート（`[Memory: ...]`）を混ぜるか。
-    /// 単語モードは混ぜない ―― ノートは身の回りの事実を貯めるもので 1 語の練習には効かず、
-    /// 先頭が長くなるぶんレイテンシと料金だけを食うため（更新もしないので対称）。
-    var injectsMemoryNote: Bool {
+    /// 記憶ノートを使うか（開始時の `[Memory: ...]` 注入と、終了時のローリング更新の両方）。
+    /// 単語モードは使わない ―― ノートは身の回りの事実を貯めるもので 1 語の練習には効かず、
+    /// 先頭が長くなるぶんレイテンシと料金だけを食う。単語練習の逐語がノートに入ると
+    /// 会話モードの雑談品質も落ちるので、注入と更新の両方を止める。
+    var usesMemoryNote: Bool {
         switch self {
         case .conversation: return true
         case .word: return false
+        }
+    }
+
+    /// セッション後フィードバックへ渡す 1 行目のラベル（`Topic: X` / `Practice word: X`）。
+    /// system prompt は共通のまま、評価の観点だけをこの 1 語で寄せる。
+    var feedbackTopicLabel: String {
+        switch self {
+        case .conversation: return "Topic"
+        case .word: return "Practice word"
         }
     }
 
