@@ -17,6 +17,8 @@ targets:
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "英会話練習であなたの発話を取得するためにマイクを使用します。"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # 縦向き固定（トーク画面は縦長前提のレイアウト。docs/plans/archive/portrait-only.md）
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         CURRENT_PROJECT_VERSION: 1

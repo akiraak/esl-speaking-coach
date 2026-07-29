@@ -1,5 +1,20 @@
 # DONE
 
+- 2026-07-29 画面を縦向き固定にした [plan](docs/plans/archive/portrait-only.md) [spec](docs/specs/screen-layout.md)
+  - トーク画面は縦長前提のレイアウト（吹き出し・カード・下端バー・入力バー）で、横向きだと 1 画面に入る会話が数行になりキーボードを出すとほぼ何も見えない。音声で話す使い方でも端末を寝かせることはないので縦に固定した
+  - 原因は `GENERATE_INFOPLIST_FILE: YES` で向きのキーを指定しておらず、生成される `Info.plist` に `UISupportedInterfaceOrientations` が**存在しなかった**こと（キーが無いと iPhone では portrait + landscape 両方が既定で許可される）
+  - 対応は `project.yml` に `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait` を足す 1 行だけ。コードでの `supportedInterfaceOrientations` オーバーライドはしない。上下逆さまも許可しない
+  - 確認: ビルド後の `Info.plist` に `UISupportedInterfaceOrientations~iphone = [UIInterfaceOrientationPortrait]` が入ること、シミュレータを Rotate Left してもアプリの UI が縦のまま（横倒しで描画される）ことをウィンドウのスクリーンショットで確認。XCTest 205 件パス（ロジック変更なしの退行確認）。**実機確認はユーザーが実施し OK**
+
+- 2026-07-28 単語熟語の学習を継続する仕組みを作った（練習した語を次回のカードに出す） [plan](docs/plans/archive/vocabulary-continuity.md) [spec](docs/specs/word-practice.md)
+  - 単語モードは 1 語をじっくり練習できるが**その語がその場で終わる**（次に何をやるか毎回思いつく必要があり、一度やった語は二度と出てこない）。仕組みは **「単語を保存する」「次回学習時に表示する」の 2 つだけ**に絞った
+  - **新しい永続化モデルを増やしていない**。練習語はすでに `ChatSessionRecord`（mode=word）の `topicTitle` に入っているので、マイグレーションもストア新設も無く、保存済みデータの見せ方を足すだけで成立する
+  - 単語カードの未使用時に「前に練習した単語（タップでもう一度）」のピルを並べる（新しい順・重複除去・最大 6 件・`LazyVGrid` で折り返し）。**タップで入力アラートを挟まず即開始**。練習履歴が無いあいだはピルを出さず、入力ボタンだけの従来どおりの見た目になる
+  - 重複は純関数 `ChatRoomStore.practicedWordSuggestions(from:limit:)` が正規化キー（小文字化 + 空白の畳み込み）で畳み、**新しい方の表記**を残す。`ChatHistoryStore.recentWords(limit:)` は古い順 → **新しい順**に変えた（未使用メソッドだったので呼び出し側への影響なし）
+  - 再練習セッションは**特別扱いを一切していない**（`[New word: X]`・区切り・system prompt・フィードバックすべて同じ）。会話モードのカードにも影響なし
+  - SRS・定着判定・`try_phrases` からの自動取り込み・会話モードへの対象語注入は見送り（プランに理由を残した）。語を消したいときは管理画面でそのセッションを削除する
+  - `PracticedWordSuggestionsTests` を追加して XCTest 205 件パス。シミュレータ E2E で「終了 → 次のカードにピル → そのピルから再練習が始まる」まで確認（`-start-from-card` を単語カードにも効かせた）。**実機確認はユーザーが実施し OK**
+
 - 2026-07-28 単語練習モードを作った（会話 / 単語の 2 モード） [plan](docs/plans/archive/word-practice-mode.md) [spec](docs/specs/word-practice.md)
   - 会話モードは「トピックで雑談」1 本だけで、発話量を稼ぐという第一目的には合っているが**使える語彙が増えない**（自分の知っている表現の中だけで回してしまう）。同じトークルームの中で切り替えられる単語練習モードを足した
   - **Chobi = 先生 / Naruko = 学習者と一緒に学ぶ生徒**（会話モードの no-teaching とはほぼ真逆）。1 セッション 1 語を、意味 → 例文 → 自分の文で使う → 別の文脈で使い直す、で回す。練習する語はユーザーが入力する（候補の自動生成はしない）
