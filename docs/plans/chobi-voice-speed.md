@@ -1,11 +1,15 @@
-# Naruko の読み上げが遅い — 調査プラン
+# Chobi の読み上げが遅い — 調査と対応
 
 ## 目的・背景
 
-実機での会話中、**Naruko の声がゆっくりすぎる**（Chobi と比べて間延びして聞こえる）。
+実機での会話中、**Chobi の声がゆっくりすぎる**（間延びして聞こえる）。
 会話のテンポが落ちると学習者の発話の番が遠のくので、第一目的（発話量）にも効く。
 
 原因を切り分けて、直せる場所（voice / スタイル前置文 / 再生側）を特定する。
+
+> 最初の依頼は「Naruko が遅い」だったので調査は Naruko を主対象に始めたが、**実測では
+> Naruko のほうが速く**（Chobi 2.68 / Naruko 2.84 w/s）、その後ユーザーから「対象は Chobi」と
+> 訂正があった。測定結果は両キャラぶんあるのでそのまま残し、対応は Chobi に対して行う。
 
 ## 現状（コードの事実）
 
@@ -98,15 +102,40 @@ Aoede は中位で、上位の Autonoe でも +9% 程度。**前置文の指示�
 
 ## 対応方針（調査結果を見てから決める）
 
-実測を踏まえた推奨は **`ChatCharacter.speechStyle` の前置文に速さの指示を足す**（1 行）。
+実測を踏まえた対応は **`ChatCharacter.speechStyle` の前置文を変える**（Chobi のみ）。
 voice の差し替えは効きが小さいわりに声質が変わるので採らない。
 再生側のレート変換（音程が変わる）も不要。
 
-- 第一候補: Naruko の前置文に `Speak at a brisk, natural conversational pace, without
-  dragging out words:` を足す（実測 +14%）
-- Chobi も 2.68 w/s と遅めなので、**両方に足すかは要判断**。Chobi は落ち着いた先生役なので
-  Naruko より遅いこと自体は設計どおり（差を保ったまま両方を底上げする形もある）
-- それでも足りなければ voice を Autonoe（実測で最速・明るい）へ替える案が残る
+## 対応（2026-07-28 実施）
+
+Chobi の前置文には速さの指示を足すだけでは効きが弱かった（実発話 10 件で 2.62 → 2.78、+6%）。
+**"calm" が話速を引っ張っている**と見て語そのものを替えた案を測ったところ、こちらが効いた。
+
+| 前置文 | w/s（実 Chobi 発話 10 件） |
+| --- | --- |
+| 現行 | 2.52 |
+| calm を残して速さの指示だけ足す | 2.74 |
+| calm を残して強い速さの指示 | 2.74 |
+| **"calm" → "lively" + 速さの指示** | **2.85** |
+
+採用した前置文（`ChatCharacter.chobi.speechStyle`）:
+
+```
+Read aloud in a warm, lively, gently cheerful voice, like a friendly teacher chatting with
+a student. Speak at a brisk, natural conversational pace, without dragging out words:
+```
+
+ばらつきがあるので現行と採用案を各 2 回で取り直して確認: **2.57 → 2.87 w/s（+12%）**、
+最も遅い行も 1.92 → 2.15。Naruko（2.84）と同程度になった。
+
+- **Naruko は変更しない**（実測で遅くなく、今回の対象でもないため）
+- キャラ設定の「落ち着いて温かい」は system prompt 側で保つ。ここで変えたのは
+  **読み上げの声色の指示だけ**（`docs/specs/conversation-design.md` に決定として追記）
+- voice の差し替え（Autonoe 等）は効きが小さいわりに声質が変わるので採らなかった
+- 単体テストは前置文の文言に依存していない（`CloudPipelineProtocolTests` は
+  `speechStyle.styleInstruction` を参照して前置を検証する形）ので、198 件そのままパス
+- **実機での聞こえ方は未確認**。before / after の wav をセッションの作業ディレクトリに置いた
+  （`chobi-before.wav` 2.34 w/s / `chobi-after.wav` 2.78 w/s。同じ説明文）
 
 ## 影響範囲
 

@@ -21,11 +21,12 @@
 | 架空の好み | 猫・コーヒー・ミステリー小説 | ラーメン・カラオケ・スマホゲーム |
 | アバター色 | ピンク `#EF5DA8` | 薄い緑（仮 `#6FCF97`。UI 実装時に案 D パレットと調和で微調整可） |
 | TTS voice | Leda | Aoede |
-| TTS スタイル前置文 | "Read aloud in a warm, calm, gently cheerful voice, like a friendly teacher smiling as she talks:" | "Read aloud in a bright, energetic voice, full of curiosity, like an enthusiastic student chatting with friends:" |
+| TTS スタイル前置文 | "Read aloud in a warm, lively, gently cheerful voice, like a friendly teacher chatting with a student. Speak at a brisk, natural conversational pace, without dragging out words:" | "Read aloud in a bright, energetic voice, full of curiosity, like an enthusiastic student chatting with friends:" |
 
 - 原典（`claude-code-manager/ai-monitor/voice-persona.json`）の emotions マップと「AI であることを隠さない」ルールは移植しない。軽い架空の日常（上記の好み）を持たせ、日常系トピックで雑談が弾むようにする
 - Naruko の pun は「隠し味」: 数会話に 1 回・1 会話に最大 1 つ・連発禁止・すべったら Chobi がツッコむ（頻度制御は system prompt 内）
 - **2026-07-25 変更**: 会話中はどちらのキャラも学習者を訂正・指導しない（実会話で Chobi が先生モードになり会話が途切れるため）。指導はセッション後フィードバック（[session-feedback.md](session-feedback.md)）に集約。例外は学習者からの直接の言語質問に Chobi が短く答える場合のみ
+- **2026-07-28 変更**: Chobi のスタイル前置文から "calm" を外して "lively" にし、速さの指示を足した。実機で読み上げが遅く聞こえたため。実測（保存済みの Chobi 発話 10 件・各 2 回）で 2.57 → 2.87 words/sec、最も遅い行も 1.92 → 2.15。話速を決めているのは voice ではなく前置文で、Aoede / Leda を入れ替えても前置文が同じなら話速はほぼ同じだった（[chobi-voice-speed.md](../plans/chobi-voice-speed.md)）。性格の「落ち着いて温かい」は system prompt 側で保つ
 - **2026-07-25 変更**: Naruko の発話量を Chobi と同程度にリバランス（実会話で Naruko の出番が少なかったため）。"Speaks less than Chobi" を撤廃し、セッション全体でのターン取得と最終行の質問を両キャラ同程度に、Chobi の 3 連続ターンを禁止、トピック開始キャラも交替させる
 
 ## ターン進行（台本方式）

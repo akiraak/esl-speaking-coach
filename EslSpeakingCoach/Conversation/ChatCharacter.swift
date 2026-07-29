@@ -34,11 +34,14 @@ enum ChatCharacter: String, CaseIterable, Sendable, Identifiable {
     var speechStyle: SpeechStyle {
         switch self {
         case .chobi:
+            // "calm" が話速を引っ張っていたので "lively" に替え、速さの指示を足してある
+            // （実測 2.57 → 2.87 words/sec。docs/plans/chobi-voice-speed.md）
             return SpeechStyle(
                 voice: "Leda",
                 styleInstruction: """
-                    Read aloud in a warm, calm, gently cheerful voice, like a friendly teacher \
-                    smiling as she talks:
+                    Read aloud in a warm, lively, gently cheerful voice, like a friendly teacher \
+                    chatting with a student. Speak at a brisk, natural conversational pace, \
+                    without dragging out words:
                     """)
         case .naruko:
             return SpeechStyle(

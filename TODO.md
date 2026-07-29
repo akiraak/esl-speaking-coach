@@ -11,6 +11,6 @@
 
 ## 不具合
 
-- [ ] Naruko の読み上げがゆっくりすぎる [plan](docs/plans/naruko-voice-speed.md)
+- [ ] Chobi の読み上げがゆっくりすぎる [plan](docs/plans/chobi-voice-speed.md)（前置文を修正済み。実機で聞いて確認したら閉じる）
 - [ ] 会話終了ボタンを押したらアプリが落ちた [plan](docs/plans/end-session-crash.md)
 - [ ] 会話終了後のフィードバックの文章が途中で途切れる [plan](docs/plans/feedback-truncated.md)
