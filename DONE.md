@@ -1,5 +1,14 @@
 # DONE
 
+- 2026-07-29 単語帳（esl.chobi.me）から練習する単語を選べるようにした [plan](docs/plans/archive/wordbook-word-picker.md) [spec](docs/specs/word-practice.md)
+  - 単語モードの出題が手入力と再練習ピルだけで、**新しく練習する語を毎回自分で思いつく必要があった**。隣のプロジェクト esl-learning-assistant（https://esl.chobi.me）に蓄積済みの単語帳を読み取り専用 API `GET /api/words`（`X-API-Secret` 認証）で引き、単語カードの「単語帳から選ぶ」ボタン → シートの一覧（英語 + 第 1 義 + CEFR + 品詞・新しい順）→ **行タップで即セッション開始**にした。手入力・再練習ピルはそのまま残す
+  - シークレットは既存規約どおり **Keychain**（`wordbook-api-secret`）。`.secrets/wordbook-api-secret`（値は `../esl-learning-assistant/.env.prod` の `API_SECRET`）+ `-seed-wordbook-key` で run スクリプトからシードする
+  - 実装は `EslSpeakingCoach/WordBook/`（`WordBookClient` / `WordBookPickerStore` / `WordBookPickerView`）。検索はサーバの `q`（300ms デバウンス + 世代ガードで古い条件の応答を破棄）、ページングは `offset` の追い読み（`total` で終端判定・重複除去・失敗時はリストを保って末尾の再試行ボタン）。API のレスポンス型は UI に流さず `WordBookEntry` に詰め替える。取得はシートを開くたび（キャッシュ・差分同期なし）
+  - base URL と `targetLanguage=ja` はハードコード（自分専用の既存流儀）。E2E 用に DEBUG 起動引数 `-open-wordbook` / `-wordbook-query` / `-pick-first-wordbook-word` / `-wordbook-base-url`（ローカル backend 向け上書き）を追加
+  - 単体テスト `WordBookClientTests`（リクエスト組み立て・熟語のエンコード・null 許容デコード・エラー変換）と `WordBookPickerStoreTests`（初回 / 再試行・シークレット未設定の案内・検索・追い読みの境界）を追加して XCTest 221 件パス。シミュレータ E2E で一覧 → 検索 → タップ開始 → 401 → シークレット未設定の案内まで確認
+  - **実装当日は本番 `GET /api/words` が 404 だった**（API 追加コミットが esl-learning-assistant 側で未 push・未デプロイ。`/api/ping` は通るので切り分けは容易だった）。デプロイで解消し、本番疎通（HTTP 200・185 語）とシミュレータでの本番一覧表示を確認。**実機確認はユーザーが実施し OK**
+  - スコープ外のまま残したもの: 練習済みマーク・SRS 連動・`updatedSince` の差分同期・`GET /api/words/:word` の詳細表示（TODO の辞書機能で扱う）・単語帳への逆方向書き込み
+
 - 2026-07-29 画面を縦向き固定にした [plan](docs/plans/archive/portrait-only.md) [spec](docs/specs/screen-layout.md)
   - トーク画面は縦長前提のレイアウト（吹き出し・カード・下端バー・入力バー）で、横向きだと 1 画面に入る会話が数行になりキーボードを出すとほぼ何も見えない。音声で話す使い方でも端末を寝かせることはないので縦に固定した
   - 原因は `GENERATE_INFOPLIST_FILE: YES` で向きのキーを指定しておらず、生成される `Info.plist` に `UISupportedInterfaceOrientations` が**存在しなかった**こと（キーが無いと iPhone では portrait + landscape 両方が既定で許可される）

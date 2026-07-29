@@ -8,6 +8,7 @@ enum DebugLaunchArguments {
         ("-seed-anthropic-key", "-delete-anthropic-key", KeychainStore.anthropicAPIKeyAccount),
         ("-seed-openai-key", "-delete-openai-key", KeychainStore.openAIAPIKeyAccount),
         ("-seed-gemini-key", "-delete-gemini-key", KeychainStore.geminiAPIKeyAccount),
+        ("-seed-wordbook-key", "-delete-wordbook-key", KeychainStore.wordBookAPISecretAccount),
     ]
 
     static func apply() {
@@ -104,6 +105,38 @@ enum DebugLaunchArguments {
                 reason: "診断ログのクラッシュ記録テスト", userInfo: nil
             ).raise()
         }
+    }
+
+    /// 起動時に単語帳ピッカーを開く（シミュレータでの表示確認用。`-practice-mode word` と併用）。
+    /// 例: -practice-mode word -open-wordbook
+    static var shouldOpenWordBookPicker: Bool {
+        ProcessInfo.processInfo.arguments.contains("-open-wordbook")
+    }
+
+    /// 単語帳ピッカーを検索済みの状態で開く（サーバ検索 `q` の E2E 用）。
+    /// 例: -open-wordbook -wordbook-query "get"
+    static var wordBookInitialQuery: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-wordbook-query"), index + 1 < args.count else {
+            return nil
+        }
+        return args[index + 1]
+    }
+
+    /// 単語帳ピッカーの読み込み完了後、先頭の語を選んだ扱いにする
+    /// （シートを閉じてセッション開始する導線の E2E 用）。
+    static var shouldPickFirstWordBookWord: Bool {
+        ProcessInfo.processInfo.arguments.contains("-pick-first-wordbook-word")
+    }
+
+    /// 単語帳 API の base URL を上書きする（ローカル backend での E2E 用。リリースでは常に本番）。
+    /// 例: -wordbook-base-url http://localhost:3005
+    static var wordBookBaseURLOverride: URL? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-wordbook-base-url"), index + 1 < args.count else {
+            return nil
+        }
+        return URL(string: args[index + 1])
     }
 
     /// 起動時に管理画面を開く（シミュレータでの表示確認用）。

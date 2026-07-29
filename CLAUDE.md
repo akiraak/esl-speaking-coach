@@ -79,8 +79,8 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 - API キーは **Keychain** に保存する。`UserDefaults`・plist・ソースコードに書かない
 - **API キーをリポジトリにコミットしない。** `.gitignore` と、コミット前の確認を徹底する
-- ローカル開発では `.secrets/<provider>-api-key`（git 管理外、1 行のプレーンテキスト。現在は `anthropic-api-key` / `openai-api-key` / `gemini-api-key`）にキーを置くと、`./run-install-iphone.sh` / `./run-simulator.sh` が起動引数 `-seed-<provider>-key` で Keychain へ流し込む（DEBUG ビルドのみ有効）。設定画面からの手入力は不要になる
-- 会話履歴は端末内のみ。外部に送信するのは音声・会話系 API（Claude / 検証中の音声プロバイダ）へのリクエストだけ
+- ローカル開発では `.secrets/<provider>-api-key`（git 管理外、1 行のプレーンテキスト。現在は `anthropic-api-key` / `openai-api-key` / `gemini-api-key` / `wordbook-api-secret`）にキーを置くと、`./run-install-iphone.sh` / `./run-simulator.sh` が起動引数 `-seed-<provider>-key` で Keychain へ流し込む（DEBUG ビルドのみ有効）。設定画面からの手入力は不要になる
+- 会話履歴は端末内のみ。外部に送信するのは音声・会話系 API（Claude / 検証中の音声プロバイダ）へのリクエストと、単語帳（esl.chobi.me）の読み取り専用 API への検索クエリだけ
 
 <!-- vibeboard:begin -->
 ## 開発管理画面 (vibeboard)

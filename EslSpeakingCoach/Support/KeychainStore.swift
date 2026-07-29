@@ -12,6 +12,8 @@ struct KeychainStore {
     static let anthropicAPIKeyAccount = "anthropic-api-key"
     static let openAIAPIKeyAccount = "openai-api-key"
     static let geminiAPIKeyAccount = "gemini-api-key"
+    /// 単語帳（esl.chobi.me）の X-API-Secret（docs/plans/wordbook-word-picker.md）
+    static let wordBookAPISecretAccount = "wordbook-api-secret"
 
     private let service = "com.akiraak.EslSpeakingCoach"
 

@@ -216,6 +216,8 @@ struct TopicCardView: View {
     let onSelect: (String) -> Void
     let onRegenerate: () -> Void
     let onCustomTopic: () -> Void
+    /// 単語モードのみ: 単語帳（esl.chobi.me）から選ぶシートを開く
+    let onWordBook: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -323,14 +325,25 @@ struct TopicCardView: View {
             }
         }
 
-        Button(action: onCustomTopic) {
-            Label("単語を入力", systemImage: "plus")
-                .font(.caption.weight(.semibold))
+        HStack(spacing: 10) {
+            Button(action: onCustomTopic) {
+                Label("単語を入力", systemImage: "plus")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(ChatTheme.accent)
+            .disabled(card.isUsed)
+
+            Button(action: onWordBook) {
+                Label("単語帳から選ぶ", systemImage: "books.vertical")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(ChatTheme.accent)
+            .disabled(card.isUsed)
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .tint(ChatTheme.accent)
-        .disabled(card.isUsed)
     }
 
     /// 前に練習した語のピル（フックが無いぶんトピック候補より小さく、折り返して並べる）。

@@ -8,6 +8,9 @@ struct ChatRoomView: View {
     @State private var isConfirmingEndSession = false
     @State private var customTopicText = ""
     @State private var customTopicCardID: UUID?
+    /// 単語帳ピッカー（単語モードのカードの「単語帳から選ぶ」）
+    @State private var isShowingWordBookPicker = false
+    @State private var wordBookCardID: UUID?
     @State private var draftText = ""
     /// ユーザーが手動で遡っている間は自動スクロールしない。
     /// 手動スクロールが最下部付近で終わったら再開する
@@ -41,6 +44,13 @@ struct ChatRoomView: View {
                 memoryStore: store.memoryStore)
             #endif
         }
+        // シートを閉じてからセッションを開始する（ピルタップと同じ経路）
+        .sheet(isPresented: $isShowingWordBookPicker) {
+            WordBookPickerView(onSelect: { word in
+                store.startSession(topic: word, fromCard: wordBookCardID)
+                wordBookCardID = nil
+            })
+        }
         // ボタンはセッション終了で消えるので、ダイアログはボタンではなく画面側に付ける
         .alert(
             isWordMode ? "この単語を終了しますか？" : "このトピックを終了しますか？",
@@ -64,6 +74,9 @@ struct ChatRoomView: View {
             #if DEBUG
             if DebugLaunchArguments.shouldOpenAdmin {
                 isShowingAdmin = true
+            }
+            if DebugLaunchArguments.shouldOpenWordBookPicker {
+                isShowingWordBookPicker = true
             }
             #endif
         }
@@ -272,6 +285,10 @@ struct ChatRoomView: View {
                     customTopicCardID = card.id
                     customTopicText = ""
                     isShowingTopicInput = true
+                },
+                onWordBook: {
+                    wordBookCardID = card.id
+                    isShowingWordBookPicker = true
                 })
         case .feedbackCard(let card):
             FeedbackCardView(
