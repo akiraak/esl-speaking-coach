@@ -354,11 +354,18 @@ enum PracticeMode: String, Sendable, CaseIterable {
 - シミュレータ E2E（会話・退行確認）: goodbye で自動終了 → `practice=conversation` で
   フィードバックが生成され、記憶ノートが更新される（`ZUPDATEDAT` が進む）ことを確認
 
-### Phase 5: 検証と後片付け
+### Phase 5: 検証と後片付け（完了 2026-07-28）
 
-- 単体テスト・シミュレータ E2E・実機確認
-- `docs/specs/word-practice.md` 作成、`screen-layout.md` / `conversation-design.md` / `CLAUDE.md` 更新
-- `TODO.md` → `DONE.md`、プランを `docs/plans/archive/` へ
+- 単体テスト・シミュレータ E2E は Phase 1〜4 で実施済み（各 Phase の「確認」を参照）
+- **実機確認はユーザーが実施し OK**（Phase 1 のマイグレーション確認と Phase 2 のピルの
+  タップ切替の持ち越しもここで解消）
+- `TODO.md` の Phase 子タスクは全て閉じ、親項目だけを残した
+  （このモードへの追加作業が続くため、親は `DONE.md` へ移さずプランも archive しない）
+
+未実施（追加作業がひと区切りついてからまとめて書く）:
+
+- `docs/specs/word-practice.md` 作成、`screen-layout.md` / `conversation-design.md` /
+  `CLAUDE.md` の更新
 
 ## テスト方針
 
