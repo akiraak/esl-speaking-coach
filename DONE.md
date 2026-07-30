@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-30 単語の同期タイミングの確認（調査のみ・コード変更なし） [plan](docs/plans/archive/wordbook-sync-timing.md)
+  - 単語帳（esl.chobi.me）で調べた語がピッカーにいつ反映されるかを、アプリ・HTTP・CDN・サーバの各層で確認した
+  - 結論: **同期はシートを開くたびに毎回フル取得**で、古いデータが出る余地はどの層にもない。単語帳側は word-info 生成完了と同時に同期的に DB へ upsert され（一覧に居るのに詳細が無い状態は存在しない）、一覧は `updated_at DESC` なので調べた直後の語が先頭に出る。HTTP は weak ETag のみ（再検証だけでキャッシュ freshness なし）、Cloudflare も `DYNAMIC` でエッジキャッシュなし
+  - 唯一反映されないのはシートを開きっぱなしの間だけ（開き直し・検索で反映されるので対応不要）。`updatedSince` 差分同期・pull-to-refresh は引き続きスコープ外
+
 - 2026-07-29 単語帳ピッカーに単語の詳細画面を追加した（`GET /api/words/:word` の wordInfo 全項目） [plan](docs/plans/archive/wordbook-word-detail.md) [spec](docs/specs/word-practice.md)
   - ピッカー一覧は英語 + 第 1 義 + CEFR + 品詞だけで**その語を今日練習するか決める材料が薄かった**。各行に ⓘ を足し、同じ NavigationStack に詳細を push する（行本体タップ = 即セッション開始は変えず、`List` 内で `.plain` の行ボタンと `.borderless` の ⓘ を分けて個別タップにする）
   - 詳細は `GET /api/words/:word?targetLanguage=ja` の `wordInfo` 全項目（語義 / 発音 / 活用 / 例文 / コロケーション / 類義・反意 / 使い方ノート / よくある間違い / 語源 / CEFR / 使用域）。null・空配列のセクションは丸ごと非表示。チップの折り返しは自前の `ChipFlowLayout`（SwiftUI `Layout`）。開くたびに取得しキャッシュしない。下部固定「この単語を練習する」→ ピッカーの `select` をそのまま呼びシートを閉じて開始（詳細取得に失敗しても押せる）
