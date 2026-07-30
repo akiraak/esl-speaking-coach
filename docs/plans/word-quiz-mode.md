@@ -18,6 +18,7 @@ TODO: 「練習済み単語から単語クイズを受けれる会話モード�
 | --- | --- | --- |
 | モードの持ち方 | `PracticeMode` に第 3 のケース **`quiz`** を追加（ヘッダのピルに「クイズ」が並ぶ） | 既存の word 追加と同じ形。rawValue `quiz` は未知値として旧バージョンでも conversation にフォールバックする（`init(storedValue:)` は変更不要） |
 | 出題ソース | 練習済みの語（`ChatHistoryStore` の mode=word セッションの `topicTitle`）を正規化キーで畳み、**ランダムに最大 5 語**選ぶ | TODO の要件どおり。単語帳・未練習語は使わない（まだ知らない語のクイズは成立しない）。重複は新しい表記を残す（ピルと同じ流儀） |
+| **出題済みの除外** | mode=quiz セッションの `topicTitle`（連結文字列）を `", "` で分割して**出題済みの語**を復元し、**未出題の語を優先**して選ぶ。5 語に満たなければ出題済みから補充（クイズの長さを揃える）、全語出題済みなら全語からのフォールバック（診断ログに 1 行） | 完全ランダムだと同じ語ばかり出て復習が偏る。除外の照合は `normalizedWordKey`、フォールバックの手筋は「未練習からランダムに選ぶ」（`unpracticedWords` / `randomWordChoice`）と同じ。専用の出題記録モデルは作らない |
 | 1 セッションの構成 | 選んだ**最大 5 語（`quizWordCount`）を 1 セッションで順に出題**。全語出し終えても終わらず、角度を変えて再出題を続ける | 単語モードの「1 語をじっくり」とは役割が違う（教える vs 思い出させる）。5 語で 1 周 10 分程度を想定し、続けたければ回し続けられる |
 | 語の渡し方 | セッション開始時に `[Quiz words: put off, resilient, ...]` を 1 行送る（`openingControlKey` = `Quiz words`）。`topicTitle` にも同じ連結文字列を保存 | 既存の `startSession(topic:)` の topic を連結文字列にするだけで、区切り・保存・フィードバック・エラー再開の全経路がそのまま通る。途中で語を追加注入する仕組みは作らない |
 | クイズの進め方（prompt 骨子） | Chobi が 1 ターン 1 問: 意味や場面を英語で説明して**語を思い出させる** / 穴埋め / 自分の文で使わせる、を織り交ぜる。正誤の確認は短く、答えられたら**その語で自分の文**を作らせてから次へ。分からなければヒント（頭文字・場面）を出し、答えは最後まで教えずに粘らせすぎない | 思い出す練習が主目的。ただし詰問にならないよう、single most important goal（学習者の発話量）は word プロンプトから引き継ぐ |
@@ -28,6 +29,12 @@ TODO: 「練習済み単語から単語クイズを受けれる会話モード�
 | カード | 見出し「🎯 単語クイズ」+ 母集団の説明（`練習済み N語からランダムに5語を出題`）+ 「クイズを始める」ボタンの 1 枚。練習済み 0 語ならボタン無効 + 「先に単語モードで練習してください」 | 候補生成・入力・単語帳ボタンは載せない（出題は全部アプリ任せ、が このモードの価値）。出題語はカードに**出さない**（始まる前に見えたらクイズにならない） |
 | クイズは「練習済み」を増やさない | mode=quiz セッションは `recentWords` / `practicedWordsAll` / 単語カードの集計の**母集団に入れない**（既存フィルタが mode=word のままなので何もしなくてよい） | クイズは復習であり新規練習ではない。単語カードのピル・未練習の定義を汚さない |
 | system prompt | 新規 `QuizCoachSystemPrompt.swift`（固定文・`cache_control` 付き）。出力形式・音声・言語ルール節は word プロンプトから流用し、進行節だけ差し替える | キャッシュ最小プレフィックス 1024 トークン（sonnet-5）を満たす長さにする（word 版は 2,330 トークンなので同構成なら満たす） |
+
+- 出題済みの復元は連結文字列の `", "` 分割に頼るため、**語自体にカンマを含むと壊れる**。
+  実際の練習語（単語・句動詞・熟語）でカンマ入りはまず無いので許容する（気になったら
+  出題語を専用フィールドに持つ改修を別タスクで）
+- クイズを**開始した時点**でその 5 語は出題済み扱いになる（`beginSession` で保存されるため。
+  すぐ終了しても同じ）。復習の偏り防止が目的なので、この粗さは許容する
 
 ## 対応方針
 
@@ -52,17 +59,24 @@ TODO: 「練習済み単語から単語クイズを受けれる会話モード�
 - 出題の純関数を `ChatRoomStore` に追加:
   - `quizPool(from recentWords: [String]) -> [String]`: 正規化キー（`normalizedWordKey`）で畳んで
     新しい表記を残した練習済み語（実体は `practicedWordSuggestions` の上限なし版。定義を共有する）
-  - `quizWords(pool: [String], count: Int, using rng:) -> [String]`: ランダムに `count` 語
-    （`quizWordCount` = 5。pool がそれ未満なら全語）。RNG 注入でテスト可能に（`randomWordChoice` と同じ流儀）
+  - `quizzedWords(fromTitles: [String]) -> [String]`: mode=quiz セッションの `topicTitle`
+    （`", "` 連結）を分割して出題済みの語に戻す
+  - `quizWords(pool: [String], quizzed: [String], count: Int, using rng:) -> [String]`:
+    未出題（pool から出題済みを正規化キーで除外した残り）からランダムに選び、`count` 語
+    （`quizWordCount` = 5）に満たなければ出題済みからランダムに補充する。pool がそれ未満なら全語。
+    RNG 注入でテスト可能に（`randomWordChoice` と同じ流儀）
+- `ChatHistoryStore` に mode=quiz セッションの `topicTitle` 一覧を返すメソッドを追加
+  （`practicedWordsAll` と同じ形。フィルタが quiz になるだけ）
 - `TopicCard` に `quizPoolCount: Int` を追加（カード投稿時に確定。`wordSuggestions` と同じ扱い）
 - `postTopicCard()` を practiceMode の switch にし、quiz カード（`TopicCard(mode: .quiz)` +
   `quizPoolCount`）を投稿する
 - `TopicCardView` に `quizBody` を追加: 母集団の説明 caption + 「クイズを始める」ボタン
   （`quizPoolCount == 0` は無効化 + 案内文言）。使用済みカードには出題した語（`selectedTitle` =
   連結文字列）を残す（word カードと同じ見た目の流儀）
-- `ChatRoomStore.startQuizSession(fromCard:)` を追加: `recentWords` → `quizPool` → `quizWords` →
-  連結して既存 `startSession(topic:fromCard:)` を呼ぶ（ネットワーク不要・全部ローカル）。
-  診断ログに `quiz: 母集団N語 → <選んだ語>` を 1 行残す
+- `ChatRoomStore.startQuizSession(fromCard:)` を追加: `recentWords` → `quizPool` +
+  出題済み一覧 → `quizWords` → 連結して既存 `startSession(topic:fromCard:)` を呼ぶ
+  （ネットワーク不要・全部ローカル）。診断ログに
+  `quiz: 母集団N語 未出題M語 → <選んだ語>`（全語出題済みならその旨）を 1 行残す
 - DEBUG 起動引数 `-start-quiz`（クイズカードの開始ボタンをタップした扱い。E2E 用）を追加。
   `-practice-mode quiz` は rawValue 経由で自動対応
 
@@ -85,6 +99,8 @@ TODO: 「練習済み単語から単語クイズを受けれる会話モード�
 - 単体テスト:
   - `PracticeModeTests`: quiz の全プロパティ（既存の word のテストに並べる）
   - 新規 `QuizWordsTests`（`RandomWordChoiceTests` の流儀）: 畳み込み（新しい表記が残る）/
+    出題済みの復元（`", "` 分割 + 正規化キー照合）/ 未出題を優先して選ぶ /
+    未出題が 5 語未満なら出題済みから補充 / 全語出題済みで全語からのフォールバック /
     seeded RNG で選択固定 / pool < count で全語 / pool 空で空配列
   - `SessionOpeningMessageTests`: quiz は `[Quiz words: ...]` の 1 行だけ（Memory を混ぜない）
   - `PracticeModeCardTests`: quiz への / からの切替（会話カードの持ち越しが生きること）
@@ -96,6 +112,8 @@ TODO: 「練習済み単語から単語クイズを受けれる会話モード�
   (5) 区切り `クイズ:` / 管理画面 `🎯` / mode=quiz で保存
   (6) 練習済み 0 語（初期化した端末）でボタン無効
   (7) 会話・単語モードの退行が無い（単語カードのピル・集計にクイズセッションが混ざらない）
+  (8) 2 回目のクイズで前回の出題語が選ばれない（診断ログの `未出題M語` が 1 回目から減っていて、
+  選ばれた語が前回と重複しない）
 - 実機確認はユーザーが実施（音声での出題・回答の体感、5 語の長さの妥当性）
 
 ## 影響範囲
@@ -117,4 +135,5 @@ TODO: 「練習済み単語から単語クイズを受けれる会話モード�
 - 正誤の記録・語ごとの成績は**残さない**（履歴とフィードバックで足りる。SRS 的な優先度付けと合わせて
   引き続きスコープ外。欲しくなったら別タスク）
 - クイズ専用フィードバックプロンプト（まずは流用。単語モードと同じ判断）
-- 出題を「最近練習した語を優先」等に重み付けするか（まずは一様ランダム）
+- 出題の重み付けは**未出題の優先まで**。それ以上（最近練習した語を優先・間違えた語を再出題等）は
+  正誤の記録が要るのでスコープ外のまま
