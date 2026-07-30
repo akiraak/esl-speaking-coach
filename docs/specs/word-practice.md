@@ -107,6 +107,15 @@
   `offset` の追い読みに対応。行タップでシートを閉じてその語のセッションを即開始する
   （ピルと同じ経路）。実装は `EslSpeakingCoach/WordBook/`（`WordBookClient` /
   `WordBookPickerView` / `WordBookPickerStore`）、経緯は `docs/plans/archive/wordbook-word-picker.md`
+- **単語の詳細画面**（2026-07-29 追加）: ピッカー各行の ⓘ で、その語の詳細を同じ
+  NavigationStack に push する（行本体タップ = 即開始は変えない）。`GET /api/words/:word`
+  （熟語はパスを percent-encode、404 は「単語帳にこの単語の詳細がありません」）の `wordInfo`
+  全項目 — 語義（複数・番号付き）/ 発音（IPA・音節）/ 活用形 / 例文 / コロケーション /
+  類義語・反意語 / 使い方ノート / よくある間違い / 語源 / CEFR / 使用域 — を表示し、
+  null・空配列のセクションは丸ごと出さない。開くたびに取得しキャッシュしない。下部固定の
+  「この単語を練習する」で行タップと同じ経路のセッション開始。実装は `WordBookDetailView` /
+  `WordBookDetailStore` + `WordBookClient.fetchWordDetail`、経緯は
+  `docs/plans/archive/wordbook-word-detail.md`
 - 区切り文言は純関数 `ChatRoomStore.dividerLabel(mode:title:)`。起動時の履歴復元でも同じ表記になる
 
 ## セッション

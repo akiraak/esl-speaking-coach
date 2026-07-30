@@ -19,11 +19,58 @@ struct WordBookPage: Sendable, Equatable {
     let words: [WordBookEntry]
 }
 
+/// 単語帳 1 語の詳細（`GET /api/words/:word` の `wordInfo` 全項目）。
+/// null / 空配列はそのまま保持し、表示側でセクションごと畳む（docs/plans/wordbook-word-detail.md）。
+struct WordBookWordDetail: Sendable, Equatable {
+    struct Sense: Sendable, Equatable {
+        /// 母語（日本語）での語義
+        let meaning: String
+        let englishDefinition: String
+        let partOfSpeech: String
+        let note: String?
+    }
+
+    struct Pronunciation: Sendable, Equatable {
+        /// IPA（熟語は全体を 1 組のスラッシュで囲む）
+        let ipa: String
+        /// 音節区切り（dis-uh-BIL-uh-tee）。熟語は null
+        let syllables: String?
+    }
+
+    struct Inflection: Sendable, Equatable {
+        /// 活用の種類（plural / past など）
+        let form: String
+        let text: String
+    }
+
+    struct Example: Sendable, Equatable {
+        let english: String
+        let translation: String
+    }
+
+    /// 正規化済み（trim + 小文字）の語
+    let word: String
+    let senses: [Sense]
+    let pronunciation: Pronunciation
+    let inflections: [Inflection]
+    let examples: [Example]
+    let collocations: [String]
+    let synonyms: [String]
+    let antonyms: [String]
+    let usageNote: String?
+    let cefrLevel: String?
+    let etymology: String?
+    let register: String?
+    let commonMistakes: String?
+}
+
 enum WordBookError: Error, LocalizedError {
     case missingSecret
     case invalidResponse
     case httpError(statusCode: Int, body: String)
     case decodingFailed
+    /// 詳細 API の 404（一覧に出た直後に単語帳側で消された等）。401 / 500 と文言を混ぜない
+    case wordNotFound
 
     var errorDescription: String? {
         switch self {
@@ -38,6 +85,8 @@ enum WordBookError: Error, LocalizedError {
             return "HTTP \(statusCode): \(body.prefix(300))"
         case .decodingFailed:
             return "単語帳の応答を解釈できませんでした"
+        case .wordNotFound:
+            return "単語帳にこの単語の詳細がありません"
         }
     }
 }
@@ -87,6 +136,30 @@ struct WordBookClient: Sendable {
         return try Self.parseResponse(data)
     }
 
+    /// 1 語の詳細を取得する。404 は `wordNotFound`（一覧と違い「無い」が正常系に近いため専用ケース）。
+    func fetchWordDetail(secret: String, word: String) async throws -> WordBookWordDetail {
+        let request = Self.makeDetailRequest(secret: secret, word: word)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await Self.session.data(for: request)
+        } catch {
+            throw WordBookError.invalidResponse
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw WordBookError.invalidResponse
+        }
+        guard http.statusCode == 200 else {
+            if http.statusCode == 404 {
+                throw WordBookError.wordNotFound
+            }
+            throw WordBookError.httpError(
+                statusCode: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "")
+        }
+        return try Self.parseDetailResponse(data)
+    }
+
     /// リクエストを組み立てる。テストから直接検証できるよう static にしてある。
     /// クエリの percent-encode は URLQueryItem に任せる（熟語のスペースも正しく載る）。
     static func makeRequest(secret: String, query: String, offset: Int) -> URLRequest {
@@ -132,6 +205,97 @@ struct WordBookClient: Sendable {
             let meaning: String?
             let partOfSpeech: String?
             let cefrLevel: String?
+        }
+    }
+
+    /// 詳細リクエストを組み立てる。語はパスコンポーネントに載せ、percent-encode は
+    /// `appending(path:)` に任せる（熟語のスペースが `even%20though` になる。テストで固定）。
+    static func makeDetailRequest(secret: String, word: String) -> URLRequest {
+        var url = baseURL
+            .appending(path: "/api/words")
+            .appending(path: word)
+        url.append(queryItems: [URLQueryItem(name: "targetLanguage", value: targetLanguage)])
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(secret, forHTTPHeaderField: "X-API-Secret")
+        return request
+    }
+
+    /// 詳細レスポンス JSON をモデルへ変換する。契約上 nullable な項目（note / syllables /
+    /// usageNote 等）だけ nil を許し、必須項目が欠けた応答は `decodingFailed` にする。
+    /// ルート外のメタ（model / generationCount）は学習に不要なので落とす。
+    static func parseDetailResponse(_ data: Data) throws -> WordBookWordDetail {
+        guard let payload = try? JSONDecoder().decode(DetailResponsePayload.self, from: data) else {
+            throw WordBookError.decodingFailed
+        }
+        let info = payload.wordInfo
+        return WordBookWordDetail(
+            word: payload.word,
+            senses: info.senses.map {
+                WordBookWordDetail.Sense(
+                    meaning: $0.meaning,
+                    englishDefinition: $0.englishDefinition,
+                    partOfSpeech: $0.partOfSpeech,
+                    note: $0.note)
+            },
+            pronunciation: WordBookWordDetail.Pronunciation(
+                ipa: info.pronunciation.ipa,
+                syllables: info.pronunciation.syllables),
+            inflections: info.inflections.map {
+                WordBookWordDetail.Inflection(form: $0.form, text: $0.text)
+            },
+            examples: info.examples.map {
+                WordBookWordDetail.Example(english: $0.english, translation: $0.translation)
+            },
+            collocations: info.collocations,
+            synonyms: info.synonyms,
+            antonyms: info.antonyms,
+            usageNote: info.usageNote,
+            cefrLevel: info.cefrLevel,
+            etymology: info.etymology,
+            register: info.register,
+            commonMistakes: info.commonMistakes)
+    }
+
+    private struct DetailResponsePayload: Decodable {
+        let word: String
+        let wordInfo: WordInfoPayload
+
+        struct WordInfoPayload: Decodable {
+            let senses: [SensePayload]
+            let pronunciation: PronunciationPayload
+            let inflections: [InflectionPayload]
+            let examples: [ExamplePayload]
+            let collocations: [String]
+            let synonyms: [String]
+            let antonyms: [String]
+            let usageNote: String?
+            let cefrLevel: String?
+            let etymology: String?
+            let register: String?
+            let commonMistakes: String?
+        }
+
+        struct SensePayload: Decodable {
+            let meaning: String
+            let englishDefinition: String
+            let partOfSpeech: String
+            let note: String?
+        }
+
+        struct PronunciationPayload: Decodable {
+            let ipa: String
+            let syllables: String?
+        }
+
+        struct InflectionPayload: Decodable {
+            let form: String
+            let text: String
+        }
+
+        struct ExamplePayload: Decodable {
+            let english: String
+            let translation: String
         }
     }
 }

@@ -1,5 +1,13 @@
 # DONE
 
+- 2026-07-29 単語帳ピッカーに単語の詳細画面を追加した（`GET /api/words/:word` の wordInfo 全項目） [plan](docs/plans/archive/wordbook-word-detail.md) [spec](docs/specs/word-practice.md)
+  - ピッカー一覧は英語 + 第 1 義 + CEFR + 品詞だけで**その語を今日練習するか決める材料が薄かった**。各行に ⓘ を足し、同じ NavigationStack に詳細を push する（行本体タップ = 即セッション開始は変えず、`List` 内で `.plain` の行ボタンと `.borderless` の ⓘ を分けて個別タップにする）
+  - 詳細は `GET /api/words/:word?targetLanguage=ja` の `wordInfo` 全項目（語義 / 発音 / 活用 / 例文 / コロケーション / 類義・反意 / 使い方ノート / よくある間違い / 語源 / CEFR / 使用域）。null・空配列のセクションは丸ごと非表示。チップの折り返しは自前の `ChipFlowLayout`（SwiftUI `Layout`）。開くたびに取得しキャッシュしない。下部固定「この単語を練習する」→ ピッカーの `select` をそのまま呼びシートを閉じて開始（詳細取得に失敗しても押せる）
+  - client は `fetchWordDetail(secret:word:)` を追加。熟語はパスコンポーネントの percent-encode（`even%20though`、`appending(path:)` に任せてテストで固定）。404 は専用ケース `WordBookError.wordNotFound`（「単語帳にこの単語の詳細がありません」。401 / 500 と文言を混ぜない）。レスポンスは `WordBookWordDetail` へ詰め替え（API 型を UI に流さない既存流儀）
+  - E2E 用 DEBUG 起動引数 `-wordbook-detail <word>` を追加（ピッカー表示後に自動 push）。シミュレータで本番実データの disability（全項目）/ even though（syllables・register null・空配列の畳み込み）/ 404 / ⓘ タップ（アクセシビリティ経由）/ 詳細からの練習開始まで確認
+  - 単体テストは `WordBookClientTests` に詳細ぶん（リクエスト・熟語エンコード・フル / null / 壊れた JSON・404 文言）、新規 `WordBookDetailStoreTests`（成功 / 失敗→再試行 / 404 / シークレット未設定 / 二重取得なし）を追加して全テストパス。**実機確認はユーザーが実施し OK**
+  - スコープ外のまま: 会話中の辞書引き（本タスクの client / モデルを再利用予定）・詳細のローカルキャッシュ・TTS 発音再生・練習済みマーク
+
 - 2026-07-29 単語帳（esl.chobi.me）から練習する単語を選べるようにした [plan](docs/plans/archive/wordbook-word-picker.md) [spec](docs/specs/word-practice.md)
   - 単語モードの出題が手入力と再練習ピルだけで、**新しく練習する語を毎回自分で思いつく必要があった**。隣のプロジェクト esl-learning-assistant（https://esl.chobi.me）に蓄積済みの単語帳を読み取り専用 API `GET /api/words`（`X-API-Secret` 認証）で引き、単語カードの「単語帳から選ぶ」ボタン → シートの一覧（英語 + 第 1 義 + CEFR + 品詞・新しい順）→ **行タップで即セッション開始**にした。手入力・再練習ピルはそのまま残す
   - シークレットは既存規約どおり **Keychain**（`wordbook-api-secret`）。`.secrets/wordbook-api-secret`（値は `../esl-learning-assistant/.env.prod` の `API_SECRET`）+ `-seed-wordbook-key` で run スクリプトからシードする

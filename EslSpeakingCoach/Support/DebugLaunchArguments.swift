@@ -129,6 +129,16 @@ enum DebugLaunchArguments {
         ProcessInfo.processInfo.arguments.contains("-pick-first-wordbook-word")
     }
 
+    /// 単語帳ピッカー表示後にその語の詳細画面を自動で push する（詳細表示の E2E 用）。
+    /// 例: -practice-mode word -open-wordbook -wordbook-detail disability
+    static var wordBookDetailWord: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-wordbook-detail"), index + 1 < args.count else {
+            return nil
+        }
+        return args[index + 1]
+    }
+
     /// 単語帳 API の base URL を上書きする（ローカル backend での E2E 用。リリースでは常に本番）。
     /// 例: -wordbook-base-url http://localhost:3005
     static var wordBookBaseURLOverride: URL? {

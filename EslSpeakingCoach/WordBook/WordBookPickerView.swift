@@ -7,6 +7,8 @@ struct WordBookPickerView: View {
     let onSelect: (String) -> Void
 
     @State private var store = WordBookPickerStore()
+    /// ⓘ で開く詳細画面の対象語（navigationDestination(item:) で push）
+    @State private var detailWord: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -26,11 +28,18 @@ struct WordBookPickerView: View {
                     prompt: "単語を検索")
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+                // シートの上にシートを重ねず、同じ NavigationStack 内に push する
+                .navigationDestination(item: $detailWord) { word in
+                    WordBookDetailView(word: word, onPractice: select)
+                }
         }
         .task {
             #if DEBUG
             if let query = DebugLaunchArguments.wordBookInitialQuery {
                 store.searchText = query
+            }
+            if let word = DebugLaunchArguments.wordBookDetailWord {
+                detailWord = word
             }
             #endif
             await store.loadInitial()
@@ -66,12 +75,24 @@ struct WordBookPickerView: View {
     private var wordList: some View {
         List {
             ForEach(store.entries) { entry in
-                Button {
-                    select(entry.word)
-                } label: {
-                    entryRow(entry)
+                // 行本体タップ = 即セッション開始、ⓘ = 詳細画面。個別にタップさせるため
+                // Button を分けて borderless 系スタイルにする（行全体が 1 タップ判定になるのを避ける）
+                HStack(spacing: 8) {
+                    Button {
+                        select(entry.word)
+                    } label: {
+                        entryRow(entry)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        detailWord = entry.word
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(ChatTheme.accent)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("\(entry.word) の詳細")
                 }
-                .buttonStyle(.plain)
             }
             paginationFooter
         }
