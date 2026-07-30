@@ -368,7 +368,10 @@ struct TopicCardView: View {
                         .controlSize(.mini)
                     Text("単語帳から選んでいます…")
                 } else {
-                    Label("ランダムに選ぶ", systemImage: "dice")
+                    Label(
+                        ChatRoomStore.randomWordButtonTitle(
+                            unpracticed: wordBookTally?.unpracticed),
+                        systemImage: "dice")
                 }
             }
             .font(.caption.weight(.semibold))

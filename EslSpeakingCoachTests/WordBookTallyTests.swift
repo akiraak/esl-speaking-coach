@@ -64,4 +64,24 @@ final class WordBookTallyTests: XCTestCase {
     func testEmptyWordBookHidesLabel() {
         XCTAssertNil(ChatRoomStore.wordBookTallyLabel(total: 0, unpracticed: 0))
     }
+
+    // MARK: - randomWordButtonTitle
+
+    /// 未練習が残っていれば母集団（未練習）を明示する。
+    func testButtonTitleShowsUnpracticedPopulation() {
+        XCTAssertEqual(
+            ChatRoomStore.randomWordButtonTitle(unpracticed: 11), "未練習からランダムに選ぶ")
+    }
+
+    /// 全語練習済みは全語フォールバック（`randomWordChoice`）の実挙動に文言を合わせる。
+    func testButtonTitleMatchesFallbackWhenAllPracticed() {
+        XCTAssertEqual(
+            ChatRoomStore.randomWordButtonTitle(unpracticed: 0), "全語からランダムに選ぶ")
+    }
+
+    /// 集計が取れていないときは母集団を断言しない従来文言のまま。
+    func testButtonTitleStaysGenericWithoutTally() {
+        XCTAssertEqual(
+            ChatRoomStore.randomWordButtonTitle(unpracticed: nil), "ランダムに選ぶ")
+    }
 }

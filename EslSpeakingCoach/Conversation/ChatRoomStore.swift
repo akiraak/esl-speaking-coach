@@ -454,6 +454,18 @@ final class ChatRoomStore {
         return "練習済み \(practiced)/\(total)語 \(practiced * 100 / total)%・未練習 \(unpracticed)語"
     }
 
+    /// ランダム出題ボタンの文言（docs/plans/random-word-button-label.md）。
+    /// 母集団（未練習）を明示し、全語練習済みのときは全語フォールバック
+    /// （`randomWordChoice`）の実挙動に文言を合わせる。集計が取れていないとき（nil =
+    /// シークレット未設定・取得失敗・使用済みカード）は母集団を断言しない従来文言に留める。
+    static func randomWordButtonTitle(unpracticed: Int?) -> String {
+        switch unpracticed {
+        case nil: return "ランダムに選ぶ"
+        case 0: return "全語からランダムに選ぶ"
+        default: return "未練習からランダムに選ぶ"
+        }
+    }
+
     /// ランダム出題で選ぶ語（純関数）。未練習の語から選び、全語練習済みなら
     /// 全語へフォールバックする（isFallback = true。再練習にも価値があり、
     /// ボタンが「何も起きない」体験を避ける）。単語帳が空のときだけ nil。
