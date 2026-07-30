@@ -11,6 +11,11 @@ struct ChatRoomView: View {
     /// 単語帳ピッカー（単語モードのカードの「単語帳から選ぶ」）
     @State private var isShowingWordBookPicker = false
     @State private var wordBookCardID: UUID?
+    /// ランダム出題（単語モードのカードの「ランダムに選ぶ」）の取得中フラグ。
+    /// カードの 3 ボタンを無効化して二重タップを防ぐ（docs/plans/wordbook-random-word.md）
+    @State private var isFetchingRandomWord = false
+    /// ランダム出題の失敗アラート（nil でないとき表示）
+    @State private var randomWordErrorText: String?
     @State private var draftText = ""
     /// ユーザーが手動で遡っている間は自動スクロールしない。
     /// 手動スクロールが最下部付近で終わったら再開する
@@ -61,6 +66,17 @@ struct ChatRoomView: View {
         } message: {
             Text("会話をまとめてフィードバックを作ります")
         }
+        // ピッカーと同じ文言・同じ分類（WordBookError.errorDescription）で失敗を伝える
+        .alert(
+            "ランダムに選べませんでした",
+            isPresented: Binding(
+                get: { randomWordErrorText != nil },
+                set: { if !$0 { randomWordErrorText = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(randomWordErrorText ?? "")
+        }
         .alert(isWordMode ? "練習する単語を入力" : "自分でトピックを作る", isPresented: $isShowingTopicInput) {
             TextField(isWordMode ? "例: get around to" : "例: 好きなラーメン屋", text: $customTopicText)
                 .autocorrectionDisabled()
@@ -77,6 +93,9 @@ struct ChatRoomView: View {
             }
             if DebugLaunchArguments.shouldOpenWordBookPicker {
                 isShowingWordBookPicker = true
+            }
+            if DebugLaunchArguments.shouldStartRandomWord {
+                startRandomWordSessionFromLatestCard()
             }
             #endif
         }
@@ -289,7 +308,9 @@ struct ChatRoomView: View {
                 onWordBook: {
                     wordBookCardID = card.id
                     isShowingWordBookPicker = true
-                })
+                },
+                onRandomWord: { startRandomWordSession(cardID: card.id) },
+                isRandomWordLoading: isFetchingRandomWord)
         case .feedbackCard(let card):
             FeedbackCardView(
                 card: card,
@@ -322,6 +343,57 @@ struct ChatRoomView: View {
         store.startSession(topic: topic, fromCard: customTopicCardID)
         customTopicCardID = nil
     }
+
+    /// 単語カードの「ランダムに選ぶ」。単語帳を全件取得し、まだ練習していない語を
+    /// ランダムに選んで**即**セッションを開始する（確認は挟まない。委ねる導線なので）。
+    /// 全語練習済みなら全語からのフォールバック（docs/plans/wordbook-random-word.md）。
+    private func startRandomWordSession(cardID: UUID) {
+        guard !isFetchingRandomWord, !store.isSessionActive else { return }
+        isFetchingRandomWord = true
+        Task {
+            defer { isFetchingRandomWord = false }
+            do {
+                guard
+                    let secret = (try? KeychainStore().read(
+                        account: KeychainStore.wordBookAPISecretAccount)) ?? nil,
+                    !secret.isEmpty
+                else {
+                    throw WordBookError.missingSecret
+                }
+                let all = try await WordBookClient().fetchAllWords(secret: secret)
+                let unpracticed = ChatRoomStore.unpracticedWords(
+                    all: all, practiced: store.historyStore.practicedWordsAll())
+                var rng = SystemRandomNumberGenerator()
+                guard let choice = ChatRoomStore.randomWordChoice(
+                    unpracticed: unpracticed, all: all, using: &rng)
+                else {
+                    randomWordErrorText = "単語帳に単語がありません"
+                    return
+                }
+                DiagnosticsLog.record(
+                    "randomWord: 全\(all.count)語 未練習\(unpracticed.count)語 → \(choice.entry.word)"
+                    + (choice.isFallback ? "（全語練習済みのため全語から選択）" : ""))
+                store.startSession(topic: choice.entry.word, fromCard: cardID)
+            } catch {
+                DiagnosticsLog.record("!! randomWord: 取得に失敗 \(error.localizedDescription)")
+                randomWordErrorText = (error as? WordBookError)?.errorDescription
+                    ?? "単語帳を取得できませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    #if DEBUG
+    /// -start-random-word: 末尾の未使用の単語カードで「ランダムに選ぶ」をタップした扱いにする。
+    private func startRandomWordSessionFromLatestCard() {
+        for item in store.timeline.reversed() {
+            guard case .topicCard(let card) = item else { continue }
+            if card.mode == .word, !card.isUsed {
+                startRandomWordSession(cardID: card.id)
+            }
+            return
+        }
+    }
+    #endif
 }
 
 private extension ScrollPhase {

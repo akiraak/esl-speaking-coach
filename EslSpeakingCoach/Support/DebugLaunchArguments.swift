@@ -107,6 +107,13 @@ enum DebugLaunchArguments {
         }
     }
 
+    /// 起動時に単語カードの「ランダムに選ぶ」をタップした扱いでセッションを自動開始する
+    /// （`-practice-mode word` と併用する。ランダム出題の E2E 用）。
+    /// 例: -practice-mode word -start-random-word
+    static var shouldStartRandomWord: Bool {
+        ProcessInfo.processInfo.arguments.contains("-start-random-word")
+    }
+
     /// 起動時に単語帳ピッカーを開く（シミュレータでの表示確認用。`-practice-mode word` と併用）。
     /// 例: -practice-mode word -open-wordbook
     static var shouldOpenWordBookPicker: Bool {

@@ -107,6 +107,10 @@ struct WordBookClient: Sendable {
     static let targetLanguage = "ja"
     /// 1 ページの件数（サーバ既定 100・上限 500。ピッカーの追い読み単位）
     static let pageSize = 100
+    /// 全件取得（ランダム出題）の 1 ページの件数。サーバ上限に合わせて往復を減らす
+    static let allWordsPageSize = 500
+    /// 全件取得の最大ページ数（取得中に total が動き続けても止まる安全弁。500 語 × 20 = 1 万語まで）
+    static let allWordsMaxPages = 20
 
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -116,8 +120,10 @@ struct WordBookClient: Sendable {
     }()
 
     /// 単語帳を 1 ページ取得する。`query` は空なら送らない（全件を新しい順で返す）。
-    func fetchWords(secret: String, query: String, offset: Int) async throws -> WordBookPage {
-        let request = Self.makeRequest(secret: secret, query: query, offset: offset)
+    func fetchWords(
+        secret: String, query: String, offset: Int, limit: Int = pageSize
+    ) async throws -> WordBookPage {
+        let request = Self.makeRequest(secret: secret, query: query, offset: offset, limit: limit)
         let data: Data
         let response: URLResponse
         do {
@@ -160,14 +166,47 @@ struct WordBookClient: Sendable {
         return try Self.parseDetailResponse(data)
     }
 
+    /// 単語帳を全件取得する（ランダム出題用。docs/plans/wordbook-random-word.md）。
+    /// `allWordsPageSize` の offset 追い読みで結合する。個人単語帳（数百語）前提の一括取得。
+    func fetchAllWords(secret: String) async throws -> [WordBookEntry] {
+        try await Self.fetchAllWords { offset in
+            try await fetchWords(
+                secret: secret, query: "", offset: offset, limit: Self.allWordsPageSize)
+        }
+    }
+
+    /// 全件取得のページ結合（テストから fetchPage を差し替える）。
+    /// 取得中に単語帳側が更新されて total が動いても止まるよう、
+    /// 空ページ・`allWordsMaxPages` で打ち切る。重複した word は先勝ちで畳む
+    /// （word は一覧の ID。重複させると SwiftUI の ForEach が壊れるピッカーと同じ扱い）。
+    static func fetchAllWords(
+        fetchPage: (_ offset: Int) async throws -> WordBookPage
+    ) async throws -> [WordBookEntry] {
+        var entries: [WordBookEntry] = []
+        var seen = Set<String>()
+        var offset = 0
+        for _ in 0..<allWordsMaxPages {
+            let page = try await fetchPage(offset)
+            guard !page.words.isEmpty else { break }
+            offset += page.words.count
+            for entry in page.words where seen.insert(entry.word).inserted {
+                entries.append(entry)
+            }
+            if offset >= page.total { break }
+        }
+        return entries
+    }
+
     /// リクエストを組み立てる。テストから直接検証できるよう static にしてある。
     /// クエリの percent-encode は URLQueryItem に任せる（熟語のスペースも正しく載る）。
-    static func makeRequest(secret: String, query: String, offset: Int) -> URLRequest {
+    static func makeRequest(
+        secret: String, query: String, offset: Int, limit: Int = pageSize
+    ) -> URLRequest {
         var components = URLComponents(
             url: baseURL.appending(path: "/api/words"), resolvingAgainstBaseURL: false)!
         var queryItems = [
             URLQueryItem(name: "targetLanguage", value: targetLanguage),
-            URLQueryItem(name: "limit", value: String(pageSize)),
+            URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "offset", value: String(max(0, offset))),
         ]
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)

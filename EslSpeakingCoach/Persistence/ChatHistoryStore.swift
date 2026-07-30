@@ -173,6 +173,12 @@ final class ChatHistoryStore {
         fetchSessions().reversed().filter { $0.mode == .word }.prefix(limit).map(\.topicTitle)
     }
 
+    /// ランダム出題の除外用: 単語練習モードで練習した語の**全件**（docs/plans/wordbook-random-word.md）。
+    /// `recentWords(limit:)` と違い件数を絞らない（絞ると古い練習語が「未学習」に化ける）。
+    func practicedWordsAll() -> [String] {
+        fetchSessions().filter { $0.mode == .word }.map(\.topicTitle)
+    }
+
     /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。
     /// ジャンル不明（自作トピック・固定候補）のセッションは含めない。
     func recentTopicGenres(limit: Int) -> [String] {

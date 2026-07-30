@@ -188,6 +188,26 @@ final class ChatHistoryStoreTests: XCTestCase {
             store.sessionSummaries().map(\.mode), [.word, .conversation, .word, .conversation])
     }
 
+    /// ランダム出題の除外用 practicedWordsAll は mode=word のセッションだけを**全件**返す
+    /// （recentWords と違い件数を絞らない。絞ると古い練習語が「未学習」に化ける）。
+    func testPracticedWordsAllReturnsAllWordSessions() throws {
+        let store = try makeStore()
+        var titles: [(String, PracticeMode)] = (0..<15).map { ("word \($0)", .word) }
+        titles.append(("Morning routines", .conversation))
+        // 同じ語の再練習も履歴のまま返す（重複除去は照合側の正規化キーで行う）
+        titles.append(("word 0", .word))
+        for (title, mode) in titles {
+            store.beginSession(id: UUID(), topicTitle: title, mode: mode)
+            store.appendMessage(id: UUID(), speaker: .user, text: "hi")
+            store.endActiveSession()
+        }
+
+        let practiced = store.practicedWordsAll()
+        XCTAssertEqual(practiced.count, 16)
+        XCTAssertFalse(practiced.contains("Morning routines"))
+        XCTAssertEqual(practiced.filter { $0 == "word 0" }.count, 2)
+    }
+
     /// モード導入前に保存されたセッション（modeRawValue が nil）は会話モードとして扱う。
     func testSessionWithoutModeIsTreatedAsConversation() throws {
         let store = try makeStore()

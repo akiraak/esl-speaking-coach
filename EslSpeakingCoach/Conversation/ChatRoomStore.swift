@@ -427,6 +427,28 @@ final class ChatRoomStore {
         word.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    /// ランダム出題: 単語帳から練習済みの語を除く（純関数。docs/plans/wordbook-random-word.md）。
+    /// 照合は `normalizedWordKey`（単語帳側は正規化済みなのでこのキーで足りる）。
+    static func unpracticedWords(
+        all: [WordBookEntry], practiced: [String]
+    ) -> [WordBookEntry] {
+        let practicedKeys = Set(practiced.map(normalizedWordKey))
+        return all.filter { !practicedKeys.contains(normalizedWordKey($0.word)) }
+    }
+
+    /// ランダム出題で選ぶ語（純関数）。未練習の語から選び、全語練習済みなら
+    /// 全語へフォールバックする（isFallback = true。再練習にも価値があり、
+    /// ボタンが「何も起きない」体験を避ける）。単語帳が空のときだけ nil。
+    static func randomWordChoice<R: RandomNumberGenerator>(
+        unpracticed: [WordBookEntry], all: [WordBookEntry], using rng: inout R
+    ) -> (entry: WordBookEntry, isFallback: Bool)? {
+        if let entry = unpracticed.randomElement(using: &rng) {
+            return (entry, false)
+        }
+        guard let entry = all.randomElement(using: &rng) else { return nil }
+        return (entry, true)
+    }
+
     private func findCard(_ cardID: UUID) -> TopicCard? {
         for item in timeline.reversed() {
             if case .topicCard(let card) = item, card.id == cardID { return card }

@@ -1,5 +1,13 @@
 # DONE
 
+- 2026-07-30 単語モードで未練習の語を単語帳からランダムに選んで会話を始められるようにした [plan](docs/plans/archive/wordbook-random-word.md) [spec](docs/specs/word-practice.md)
+  - 単語帳（esl.chobi.me）からの出題は全部手動（ピッカー / 検索）で、選びやすい語 = 馴染みのある語に偏りがちだった。単語カードに 3 つ目のボタン **「ランダムに選ぶ」**（`dice`）を追加し、**このアプリでまだ練習していない語**をアプリに選ばせて**即セッション開始**する導線にした（確認は挟まない。単語帳側の学習状態はサーバー API から取れないので使わない）
+  - 実装: `WordBookClient.fetchAllWords(secret:)`（limit=500 の offset 追い読みで全件結合。空ページ・最大 20 ページの打ち切り安全弁・重複は先勝ち）→ `ChatHistoryStore.practicedWordsAll()`（mode=word 全セッション。件数を絞ると古い練習語が「未学習」に化けるので絞らない）→ 純関数 `ChatRoomStore.unpracticedWords` / `randomWordChoice`（照合は既存の `normalizedWordKey`。RNG 注入でテスト可能）。未練習 0 件は全語からフォールバック（診断ログに 1 行）。取得状態は `ChatRoomView` の `@State`（取得中は 3 ボタンとも無効化）。エラーはアラート（`WordBookError.errorDescription` 流用）
+  - E2E 用 DEBUG 起動引数 `-start-random-word` を追加（単語カードのランダムボタンをタップした扱い）
+  - 単体テスト追加: `WordBookClientTests`（ページ結合・total 到達 / 空ページ / 最大ページの打ち切り・重複除去・エラー伝播）、新規 `RandomWordChoiceTests`（正規化キーでの除外・seeded RNG での選択固定・フォールバック・空単語帳で nil）、`ChatHistoryStoreTests`（practicedWordsAll が mode=word だけを全件返す）。全テストパス
+  - シミュレータ E2E（ローカル backend + `-wordbook-base-url`）: (1) 未練習の語で開始（診断ログ `randomWord: 全14語 未練習13語 → achievement`）(2) 練習済みが増えると除外される（未練習 13→12、練習済みの語は選ばれない）(3) 全語練習済みで全語フォールバック（スタブ単語帳で確認）(4) シークレット未設定 / 401 でアラート表示。**実機確認（本番 esl.chobi.me）はユーザーが実施**
+  - スコープ外のまま: CEFR・品詞での絞り込み・SRS 的な優先度付け・フォールバック時のユーザー向け表示（診断ログのみ）・数千語規模での全件取得コスト対策
+
 - 2026-07-30 単語の同期タイミングの確認（調査のみ・コード変更なし） [plan](docs/plans/archive/wordbook-sync-timing.md)
   - 単語帳（esl.chobi.me）で調べた語がピッカーにいつ反映されるかを、アプリ・HTTP・CDN・サーバの各層で確認した
   - 結論: **同期はシートを開くたびに毎回フル取得**で、古いデータが出る余地はどの層にもない。単語帳側は word-info 生成完了と同時に同期的に DB へ upsert され（一覧に居るのに詳細が無い状態は存在しない）、一覧は `updated_at DESC` なので調べた直後の語が先頭に出る。HTTP は weak ETag のみ（再検証だけでキャッシュ freshness なし）、Cloudflare も `DYNAMIC` でエッジキャッシュなし

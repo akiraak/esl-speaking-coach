@@ -218,6 +218,10 @@ struct TopicCardView: View {
     let onCustomTopic: () -> Void
     /// 単語モードのみ: 単語帳（esl.chobi.me）から選ぶシートを開く
     let onWordBook: () -> Void
+    /// 単語モードのみ: 未練習の語をランダムに選んで即開始する
+    let onRandomWord: () -> Void
+    /// ランダム出題の取得中（3 ボタンとも無効化して二重タップを防ぐ）
+    var isRandomWordLoading = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -333,7 +337,7 @@ struct TopicCardView: View {
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
             .tint(ChatTheme.accent)
-            .disabled(card.isUsed)
+            .disabled(card.isUsed || isRandomWordLoading)
 
             Button(action: onWordBook) {
                 Label("単語帳から選ぶ", systemImage: "books.vertical")
@@ -342,8 +346,26 @@ struct TopicCardView: View {
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
             .tint(ChatTheme.accent)
-            .disabled(card.isUsed)
+            .disabled(card.isUsed || isRandomWordLoading)
         }
+
+        // 上の 2 つと同列の導線だが、3 つ並べると横幅が足りないので 2 行目に置く
+        Button(action: onRandomWord) {
+            HStack(spacing: 6) {
+                if isRandomWordLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("単語帳から選んでいます…")
+                } else {
+                    Label("ランダムに選ぶ", systemImage: "dice")
+                }
+            }
+            .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .tint(ChatTheme.accent)
+        .disabled(card.isUsed || isRandomWordLoading)
     }
 
     /// 前に練習した語のピル（フックが無いぶんトピック候補より小さく、折り返して並べる）。

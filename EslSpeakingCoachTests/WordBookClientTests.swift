@@ -107,6 +107,91 @@ final class WordBookClientTests: XCTestCase {
             try WordBookClient.parseResponse(Data(#"{"error":"unauthorized"}"#.utf8)))
     }
 
+    // MARK: - fetchAllWords
+
+    private func entry(_ word: String) -> WordBookEntry {
+        WordBookEntry(word: word, meaning: nil, partOfSpeech: nil, cefrLevel: nil)
+    }
+
+    /// 複数ページを offset の追い読みで結合する（ランダム出題の全件取得）。
+    func testFetchAllWordsCombinesPages() async throws {
+        let pages = [
+            WordBookPage(total: 3, words: [entry("a"), entry("b")]),
+            WordBookPage(total: 3, words: [entry("c")]),
+        ]
+        var requestedOffsets: [Int] = []
+        let all = try await WordBookClient.fetchAllWords { offset in
+            requestedOffsets.append(offset)
+            return pages[requestedOffsets.count - 1]
+        }
+        XCTAssertEqual(all.map(\.word), ["a", "b", "c"])
+        XCTAssertEqual(requestedOffsets, [0, 2])
+    }
+
+    /// total に達したらそれ以上のページは取らない（1 ページで全件のとき往復は 1 回）。
+    func testFetchAllWordsStopsAtTotal() async throws {
+        var calls = 0
+        let all = try await WordBookClient.fetchAllWords { _ in
+            calls += 1
+            return WordBookPage(total: 2, words: [entry("a"), entry("b")])
+        }
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(all.map(\.word), ["a", "b"])
+    }
+
+    /// 取得中に単語帳側が更新されて同じ語が別ページに現れても重複させない（先勝ち）。
+    func testFetchAllWordsDeduplicatesAcrossPages() async throws {
+        let pages = [
+            WordBookPage(total: 3, words: [entry("a"), entry("b")]),
+            WordBookPage(total: 3, words: [entry("b"), entry("c")]),
+        ]
+        var calls = 0
+        let all = try await WordBookClient.fetchAllWords { _ in
+            calls += 1
+            return pages[calls - 1]
+        }
+        XCTAssertEqual(all.map(\.word), ["a", "b", "c"])
+    }
+
+    /// words が空のページが来たら total 未達でも打ち切る（無限ループの安全弁）。
+    func testFetchAllWordsStopsOnEmptyPage() async throws {
+        var calls = 0
+        let all = try await WordBookClient.fetchAllWords { _ in
+            calls += 1
+            return WordBookPage(total: 100, words: [])
+        }
+        XCTAssertEqual(calls, 1)
+        XCTAssertTrue(all.isEmpty)
+    }
+
+    /// total が増え続けても最大ページ数で打ち切る（安全弁）。
+    func testFetchAllWordsStopsAtMaxPages() async throws {
+        var calls = 0
+        let all = try await WordBookClient.fetchAllWords { offset in
+            calls += 1
+            return WordBookPage(total: .max, words: [entry("w\(offset)")])
+        }
+        XCTAssertEqual(calls, WordBookClient.allWordsMaxPages)
+        XCTAssertEqual(all.count, WordBookClient.allWordsMaxPages)
+    }
+
+    /// 途中ページの失敗はそのまま投げる（部分結果を返して「未練習が無い」と誤認させない）。
+    func testFetchAllWordsPropagatesPageError() async {
+        var calls = 0
+        do {
+            _ = try await WordBookClient.fetchAllWords { _ in
+                calls += 1
+                if calls == 2 { throw WordBookError.invalidResponse }
+                return WordBookPage(total: 1000, words: [self.entry("w\(calls)")])
+            }
+            XCTFail("エラーになるはず")
+        } catch {
+            guard case WordBookError.invalidResponse = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+    }
+
     // MARK: - makeDetailRequest
 
     func testMakeDetailRequestBuildsURLAndHeader() throws {
