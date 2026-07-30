@@ -436,6 +436,24 @@ final class ChatRoomStore {
         return all.filter { !practicedKeys.contains(normalizedWordKey($0.word)) }
     }
 
+    /// 単語カードに出す単語帳の集計（純関数。docs/plans/word-card-counts.md）。
+    /// 「未練習」の定義はランダム出題と同一（`unpracticedWords`）に保ち、
+    /// 表示する数字と「ランダムに選ぶ」の母集団を一致させる。
+    static func wordBookTally(
+        all: [WordBookEntry], practiced: [String]
+    ) -> (total: Int, unpracticed: Int) {
+        (all.count, unpracticedWords(all: all, practiced: practiced).count)
+    }
+
+    /// 集計の表示文言（例: `練習済み 42/185語 22%・未練習 143語`）。
+    /// パーセントは切り捨て（四捨五入だと未練習が残っているのに 100% に見える瞬間ができる。
+    /// 切り捨てなら 100% = 全語練習済みが常に成り立つ）。総数 0 のときは nil で行ごと非表示。
+    static func wordBookTallyLabel(total: Int, unpracticed: Int) -> String? {
+        guard total > 0 else { return nil }
+        let practiced = total - unpracticed
+        return "練習済み \(practiced)/\(total)語 \(practiced * 100 / total)%・未練習 \(unpracticed)語"
+    }
+
     /// ランダム出題で選ぶ語（純関数）。未練習の語から選び、全語練習済みなら
     /// 全語へフォールバックする（isFallback = true。再練習にも価値があり、
     /// ボタンが「何も起きない」体験を避ける）。単語帳が空のときだけ nil。

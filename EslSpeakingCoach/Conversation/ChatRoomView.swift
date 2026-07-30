@@ -16,6 +16,9 @@ struct ChatRoomView: View {
     @State private var isFetchingRandomWord = false
     /// ランダム出題の失敗アラート（nil でないとき表示）
     @State private var randomWordErrorText: String?
+    /// 未使用の単語カードに出す単語帳の集計（総数・未練習数。docs/plans/word-card-counts.md）。
+    /// 受動的な情報表示なので、取得中・失敗・シークレット未設定は nil のまま何も出さない
+    @State private var wordBookTally: (total: Int, unpracticed: Int)?
     @State private var draftText = ""
     /// ユーザーが手動で遡っている間は自動スクロールしない。
     /// 手動スクロールが最下部付近で終わったら再開する
@@ -84,6 +87,11 @@ struct ChatRoomView: View {
             Button("キャンセル", role: .cancel) { customTopicText = "" }
         } message: {
             Text(isWordMode ? "英語の単語・熟語を入力してください" : "話したいトピックを英語で入力してください")
+        }
+        // 未使用の単語カードが現れるたびに集計を取り直す（起動・モード切替・セッション終了）。
+        // カードは差し替えのたびに新しい ID になるので、ID の変化がそのまま再取得の境界になる
+        .task(id: unusedWordCardID) {
+            await fetchWordBookTally()
         }
         .onAppear {
             store.onAppear()
@@ -268,6 +276,16 @@ struct ChatRoomView: View {
         store.practiceMode == .word
     }
 
+    /// 集計を表示する対象 = 末尾の未使用の単語カード（無ければ nil で取得もしない）。
+    /// 使用済みカードは対象外（古い数字を凍結表示すると誤解のもと）。
+    private var unusedWordCardID: UUID? {
+        for item in store.timeline.reversed() {
+            guard case .topicCard(let card) = item else { continue }
+            return (card.mode == .word && !card.isUsed) ? card.id : nil
+        }
+        return nil
+    }
+
     /// 下端バーを出す条件（翻訳トグルは常時表示。エラー再開バー表示中だけは引っ込める）。
     private var isBottomBarVisible: Bool {
         !store.canResumeAfterFailure
@@ -310,7 +328,8 @@ struct ChatRoomView: View {
                     isShowingWordBookPicker = true
                 },
                 onRandomWord: { startRandomWordSession(cardID: card.id) },
-                isRandomWordLoading: isFetchingRandomWord)
+                isRandomWordLoading: isFetchingRandomWord,
+                wordBookTally: card.isUsed ? nil : wordBookTally)
         case .feedbackCard(let card):
             FeedbackCardView(
                 card: card,
@@ -344,6 +363,31 @@ struct ChatRoomView: View {
         customTopicCardID = nil
     }
 
+    /// 単語カードの集計（総数・未練習数）を取得する（docs/plans/word-card-counts.md）。
+    /// 「未練習」の定義はランダム出題と完全に同一（`unpracticedWords`）。
+    /// 失敗してもアラートは出さず、数字が出ないだけでカードの他機能はそのまま使える。
+    private func fetchWordBookTally() async {
+        guard unusedWordCardID != nil else { return }
+        guard
+            let secret = (try? KeychainStore().read(
+                account: KeychainStore.wordBookAPISecretAccount)) ?? nil,
+            !secret.isEmpty
+        else {
+            wordBookTally = nil
+            return
+        }
+        do {
+            let all = try await WordBookClient().fetchAllWords(secret: secret)
+            wordBookTally = ChatRoomStore.wordBookTally(
+                all: all, practiced: store.historyStore.practicedWordsAll())
+        } catch {
+            // カードが使われて .task(id:) が切り替わった等のキャンセルは失敗扱いにしない
+            guard !Task.isCancelled else { return }
+            wordBookTally = nil
+            DiagnosticsLog.record("!! wordBookTally: 取得に失敗 \(error.localizedDescription)")
+        }
+    }
+
     /// 単語カードの「ランダムに選ぶ」。単語帳を全件取得し、まだ練習していない語を
     /// ランダムに選んで**即**セッションを開始する（確認は挟まない。委ねる導線なので）。
     /// 全語練習済みなら全語からのフォールバック（docs/plans/wordbook-random-word.md）。
@@ -363,6 +407,8 @@ struct ChatRoomView: View {
                 let all = try await WordBookClient().fetchAllWords(secret: secret)
                 let unpracticed = ChatRoomStore.unpracticedWords(
                     all: all, practiced: store.historyStore.practicedWordsAll())
+                // 同じデータを 2 度取らない: この取得結果でカードの集計表示も更新する
+                wordBookTally = (total: all.count, unpracticed: unpracticed.count)
                 var rng = SystemRandomNumberGenerator()
                 guard let choice = ChatRoomStore.randomWordChoice(
                     unpracticed: unpracticed, all: all, using: &rng)

@@ -222,6 +222,9 @@ struct TopicCardView: View {
     let onRandomWord: () -> Void
     /// ランダム出題の取得中（3 ボタンとも無効化して二重タップを防ぐ）
     var isRandomWordLoading = false
+    /// 単語モードのみ: 単語帳の集計（総数・未練習数）。nil なら行ごと出さない
+    /// （取得失敗・シークレット未設定・使用済みカード。docs/plans/word-card-counts.md）
+    var wordBookTally: (total: Int, unpracticed: Int)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -299,6 +302,14 @@ struct TopicCardView: View {
     /// 使用済みのカードには練習した語を残す（履歴を遡ったときに何を練習したか分かる）。
     @ViewBuilder
     private var wordBody: some View {
+        // 単語帳の進捗（例: 練習済み 42/185語 22%・未練習 143語）。見出し直下の caption
+        if let tally = wordBookTally,
+           let label = ChatRoomStore.wordBookTallyLabel(
+               total: tally.total, unpracticed: tally.unpracticed) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(ChatTheme.systemText)
+        }
         if let selectedTitle = card.selectedTitle {
             Text(selectedTitle)
                 .font(.subheadline.weight(.semibold))

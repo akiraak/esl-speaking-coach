@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-07-30 単語カードに単語帳の総数・未練習数と練習済みの進捗（5/100 5% 形式）を表示した [plan](docs/plans/archive/word-card-counts.md)
+  - 未使用の単語カードの見出し直下に caption で `練習済み 4/14語 28%・未練習 10語` を表示。「未練習」の定義はランダム出題と完全に同一（`unpracticedWords` を共有）で、表示する数字と「ランダムに選ぶ」の母集団が常に一致する。パーセントは切り捨て（100% = 全語練習済みが常に成り立つ）、総数 0 は行ごと非表示
+  - 実装: 純関数 `ChatRoomStore.wordBookTally` / `wordBookTallyLabel` + `ChatRoomView` の `.task(id: 末尾の未使用単語カード ID)` で既存 `fetchAllWords` から取得（カードは差し替えのたびに新 ID になるので、起動・モード切替・セッション終了がそのまま再取得の境界になる）。「ランダムに選ぶ」実行時の取得結果でも更新（同じデータを 2 度取らない）。取得失敗・シークレット未設定は何も出さない（診断ログ 1 行のみ。使用済みカードにも出さない）
+  - 単体テスト追加: `WordBookTallyTests`（正規化キーでの除外集計・単語帳に無い練習語は無影響・`5/100 5%` の文言・切り捨て 199/200→99%・全語練習済み 100%・total 0 で nil）。全 264 テストパス
+  - シミュレータ E2E（ローカル backend + `-wordbook-base-url`）: (1) カードに `練習済み 3/14語 21%・未練習 11語` が表示 (2) ランダム出題で 1 語（experience）練習して終了 → 新カードで `練習済み 4/14語 28%・未練習 10語` に更新 (3) シークレット不一致（401）では数字が出ないだけでカードの他機能はそのまま（診断ログに `!! wordBookTally` 1 行）。**実機確認（本番 esl.chobi.me）はユーザーが実施**
+  - スコープ外のまま: カード表示中のフォアグラウンド復帰での再取得（次のカードで反映）・「ランダムに選ぶ」の文言変更（隣接 TODO として継続）
+
 - 2026-07-30 単語モードで未練習の語を単語帳からランダムに選んで会話を始められるようにした [plan](docs/plans/archive/wordbook-random-word.md) [spec](docs/specs/word-practice.md)
   - 単語帳（esl.chobi.me）からの出題は全部手動（ピッカー / 検索）で、選びやすい語 = 馴染みのある語に偏りがちだった。単語カードに 3 つ目のボタン **「ランダムに選ぶ」**（`dice`）を追加し、**このアプリでまだ練習していない語**をアプリに選ばせて**即セッション開始**する導線にした（確認は挟まない。単語帳側の学習状態はサーバー API から取れないので使わない）
   - 実装: `WordBookClient.fetchAllWords(secret:)`（limit=500 の offset 追い読みで全件結合。空ページ・最大 20 ページの打ち切り安全弁・重複は先勝ち）→ `ChatHistoryStore.practicedWordsAll()`（mode=word 全セッション。件数を絞ると古い練習語が「未学習」に化けるので絞らない）→ 純関数 `ChatRoomStore.unpracticedWords` / `randomWordChoice`（照合は既存の `normalizedWordKey`。RNG 注入でテスト可能）。未練習 0 件は全語からフォールバック（診断ログに 1 行）。取得状態は `ChatRoomView` の `@State`（取得中は 3 ボタンとも無効化）。エラーはアラート（`WordBookError.errorDescription` 流用）
