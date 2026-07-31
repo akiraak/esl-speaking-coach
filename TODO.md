@@ -1,7 +1,5 @@
 # TODO
 
-- [ ] AIモデルの料金表を管理画面の料金に表示する
-
 ## 不具合
 
 - [ ] 会話終了ボタンを押したらアプリが落ちた [plan](docs/plans/end-session-crash.md)

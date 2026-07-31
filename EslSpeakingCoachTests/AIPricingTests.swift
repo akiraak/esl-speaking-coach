@@ -96,4 +96,32 @@ final class AIPricingTests: XCTestCase {
             audioSeconds: 120)
         XCTAssertEqual(AIPricing.estimatedCostUSD(for: event), 0.03, accuracy: 0.000001)
     }
+
+    /// 単価表（管理画面表示用）の sonnet-5 行は、導入価格期間中は $2/$10 + 補足あり、
+    /// 終了後は $3/$15 + 補足なしに変わる。
+    func testRateTableReflectsSonnetIntroPricing() {
+        let intro = ISO8601DateFormatter().date(from: "2026-07-25T00:00:00Z")!
+        let after = ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")!
+
+        let introRow = AIPricing.rateTable(at: intro).first { $0.model == "claude-sonnet-5" }!
+        XCTAssertEqual(introRow.price, "入力 $2 / 出力 $10（1M トークン）")
+        XCTAssertNotNil(introRow.note)
+
+        let afterRow = AIPricing.rateTable(at: after).first { $0.model == "claude-sonnet-5" }!
+        XCTAssertEqual(afterRow.price, "入力 $3 / 出力 $15（1M トークン）")
+        XCTAssertNil(afterRow.note)
+    }
+
+    /// 単価表は計算に使っている全モデル（Claude 3 種 + キャッシュ + STT 2 種 + TTS 2 種）を含む。
+    func testRateTableListsAllModels() {
+        let models = AIPricing.rateTable().map(\.model)
+        XCTAssertEqual(
+            models,
+            [
+                "claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5",
+                "Claude プロンプトキャッシュ",
+                "gpt-live-transcribe", "gpt-4o-transcribe",
+                "gemini-3.1-flash-tts-preview", "gpt-4o-mini-tts",
+            ])
+    }
 }
