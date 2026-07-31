@@ -89,6 +89,24 @@ enum DebugLaunchArguments {
         return TTSProvider(rawValue: args[index + 1])
     }
 
+    /// STT モデル指定（gpt-live-transcribe の検証用。既定は gpt-4o-transcribe）。
+    /// live 系はサーバ VAD 非対応のため接続・live 字幕までで音声ターンは確定しない
+    /// （docs/plans/archive/gpt-live-transcribe-verification.md）。
+    /// 例: -stt-model gpt-live-transcribe
+    static var sttModelOverride: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-stt-model"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
+    /// gpt-live-transcribe の delay 指定（minimal / low / medium / high / xhigh）。
+    /// 例: -stt-model gpt-live-transcribe -stt-delay low
+    static var sttDelayOverride: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-stt-delay"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
     /// 診断ログのクラッシュ記録が生きているかを確かめるためのわざと落とす起動引数。
     /// 例: -crash-test exception（Objective-C 例外）/ -crash-test fatal（Swift の実行時エラー）
     /// 起動 3 秒後に落とす（ログの初期化と画面表示を跨いだ状態を模す）。

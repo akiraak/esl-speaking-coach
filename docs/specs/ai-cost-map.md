@@ -25,6 +25,7 @@
 | API | 単価 | 目安に直すと |
 | --- | --- | --- |
 | OpenAI `gpt-4o-transcribe`（STT） | 約 $0.006 / 音声 1 分 | ユーザーが 10 分話して約 $0.06 |
+| （参考）OpenAI `gpt-live-transcribe`（STT 検証用切替・未採用） | セッション音声 $0.017 / 分（usage は duration 型・秒単位切り上げ） | サーバ VAD 非対応のため見送り（[検証記録](../plans/archive/gpt-live-transcribe-verification.md)） |
 | Gemini 3.1 Flash TTS preview | 入力 $1 / 1M トークン、音声出力 $20 / 1M トークン（25 トークン/秒） | **生成音声 1 分 ≈ $0.03**（1,500 トークン） |
 | （参考）Gemini 2.5 Flash TTS preview | 入力 $0.50 / 1M、出力 $10 / 1M | 生成音声 1 分 ≈ $0.015（3.1 の半額） |
 | （参考）OpenAI `gpt-4o-mini-tts`（切替用） | 音声 1 分 ≈ $0.015（参考値・要再確認） | — |

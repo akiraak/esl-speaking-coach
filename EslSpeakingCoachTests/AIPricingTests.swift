@@ -61,6 +61,15 @@ final class AIPricingTests: XCTestCase {
         XCTAssertEqual(AIPricing.estimatedCostUSD(for: event), 0.006, accuracy: 0.000001)
     }
 
+    /// gpt-live-transcribe（検証中）はトークンではなくセッション音声 $0.017 / 分の分数課金。
+    /// tokens 型 usage が混ざっていても分数で計算する
+    func testLiveTranscribeCostUsesPerMinuteRate() {
+        let event = AIUsageEvent(
+            provider: .openai, model: "gpt-live-transcribe", kind: .speechToText,
+            inputTokens: 100, outputTokens: 50, audioInputTokens: 1_000, audioSeconds: 90)
+        XCTAssertEqual(AIPricing.estimatedCostUSD(for: event), 0.0255, accuracy: 0.000001)
+    }
+
     /// Gemini TTS はトークン優先（入力 $1/M + 音声出力 $20/M）。
     func testGeminiTTSCostWithTokens() {
         let event = AIUsageEvent(

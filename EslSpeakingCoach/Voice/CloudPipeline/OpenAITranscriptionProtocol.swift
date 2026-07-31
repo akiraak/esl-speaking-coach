@@ -3,10 +3,17 @@ import Foundation
 /// OpenAI Realtime API の transcription セッション（STT）の設定。
 /// GA 形式のイベント体系で、audio.input のみを構成する。
 struct OpenAITranscriptionConfiguration: Sendable {
-    /// STT モデル（voice-layer-spike.md Phase 3 の第一候補）
+    /// STT モデル（voice-layer-spike.md Phase 3 の第一候補）。
+    /// 2026-07-28 発表の gpt-live-transcribe へは -stt-model 起動引数で切替可だが、
+    /// サーバ VAD 非対応のため音声ターンは確定しない（見送りの検証記録:
+    /// docs/plans/archive/gpt-live-transcribe-verification.md）
     var model = "gpt-4o-transcribe"
     /// 認識言語のヒント。会話は英語のみ（CLAUDE.md）なので en 固定
     var language = "en"
+    /// gpt-live-transcribe のレイテンシ / 精度トレードオフ
+    /// （minimal / low / medium / high / xhigh。高いほど WER 改善）。nil ならサーバ既定に任せる。
+    /// gpt-4o-transcribe では送らない
+    var delay: String?
     /// 認識バイアス用ヒント。language=en 指定だけでは "Hello" 等の短い発話が
     /// 他言語（韓国語など）に誤判定される事象が実機で確認されたため併用する
     var prompt = """
@@ -24,6 +31,9 @@ struct OpenAITranscriptionConfiguration: Sendable {
     /// 発話開始と判定した時点より前に遡って含める音声。既定値どおりだが、語頭の欠けは
     /// 体感の劣化が大きいので既定変更に巻き込まれないよう明示指定して固定する
     var prefixPaddingMs = 300
+
+    /// gpt-live-transcribe 系か（transcription 設定のフィールド体系が旧モデルと異なる）
+    var isLiveTranscribe: Bool { model.hasPrefix("gpt-live-transcribe") }
 
     var websocketURL: URL {
         URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
@@ -83,6 +93,33 @@ enum OpenAITranscriptionClientEvent {
     }
 
     static func sessionUpdate(configuration: OpenAITranscriptionConfiguration) throws -> Data {
+        // gpt-live-transcribe は言語ヒントが languages（配列）で、単数の language と併送すると
+        // 弾かれる。delay も live 系だけのパラメータなので transcription 部をモデルで分岐する
+        var transcription: [String: Any] = [
+            "model": configuration.model,
+            "prompt": configuration.prompt,
+        ]
+        if configuration.isLiveTranscribe {
+            transcription["languages"] = [configuration.language]
+            if let delay = configuration.delay {
+                transcription["delay"] = delay
+            }
+        } else {
+            transcription["language"] = configuration.language
+        }
+        // gpt-live-transcribe はサーバ VAD 非対応（server_vad / semantic_vad とも
+        // "Turn detection is not supported for this transcription model." で拒否。2026-07-31 実測）。
+        // 明示 null = 手動 commit 前提になり、発話終端・barge-in をサーバ VAD に頼る現行
+        // パイプラインでは音声ターンが確定しない
+        // （検証記録: docs/plans/archive/gpt-live-transcribe-verification.md）
+        let turnDetection: Any = configuration.isLiveTranscribe
+            ? NSNull()
+            : [
+                "type": "server_vad",
+                "threshold": jsonNumber(configuration.vadThreshold),
+                "prefix_padding_ms": configuration.prefixPaddingMs,
+                "silence_duration_ms": configuration.silenceDurationMs,
+            ]
         let payload: [String: Any] = [
             "type": "session.update",
             "session": [
@@ -90,17 +127,8 @@ enum OpenAITranscriptionClientEvent {
                 "audio": [
                     "input": [
                         "format": ["type": "audio/pcm", "rate": 24000],
-                        "transcription": [
-                            "model": configuration.model,
-                            "language": configuration.language,
-                            "prompt": configuration.prompt,
-                        ],
-                        "turn_detection": [
-                            "type": "server_vad",
-                            "threshold": jsonNumber(configuration.vadThreshold),
-                            "prefix_padding_ms": configuration.prefixPaddingMs,
-                            "silence_duration_ms": configuration.silenceDurationMs,
-                        ],
+                        "transcription": transcription,
+                        "turn_detection": turnDetection,
                         "noise_reduction": ["type": "near_field"],
                     ],
                 ],

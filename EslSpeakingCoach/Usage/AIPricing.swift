@@ -65,11 +65,17 @@ enum AIPricing {
         return ClaudeRates(input: 3, output: 15)
     }
 
-    // MARK: - OpenAI gpt-4o-transcribe（STT）
+    // MARK: - OpenAI STT（gpt-4o-transcribe / gpt-live-transcribe）
 
-    /// 音声入力 $6 / 1M、テキスト入力 $2.50 / 1M、出力 $10 / 1M。
+    /// gpt-4o-transcribe: 音声入力 $6 / 1M、テキスト入力 $2.50 / 1M、出力 $10 / 1M。
     /// トークンが取れないときは音声 1 分 ≈ $0.006 で概算する。
+    /// gpt-live-transcribe（検証用切替のみ・未採用）: セッション音声 $0.017 / 分の分数課金
+    /// （docs/plans/archive/gpt-live-transcribe-verification.md。usage は duration 型・秒単位
+    /// 切り上げで届く。秒数が取れないときは 0 になるが生 usage から再計算できる）。
     private static func openAITranscribeCost(event: AIUsageEvent) -> Double {
+        if event.model.hasPrefix("gpt-live-transcribe") {
+            return (event.audioSeconds ?? 0) * 0.017 / 60
+        }
         if event.audioInputTokens != nil || event.inputTokens != nil || event.outputTokens != nil {
             var cost = 0.0
             cost += perMillion(event.audioInputTokens, rate: 6)

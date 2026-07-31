@@ -63,6 +63,45 @@ final class CloudPipelineProtocolTests: XCTestCase {
         }
     }
 
+    /// gpt-live-transcribe は言語ヒントが languages（配列）で、単数の language と併送すると
+    /// 弾かれる。live 切替時に language キーが残らないことと delay の伝搬を固定する
+    /// （docs/plans/archive/gpt-live-transcribe-verification.md）。
+    func testTranscriptionSessionUpdateForLiveTranscribe() throws {
+        var configuration = OpenAITranscriptionConfiguration()
+        configuration.model = "gpt-live-transcribe"
+        configuration.delay = "low"
+        let data = try OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let session = try XCTUnwrap(object["session"] as? [String: Any])
+        let input = try XCTUnwrap(
+            (session["audio"] as? [String: Any])?["input"] as? [String: Any])
+
+        let transcription = try XCTUnwrap(input["transcription"] as? [String: Any])
+        XCTAssertEqual(transcription["model"] as? String, "gpt-live-transcribe")
+        XCTAssertEqual(transcription["languages"] as? [String], ["en"])
+        XCTAssertNil(transcription["language"])
+        XCTAssertEqual(transcription["delay"] as? String, "low")
+        // 認識バイアスの prompt は live 系でも引き続き送る
+        XCTAssertTrue((transcription["prompt"] as? String ?? "").contains("English"))
+
+        // live 系はサーバ VAD 非対応（server_vad を送ると invalid_value で拒否される・2026-07-31 実測）。
+        // 明示 null（手動 commit 前提）で送ることを固定する
+        XCTAssertTrue(input["turn_detection"] is NSNull, "\(String(describing: input["turn_detection"]))")
+    }
+
+    /// delay 未指定ならキー自体を送らない（サーバ既定に任せる）
+    func testTranscriptionSessionUpdateForLiveTranscribeOmitsDelayByDefault() throws {
+        var configuration = OpenAITranscriptionConfiguration()
+        configuration.model = "gpt-live-transcribe"
+        let data = try OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let transcription = try XCTUnwrap(
+            ((((object["session"] as? [String: Any])?["audio"] as? [String: Any])?[
+                "input"] as? [String: Any])?["transcription"]) as? [String: Any])
+        XCTAssertNil(transcription["delay"])
+        XCTAssertEqual(transcription["languages"] as? [String], ["en"])
+    }
+
     func testTranscriptionWebsocketURLUsesTranscriptionIntent() {
         let url = OpenAITranscriptionConfiguration().websocketURL
         XCTAssertEqual(url.absoluteString, "wss://api.openai.com/v1/realtime?intent=transcription")

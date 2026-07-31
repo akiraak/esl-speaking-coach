@@ -680,6 +680,12 @@ final class ChatRoomStore {
         var configuration = TurnBasedVoiceSession.Configuration()
         #if DEBUG
         configuration.ttsProvider = DebugLaunchArguments.ttsProviderOverride ?? .gemini
+        if let sttModel = DebugLaunchArguments.sttModelOverride {
+            configuration.transcription.model = sttModel
+        }
+        if let sttDelay = DebugLaunchArguments.sttDelayOverride {
+            configuration.transcription.delay = sttDelay
+        }
         // AI から始まるセッションでは、開始ターンの最初の発話が出るまで -send-text を止める
         if case .assistantFirst = opening { awaitsOpeningTurn = true }
         #endif
