@@ -1,6 +1,14 @@
 # DONE
 
-- 2026-07-30 `PracticeMode` を「UI の練習モード」と「セッション種別」の 2 型に分離した [plan](docs/plans/archive/practice-mode-refactor.md)
+- 2026-07-31 クライアント側の発話終端検知の実装方法を調査した（gpt-live-transcribe 採用の前提） [plan](docs/plans/archive/client-side-endpointing.md)
+  - 推奨は 2 段構え: まず**自前エネルギー VAD**（既存 `AudioTapRouter` / `SegmentLevelMeter` の RMS・暗騒音中央値・遡り 0.5 秒バッファに状態機械を足すだけ。追加依存ゼロ）、精度不足なら **Apple 純正 `SpeechDetector`**（iOS 26+ の VAD モジュール。アセット要否は要スパイク）か **Silero VAD**（CoreML ポートあり）へ差し替え
+  - gpt-live-transcribe 側の成立条件を probe で実測: 1 セッションで append → commit を繰り返せる / **発話区間だけ送れば課金も発話ぶんだけ**（usage は commit 音声の秒数・セグメントごと切り上げ）/ `clear` も受理 / commit → completed は約 0.7 秒（現行よりターン確定 +0.7 秒の見込み）/ セグメント間で文脈は引き継がれず prefix padding 必須
+  - `TurnBasedVoiceSession` は `.speechStarted` / `.speechStopped` の発生源をクライアント VAD に置き換える形でほぼ現状維持できる見込み。実装タスクは起こしていない（採用判断待ち）
+
+- 2026-07-31 GPT-Live-Transcribe（OpenAI の新 STT）を検証し、見送りと結論づけた [plan](docs/plans/archive/gpt-live-transcribe-verification.md)
+  - 2026-07-28 発表の `gpt-live-transcribe` を現行 `gpt-4o-transcribe` の置き換え候補として API 直叩き + アプリで検証。**サーバ VAD（turn_detection）非対応**（server_vad / semantic_vad とも invalid_value で拒否・実測）で、発話終端・barge-in をサーバ VAD に頼る現行ターン制パイプラインには組み込めないため**見送り**。採用するならクライアント側の無音判定 + 手動 `input_audio_buffer.commit` の実装（設計変更）が必要
+  - 実測で分かったこと: `turn_detection: null` なら commit 前から delta が単語単位でストリームされ（`delay: low` で約 0.7 秒遅れ）、末尾の数語と `completed` は commit まで保留。認識精度は簡易確認で完全一致。usage は duration 型（秒単位切り上げ）。言語ヒントは `languages`（配列）で `language`（単数）と併送不可
+  - 切替の土台は実装して残した（既定動作は不変）: `sessionUpdate` の live 分岐（`languages` + `delay` + `turn_detection: null`）、DEBUG 起動引数 `-stt-model` / `-stt-delay`、`AIPricing` の分数課金（$0.017/分）、`ai-cost-map.md` / `CLAUDE.md` へ記録。テスト追加（JSON 形・料金）で全テストパス
   - **`SessionKind`（conversation / word / quiz）を新設**し、セッションの振る舞い（`systemPrompt` / `openingControlKey` / `usesMemoryNote` / `endsOnGoodbye` / `feedbackTopicLabel`）とセッション文言（`endSessionButtonTitle` / `sessionListMarker`）を移した。SwiftData の保存値・プロパティ名（`ChatSessionRecord.modeRawValue`）・UserDefaults のキー / 値・system prompt・E2E 起動引数は 1 つも変えていない = マイグレーション不要で**機能は不変**
   - **`PracticeMode` は UI の練習モード（conversation / word の 2 ケース）に縮小**。`selectableModes`（→ `allCases`）・`.quiz` の死にケース・「到達しない」注釈を削除し、quiz→word の正規化は `init(storedValue:)` へ吸収して復元経路を 1 本化（`ChatRoomStore.restoredPracticeMode` を廃止）。通常のセッション開始は `defaultSessionKind` で種別を引く
   - `ChatRoomStore` は `activeSessionKind` を公開して終了ボタン・確認アラートの文言に直接使い、出し分け機構 `sessionWordingMode` を廃止（非セッション中は前セッションの値が残るが、そのときボタンもアラートも出ない）。`startSession(kind:)` / `dividerText(kind:)` / `FeedbackCard.kind` / `TurnBasedVoiceSession.Configuration.sessionKind` / `SessionOpeningMessage.compose(kind:)` / `SessionFeedbackClient.generateFeedback(kind:)` / `ChatHistoryStore`（`SessionSummary.kind`・`beginSession(kind:)`・フィルタ）/ `SessionListView` / `TopicCardView`（switch 2 分岐化）/ `TimelineBottomBar` / `DebugLaunchArguments` を追随
