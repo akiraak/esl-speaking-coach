@@ -61,7 +61,7 @@ struct ChatRoomView: View {
         }
         // ボタンはセッション終了で消えるので、ダイアログはボタンではなく画面側に付ける
         .alert(
-            isWordMode ? "この単語を終了しますか？" : "このトピックを終了しますか？",
+            store.practiceMode.endSessionButtonTitle + "しますか？",
             isPresented: $isConfirmingEndSession
         ) {
             Button("終了する") { store.endSession() }
@@ -328,6 +328,7 @@ struct ChatRoomView: View {
                     isShowingWordBookPicker = true
                 },
                 onRandomWord: { startRandomWordSession(cardID: card.id) },
+                onStartQuiz: { store.startQuizSession(fromCard: card.id) },
                 isRandomWordLoading: isFetchingRandomWord,
                 wordBookTally: card.isUsed ? nil : wordBookTally)
         case .feedbackCard(let card):

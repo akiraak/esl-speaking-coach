@@ -107,6 +107,13 @@ enum DebugLaunchArguments {
         }
     }
 
+    /// 起動時にクイズカードの「クイズを始める」をタップした扱いでセッションを自動開始する
+    /// （`-practice-mode quiz` と併用する。単語クイズの E2E 用。練習済み 0 語なら何も起きない）。
+    /// 例: -practice-mode quiz -start-quiz
+    static var shouldStartQuiz: Bool {
+        ProcessInfo.processInfo.arguments.contains("-start-quiz")
+    }
+
     /// 起動時に単語カードの「ランダムに選ぶ」をタップした扱いでセッションを自動開始する
     /// （`-practice-mode word` と併用する。ランダム出題の E2E 用）。
     /// 例: -practice-mode word -start-random-word

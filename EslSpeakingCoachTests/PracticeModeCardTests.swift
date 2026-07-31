@@ -35,6 +35,20 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertNil(replacement.carryOver)
     }
 
+    /// クイズカードも候補を持たないので単語カードと同じ扱い（docs/plans/word-quiz-mode.md）。
+    /// 会話 → クイズは候補を持ち越しへ戻し、クイズ → 会話は持ち越しに触らない。
+    func testQuizCardReplacementBehavesLikeWordCard() {
+        let toQuiz = ChatRoomStore.cardReplacement(
+            in: [.topicCard(makeCard(titles: ["A", "B", "C"]))], newMode: .quiz)
+        XCTAssertEqual(toQuiz.removedIndex, 0)
+        XCTAssertEqual(toQuiz.carryOver?.map(\.title), ["A", "B", "C"])
+
+        let fromQuiz = ChatRoomStore.cardReplacement(
+            in: [.topicCard(makeCard(mode: .quiz))], newMode: .conversation)
+        XCTAssertEqual(fromQuiz.removedIndex, 0)
+        XCTAssertNil(fromQuiz.carryOver)
+    }
+
     /// 使用済みカード（過去の履歴）は差し替えない。
     func testDoesNotReplaceUsedCard() {
         let timeline: [ChatRoomStore.TimelineItem] = [
@@ -70,7 +84,7 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertNil(ChatRoomStore.cardReplacement(in: timeline, newMode: .word).removedIndex)
     }
 
-    /// セッション区切りは単語モードだけ「単語:」を前置する（履歴を遡ったときの見分け）。
+    /// セッション区切りは単語・クイズモードだけ「単語:」「クイズ:」を前置する（履歴を遡ったときの見分け）。
     func testDividerLabelPerMode() {
         XCTAssertEqual(
             ChatRoomStore.dividerLabel(mode: .conversation, title: "好きなラーメン屋"),
@@ -78,5 +92,8 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertEqual(
             ChatRoomStore.dividerLabel(mode: .word, title: "get around to"),
             "単語: get around to")
+        XCTAssertEqual(
+            ChatRoomStore.dividerLabel(mode: .quiz, title: "put off, resilient"),
+            "クイズ: put off, resilient")
     }
 }

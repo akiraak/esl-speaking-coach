@@ -210,6 +210,8 @@ struct CharacterAvatar: View {
 
 /// 会話モード: トピック候補 3 件 + 固定候補「話しかける」。選択でセッション開始、🔄 で差し替え、＋で自作入力。
 /// 単語モード: 候補を生成しないので、練習する単語の入力ボタンだけを出す。
+/// クイズモード: 出題は全部アプリ任せなので、母集団の説明と開始ボタンだけを出す
+/// （出題語はカードに出さない。docs/plans/word-quiz-mode.md）。
 /// 選択済み・過去のカードはグレーアウトして履歴に残す（タップ無効）。
 struct TopicCardView: View {
     let card: ChatRoomStore.TopicCard
@@ -220,6 +222,8 @@ struct TopicCardView: View {
     let onWordBook: () -> Void
     /// 単語モードのみ: 未練習の語をランダムに選んで即開始する
     let onRandomWord: () -> Void
+    /// クイズモードのみ: 出題語を選んで即開始する
+    var onStartQuiz: () -> Void = {}
     /// ランダム出題の取得中（3 ボタンとも無効化して二重タップを防ぐ）
     var isRandomWordLoading = false
     /// 単語モードのみ: 単語帳の集計（総数・未練習数）。nil なら行ごと出さない
@@ -228,13 +232,16 @@ struct TopicCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(card.mode == .word ? "📖 次に練習する単語" : "📌 次のトピック")
+            Text(card.mode.topicCardTitle)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(ChatTheme.accent)
 
-            if card.mode == .word {
+            switch card.mode {
+            case .word:
                 wordBody
-            } else {
+            case .quiz:
+                quizBody
+            case .conversation:
                 conversationBody
             }
         }
@@ -311,15 +318,7 @@ struct TopicCardView: View {
                 .foregroundStyle(ChatTheme.systemText)
         }
         if let selectedTitle = card.selectedTitle {
-            Text(selectedTitle)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(ChatTheme.topicPillSelectedText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    ChatTheme.topicPillSelected,
-                    in: RoundedRectangle(cornerRadius: 16))
+            selectedTitleLabel(selectedTitle)
         } else if card.wordSuggestions.isEmpty {
             Text("練習したい単語や熟語を入力してください（英語）")
                 .font(.caption)
@@ -380,6 +379,45 @@ struct TopicCardView: View {
         .buttonBorderShape(.capsule)
         .tint(ChatTheme.accent)
         .disabled(card.isUsed || isRandomWordLoading)
+    }
+
+    /// クイズモードのカード本体（母集団の説明 + 開始ボタンだけ。出題語は始まる前に見せない）。
+    /// 使用済みのカードには出題した語の連結（`selectedTitle`）を残す（単語カードと同じ流儀）。
+    @ViewBuilder
+    private var quizBody: some View {
+        if let selectedTitle = card.selectedTitle {
+            selectedTitleLabel(selectedTitle)
+        } else if card.quizPoolCount == 0 {
+            Text("先に単語モードで練習してください")
+                .font(.caption)
+                .foregroundStyle(ChatTheme.systemText)
+        } else {
+            Text("練習済み \(card.quizPoolCount)語からランダムに最大\(ChatRoomStore.quizWordCount)語を出題")
+                .font(.caption)
+                .foregroundStyle(ChatTheme.systemText)
+        }
+
+        Button(action: onStartQuiz) {
+            Label("クイズを始める", systemImage: "play.fill")
+                .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .tint(ChatTheme.accent)
+        .disabled(card.isUsed || card.quizPoolCount == 0)
+    }
+
+    /// 使用済みカードに残す「このカードから始めたもの」（練習語 / 出題語の連結）。
+    private func selectedTitleLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(ChatTheme.topicPillSelectedText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                ChatTheme.topicPillSelected,
+                in: RoundedRectangle(cornerRadius: 16))
     }
 
     /// 前に練習した語のピル（フックが無いぶんトピック候補より小さく、折り返して並べる）。
@@ -545,7 +583,7 @@ struct FeedbackCardView: View {
 struct TimelineBottomBar: View {
     let isTranslationVisible: Bool
     let isSessionActive: Bool
-    /// 終了ボタンの文言の出し分け（会話 = このトピックを終了 / 単語 = この単語を終了）
+    /// 終了ボタンの文言の出し分け（`PracticeMode.endSessionButtonTitle`）
     var practiceMode: PracticeMode = .conversation
     let onToggleTranslation: () -> Void
     let onEndSession: () -> Void
@@ -573,9 +611,7 @@ struct TimelineBottomBar: View {
 
             if isSessionActive {
                 Button(action: onEndSession) {
-                    Label(
-                        practiceMode == .word ? "この単語を終了" : "このトピックを終了",
-                        systemImage: "flag.checkered")
+                    Label(practiceMode.endSessionButtonTitle, systemImage: "flag.checkered")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(ChatTheme.userText)
                         .frame(maxWidth: .infinity, minHeight: 44)
@@ -620,11 +656,9 @@ struct ChatInputBar: View {
                 .ignoresSafeArea(edges: .bottom))
     }
 
-    /// セッション未開始（トピック選択・単語入力待ち）。
+    /// セッション未開始（トピック選択・単語入力・クイズ開始待ち）。
     private var idleBar: some View {
-        Text(store.practiceMode == .word
-            ? "カードから練習する単語を入力してスタート"
-            : "トピックカードから話題を選んでスタート")
+        Text(store.practiceMode.idlePrompt)
             .font(.footnote)
             .foregroundStyle(ChatTheme.systemText)
             .frame(maxWidth: .infinity, minHeight: 36)

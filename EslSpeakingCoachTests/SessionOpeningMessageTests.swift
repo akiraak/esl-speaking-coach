@@ -49,6 +49,25 @@ final class SessionOpeningMessageTests: XCTestCase {
             "[New word: get around to]")
     }
 
+    // MARK: - クイズモード（docs/plans/word-quiz-mode.md）
+
+    /// 出題語は `", "` 連結のまま [Quiz words: X, Y] の 1 行で渡す。
+    func testComposeQuizModeUsesQuizWordsKey() {
+        XCTAssertEqual(
+            SessionOpeningMessage.compose(
+                mode: .quiz, topic: "put off, resilient", memoryNote: nil),
+            "[Quiz words: put off, resilient]")
+    }
+
+    /// クイズモードにも記憶ノートを混ぜない（単語モードと同じ理由）。
+    func testComposeQuizModeOmitsMemoryNote() {
+        XCTAssertEqual(
+            SessionOpeningMessage.compose(
+                mode: .quiz, topic: "put off, resilient",
+                memoryNote: "About the learner\n- Name is Akira."),
+            "[Quiz words: put off, resilient]")
+    }
+
     /// mode 省略時は従来どおり会話モード（既存の呼び出しの意味を変えない）。
     func testComposeDefaultsToConversationMode() {
         XCTAssertEqual(

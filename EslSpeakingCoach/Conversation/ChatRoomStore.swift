@@ -53,12 +53,16 @@ final class ChatRoomStore {
     struct TopicCard: Identifiable {
         let id = UUID()
         /// 投稿時の練習モード。単語モードのカードは生成候補も 🔄 も持たず、
-        /// 前に練習した語のピル（`wordSuggestions`）と入力ボタンだけを出す
+        /// 前に練習した語のピル（`wordSuggestions`）と入力ボタンだけを出す。
+        /// クイズモードのカードは母集団の語数（`quizPoolCount`）と開始ボタンだけを出す
         var mode: PracticeMode = .conversation
         var candidates: [TopicCandidate] = []
         /// 単語モードのカードに出す「前に練習した語」（新しい順・重複除去済み）。
         /// 生成はせず履歴から引くだけなので、投稿時に確定して以後は変わらない
         var wordSuggestions: [String] = []
+        /// クイズモードのカードに出す出題母集団（練習済みの語）の数。
+        /// 履歴から引くだけなので投稿時に確定。0 なら開始ボタンを無効化する
+        var quizPoolCount = 0
         var isLoading = false
         var errorText: String?
         /// このカードから選んだトピック（選択済みピルのハイライト用）
@@ -124,6 +128,8 @@ final class ChatRoomStore {
     static let wordSuggestionCount = 6
     /// 重複を畳む前に履歴から読む単語セッションの件数（同じ語を繰り返し練習しても上限まで埋まるよう多めに取る）
     static let wordSuggestionScanLimit = 40
+    /// 1 回のクイズで出題する語数（1 周 10 分程度を想定。妥当性は実機で体感して調整する）
+    static let quizWordCount = 5
 
     private static let inputModeKey = "chatRoomInputMode"
     private static let practiceModeKey = "chatRoomPracticeMode"
@@ -194,6 +200,8 @@ final class ChatRoomStore {
     private var pendingAutoTexts = DebugLaunchArguments.autoSendTexts
     /// -start-from-card は最初のカードでだけ発火させる
     private var didAutoStartFromCard = false
+    /// -start-quiz は最初のクイズカードでだけ発火させる
+    private var didAutoStartQuiz = false
     /// -end-session は最初のセッションでだけ発火させる
     private var didAutoEndSession = false
     /// AI の開始ターンを待っているあいだは -send-text を送らない
@@ -279,8 +287,11 @@ final class ChatRoomStore {
     /// 直前のセッションを始めたカードの未使用候補は持ち越し、生成は補充ぶんの 1 件だけにする
     /// （docs/plans/topic-card-carry-over.md）。持ち越しが無ければ従来どおり 3 件生成する。
     /// 単語モードでは候補を生成しない（練習語はユーザーが入力する）ので入力ボタンだけのカードを出す。
+    /// クイズモードは出題を全部アプリに任せるので、母集団の語数と開始ボタンだけのカードを出す
+    /// （出題語はカードに出さない。始まる前に見えたらクイズにならない）。
     private func postTopicCard() {
-        guard practiceMode == .conversation else {
+        switch practiceMode {
+        case .word:
             var card = TopicCard(mode: .word)
             card.wordSuggestions = Self.practicedWordSuggestions(
                 from: historyStore.recentWords(limit: Self.wordSuggestionScanLimit))
@@ -295,16 +306,30 @@ final class ChatRoomStore {
                 startSession(topic: word, fromCard: wordCardID)
             }
             #endif
-            return
+        case .quiz:
+            var card = TopicCard(mode: .quiz)
+            card.quizPoolCount = Self.quizPool(
+                from: historyStore.recentWords(limit: Int.max)).count
+            let quizCardID = card.id
+            appendItem(.topicCard(card))
+            #if DEBUG
+            // -start-quiz は「クイズを始める」をタップした扱いにする（最初の 1 枚だけ）
+            if DebugLaunchArguments.shouldStartQuiz, !didAutoStartQuiz,
+               session == nil, card.quizPoolCount > 0 {
+                didAutoStartQuiz = true
+                startQuizSession(fromCard: quizCardID)
+            }
+            #endif
+        case .conversation:
+            var card = TopicCard()
+            card.candidates = carryOverCandidates
+            card.isLoading = true
+            let cardID = card.id
+            let carried = carryOverCandidates
+            carryOverCandidates = []
+            appendItem(.topicCard(card))
+            Task { await fillTopicCard(cardID: cardID, carryOver: carried) }
         }
-        var card = TopicCard()
-        card.candidates = carryOverCandidates
-        card.isLoading = true
-        let cardID = card.id
-        let carried = carryOverCandidates
-        carryOverCandidates = []
-        appendItem(.topicCard(card))
-        Task { await fillTopicCard(cardID: cardID, carryOver: carried) }
     }
 
     /// 「🔄 他の候補」。表示中の候補も除外リストに加えて全件を差し替える。
@@ -477,6 +502,67 @@ final class ChatRoomStore {
         }
         guard let entry = all.randomElement(using: &rng) else { return nil }
         return (entry, true)
+    }
+
+    // MARK: - 単語クイズ（docs/plans/word-quiz-mode.md）
+
+    /// クイズの出題母集団（純関数）。入力は新しい順の練習語（`ChatHistoryStore.recentWords`）、
+    /// 出力は正規化キーで畳んで新しい表記を残した練習済みの語の全件
+    /// （単語カードのピル `practicedWordSuggestions` と同じ定義の上限なし版）。
+    static func quizPool(from recentWords: [String]) -> [String] {
+        practicedWordSuggestions(from: recentWords, limit: Int.max)
+    }
+
+    /// 出題済みの語の復元（純関数）。mode=quiz セッションの `topicTitle`（`", "` 連結）を
+    /// 分割して語に戻す。語自体にカンマを含むと壊れるが、実際の練習語ではまず無いので許容する。
+    static func quizzedWords(fromTitles titles: [String]) -> [String] {
+        titles.flatMap { title in
+            title.components(separatedBy: ", ")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+    }
+
+    /// 未出題の語（純関数）: 母集団から出題済みを正規化キーで除いた残り。
+    /// 「未練習」（`unpracticedWords`）と同じ手筋で、選択と診断ログの数字を一致させる。
+    static func unquizzedWords(pool: [String], quizzed: [String]) -> [String] {
+        let quizzedKeys = Set(quizzed.map(normalizedWordKey))
+        return pool.filter { !quizzedKeys.contains(normalizedWordKey($0)) }
+    }
+
+    /// クイズの出題語（純関数）。未出題からランダムに count 語選び、満たなければ出題済みから
+    /// 補充する（クイズの長さを揃える）。全語出題済みなら全語からのフォールバック、
+    /// 母集団が count 未満なら全語。出題順もここで確定する（プロンプトはこの順に出題する）。
+    static func quizWords<R: RandomNumberGenerator>(
+        pool: [String], quizzed: [String], count: Int, using rng: inout R
+    ) -> [String] {
+        guard count > 0 else { return [] }
+        let unquizzed = unquizzedWords(pool: pool, quizzed: quizzed)
+        var words = Array(unquizzed.shuffled(using: &rng).prefix(count))
+        if words.count < count {
+            let unquizzedKeys = Set(unquizzed.map(normalizedWordKey))
+            let alreadyQuizzed = pool.filter { !unquizzedKeys.contains(normalizedWordKey($0)) }
+            words += alreadyQuizzed.shuffled(using: &rng).prefix(count - words.count)
+        }
+        return words
+    }
+
+    /// クイズカードの「クイズを始める」。練習済みの語から未出題を優先して最大 `quizWordCount`
+    /// 語を選び、`", "` 連結をトピックとして通常のセッション開始へ流す（ネットワーク不要）。
+    /// 連結文字列がそのまま `[Quiz words: ...]` の制御メッセージと `topicTitle` になる。
+    func startQuizSession(fromCard cardID: UUID?) {
+        guard session == nil, practiceMode == .quiz else { return }
+        let pool = Self.quizPool(from: historyStore.recentWords(limit: Int.max))
+        let quizzed = Self.quizzedWords(fromTitles: historyStore.quizzedTitlesAll())
+        let unquizzedCount = Self.unquizzedWords(pool: pool, quizzed: quizzed).count
+        var rng = SystemRandomNumberGenerator()
+        let words = Self.quizWords(
+            pool: pool, quizzed: quizzed, count: Self.quizWordCount, using: &rng)
+        guard !words.isEmpty else { return }
+        DiagnosticsLog.record(
+            "quiz: 母集団\(pool.count)語 未出題\(unquizzedCount)語 → \(words.joined(separator: ", "))"
+            + (unquizzedCount == 0 ? "（全語出題済みのため全語から選択）" : ""))
+        startSession(topic: words.joined(separator: ", "), fromCard: cardID)
     }
 
     private func findCard(_ cardID: UUID) -> TopicCard? {
@@ -1155,11 +1241,13 @@ final class ChatRoomStore {
         (try? KeychainStore().read(account: account)) ?? nil
     }
 
-    /// セッション区切りの日付以降の文言（単語モードは練習語だと分かるよう `単語:` を前置する）。
+    /// セッション区切りの日付以降の文言
+    /// （単語・クイズモードは語の羅列だと分かるよう `単語:` / `クイズ:` を前置する）。
     static func dividerLabel(mode: PracticeMode, title: String) -> String {
         switch mode {
         case .conversation: return title
         case .word: return "単語: \(title)"
+        case .quiz: return "クイズ: \(title)"
         }
     }
 

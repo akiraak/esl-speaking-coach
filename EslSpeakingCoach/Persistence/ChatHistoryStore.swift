@@ -179,6 +179,12 @@ final class ChatHistoryStore {
         fetchSessions().filter { $0.mode == .word }.map(\.topicTitle)
     }
 
+    /// クイズの出題済み除外用: mode=quiz セッションの `topicTitle`（`", "` 連結）の**全件**
+    /// （docs/plans/word-quiz-mode.md）。語への分割は `ChatRoomStore.quizzedWords` で行う。
+    func quizzedTitlesAll() -> [String] {
+        fetchSessions().filter { $0.mode == .quiz }.map(\.topicTitle)
+    }
+
     /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。
     /// ジャンル不明（自作トピック・固定候補）のセッションは含めない。
     func recentTopicGenres(limit: Int) -> [String] {
