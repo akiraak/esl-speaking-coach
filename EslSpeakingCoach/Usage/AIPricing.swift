@@ -54,6 +54,7 @@ enum AIPricing {
     }
 
     private static func claudeRates(model: String, at date: Date) -> ClaudeRates {
+        // claude-opus-5（〜2026-07-31 のフィードバック生成）。過去記録の生 usage 再計算用に残す
         if model.contains("opus") {
             return ClaudeRates(input: 5, output: 25)
         }
@@ -133,7 +134,6 @@ enum AIPricing {
     /// このファイルを更新すれば表示も追従する。at は sonnet-5 導入価格の判定に使う。
     static func rateTable(at date: Date = Date()) -> [RateRow] {
         let sonnet = claudeRates(model: "claude-sonnet-5", at: date)
-        let opus = claudeRates(model: "claude-opus-5", at: date)
         let haiku = claudeRates(model: "claude-haiku-4-5", at: date)
         let sonnetRegular = claudeRates(
             model: "claude-sonnet-5", at: sonnet5IntroPriceEndsAfter.addingTimeInterval(1))
@@ -141,14 +141,11 @@ enum AIPricing {
             geminiTTSTokensPerSecond * 60 / 1_000_000 * geminiTTSAudioOutputRate
         return [
             RateRow(
-                model: "claude-sonnet-5", usage: "会話 / トピック / 記憶",
+                model: "claude-sonnet-5", usage: "会話 / トピック / フィードバック / 記憶",
                 price: tokenPrice(input: sonnet.input, output: sonnet.output),
                 note: date <= sonnet5IntroPriceEndsAfter
                     ? "〜2026-08-31 は導入価格。以降は \(tokenPrice(input: sonnetRegular.input, output: sonnetRegular.output))"
                     : nil),
-            RateRow(
-                model: "claude-opus-5", usage: "セッション後フィードバック",
-                price: tokenPrice(input: opus.input, output: opus.output), note: nil),
             RateRow(
                 model: "claude-haiku-4-5", usage: "会話の翻訳",
                 price: tokenPrice(input: haiku.input, output: haiku.output), note: nil),

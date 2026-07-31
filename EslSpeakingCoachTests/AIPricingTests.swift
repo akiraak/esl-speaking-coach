@@ -22,7 +22,7 @@ final class AIPricingTests: XCTestCase {
         XCTAssertEqual(AIPricing.estimatedCostUSD(for: event, at: date), 4.5, accuracy: 0.0001)
     }
 
-    /// opus-5（フィードバック生成）は $5/$25。
+    /// opus-5（〜2026-07-31 のフィードバック生成。過去記録の再計算用に単価を残す）は $5/$25。
     func testOpusFeedbackCost() {
         let event = AIUsageEvent(
             provider: .anthropic, model: "claude-opus-5", kind: .sessionFeedback,
@@ -112,13 +112,14 @@ final class AIPricingTests: XCTestCase {
         XCTAssertNil(afterRow.note)
     }
 
-    /// 単価表は計算に使っている全モデル（Claude 3 種 + キャッシュ + STT 2 種 + TTS 2 種）を含む。
+    /// 単価表は現在使っている全モデル（Claude 2 種 + キャッシュ + STT 2 種 + TTS 2 種）を含む。
+    /// opus-5 は 2026-07-31 にフィードバック生成を sonnet-5 へ切り替えたため表には出さない。
     func testRateTableListsAllModels() {
         let models = AIPricing.rateTable().map(\.model)
         XCTAssertEqual(
             models,
             [
-                "claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5",
+                "claude-sonnet-5", "claude-haiku-4-5",
                 "Claude プロンプトキャッシュ",
                 "gpt-live-transcribe", "gpt-4o-transcribe",
                 "gemini-3.1-flash-tts-preview", "gpt-4o-mini-tts",

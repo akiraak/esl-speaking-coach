@@ -51,10 +51,13 @@ enum SessionFeedbackError: Error, LocalizedError {
 }
 
 /// セッション終了後に会話全文を評価してフィードバックを生成する（CLAUDE.md「フィードバック生成」）。
-/// `claude-opus-5` / effort high / max_tokens 16000 / ストリーミング（SSE を蓄積して最後に
+/// effort high / max_tokens 16000 / ストリーミング（SSE を蓄積して最後に
 /// structured outputs の JSON をパースする。長い生成でも接続が切れにくい）。
 struct SessionFeedbackClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+
+    /// 2026-07-31 に `claude-opus-5` から変更（単発で最も高額な呼び出しだったため。ここ 1 箇所で戻せる）。
+    static let model = "claude-sonnet-5"
 
     /// システムプロンプト（固定英文。docs/specs/session-feedback.md）。
     static let systemPrompt = """
@@ -172,7 +175,7 @@ struct SessionFeedbackClient: Sendable {
             + "corrections=\(feedback.corrections.count) phrases=\(feedback.tryPhrases.count)")
         let usage: AIUsageEvent? = tokenUsage.isEmpty ? nil : AIUsageEvent(
             provider: .anthropic,
-            model: "claude-opus-5",
+            model: Self.model,
             kind: .sessionFeedback,
             inputTokens: tokenUsage.inputTokens,
             outputTokens: tokenUsage.outputTokens,
@@ -215,7 +218,7 @@ struct SessionFeedbackClient: Sendable {
             "additionalProperties": false,
         ]
         let payload: [String: Any] = [
-            "model": "claude-opus-5",
+            "model": model,
             "max_tokens": 16000,
             "stream": true,
             "output_config": [

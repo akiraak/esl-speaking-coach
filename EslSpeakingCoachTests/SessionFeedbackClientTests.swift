@@ -7,11 +7,11 @@ final class SessionFeedbackClientTests: XCTestCase {
             topic: "Free talk", transcript: "Learner: I like ramen.\nChobi: Nice!")
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
-        // フィードバック生成は opus-5 / effort high / max_tokens 16000+ / ストリーミング（CLAUDE.md）
-        XCTAssertEqual(json["model"] as? String, "claude-opus-5")
+        // フィードバック生成は sonnet-5 / effort high / max_tokens 16000+ / ストリーミング（CLAUDE.md）
+        XCTAssertEqual(json["model"] as? String, "claude-sonnet-5")
         XCTAssertEqual(json["stream"] as? Bool, true)
         XCTAssertEqual(json["max_tokens"] as? Int, 16000)
-        // claude-opus-5 では 400 になるため送ってはいけないパラメータ
+        // claude-sonnet-5 では 400 になるため送ってはいけないパラメータ
         XCTAssertNil(json["temperature"])
         XCTAssertNil(json["top_p"])
         XCTAssertNil(json["top_k"])

@@ -15,7 +15,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | --- | --- | --- |
 | プラットフォーム | iOS ネイティブ / Swift + SwiftUI | Android は対象外 |
 | 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-live-transcribe`、TTS: Gemini Flash TTS。下記「音声レイヤの方針」参照 |
-| 会話・評価の LLM | Claude API（会話・トピック生成: `claude-sonnet-5` / 評価: `claude-opus-5`） | アプリから直接呼ぶ |
+| 会話・評価の LLM | Claude API（会話・トピック生成・評価とも `claude-sonnet-5`） | アプリから直接呼ぶ |
 | データ保存 | 端末内（SwiftData） | サーバーなし。iCloud 同期もしない |
 | バックエンド | **なし** | 自分専用前提でアプリから API を直叩きする |
 
@@ -47,7 +47,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 - エンドポイント: `POST https://api.anthropic.com/v1/messages`
 - 必須ヘッダ: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
-- モデルは会話ターン・トピック生成が **`claude-sonnet-5`**、会話後のフィードバック生成が **`claude-opus-5`**。日付サフィックスは付けない
+- モデルは会話ターン・トピック生成・会話後のフィードバック生成とも **`claude-sonnet-5`**（フィードバックは 2026-07-31 に `claude-opus-5` から変更。`SessionFeedbackClient.model` の 1 箇所で戻せる）。日付サフィックスは付けない
 - **`temperature` / `top_p` / `top_k` は送ってはいけない**（`claude-sonnet-5` / `claude-opus-5` とも 400 になる）
 - **assistant prefill（末尾に assistant ターンを置く手法）は使えない**（400）。出力形式を固定したいときは `output_config.format` の structured outputs を使う
 
@@ -56,7 +56,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 - **ストリーミング必須**（`"stream": true`）。文が確定するたびに読み上げに流す
 - `output_config: {"effort": "low"}` を使う。**thinking は無効化しない** — 無効化すると `<thinking>` タグが本文に漏れる等の副作用がある。`claude-sonnet-5` は thinking 未指定で adaptive が既定なのでそのままにし、effort を下げる方で調整する
 - `max_tokens` は会話ターンでは意図的に小さく（1024 程度）。長広舌は会話練習として逆効果
-- システムプロンプト（コーチの人格・進行ルール）は固定文にして `cache_control: {"type": "ephemeral"}` を付ける。キャッシュ最小プレフィックスは `claude-sonnet-5` が 1024 トークン（`claude-opus-5` は 512）。2 キャラ台本の system prompt は約 2,000 トークンなので満たす
+- システムプロンプト（コーチの人格・進行ルール）は固定文にして `cache_control: {"type": "ephemeral"}` を付ける。キャッシュ最小プレフィックスは `claude-sonnet-5` が 1024 トークン。2 キャラ台本の system prompt は約 2,000 トークンなので満たす
 - **システムプロンプトに日付やセッション ID を埋め込まない** — プレフィックスが毎回変わりキャッシュが効かなくなる
 
 ### フィードバック生成（会話後）

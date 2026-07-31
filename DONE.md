@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-31 フィードバック生成のモデルを claude-opus-5 → claude-sonnet-5 に変更した [plan](docs/plans/archive/feedback-model-sonnet5.md)
+  - opus-5 の唯一の使用箇所だったセッション後フィードバック生成（`SessionFeedbackClient`）を sonnet-5 へ切替（$5/$25 → $3/$15。概算例のフィードバック 1 回 $0.10 → $0.06、1 セッション 約 $0.55 → $0.52）。effort high / max_tokens 16000 / ストリーミング + structured outputs の呼び方は不変。モデルは `SessionFeedbackClient.model` に 1 箇所化し、ここだけで戻せる
+  - `AIPricing` の計算は不変（opus 単価は過去記録の再計算用に残す）。管理画面の単価表からは opus 行を外し、sonnet-5 行の用途に「フィードバック」を追加
+  - ドキュメント更新: `CLAUDE.md` / `README.md` / `conversation-design.md` / `session-feedback.md` / `ai-cost-map.md`（課金マップ・単価表（opus は参考へ）・概算例の再計算・コスト順）。テスト更新込みで全 307 件パス
+
 - 2026-07-31 AI モデルの単価表を管理画面「料金」タブに表示した [plan](docs/plans/archive/pricing-table-in-usage-dashboard.md)
   - `AIPricing` に表示用の `rateTable(at:)` を追加し、`UsageDashboardView` の日別一覧の下に「単価表（現在適用中）」セクション（Claude 3 モデル + プロンプトキャッシュ + STT 2 種 + TTS 2 種の 8 行）を追加。footer に「推定額は記録時の単価で保存するため改定後は表と過去の記録が一致しないことがある」旨を明記
   - 単価の数値は推定額の計算に使う定数から組み立てる（計算式に埋まっていたリテラルを名前付き定数へ抽出して共有）。単価改定で `AIPricing.swift` を更新すれば表示も自動で追従する（`ai-cost-map.md` に追記）

@@ -1,5 +1,7 @@
 # TODO
 
+- [ ] 安い中国系AIモデルを調査
+
 ## 不具合
 
 - [ ] 会話終了ボタンを押したらアプリが落ちた [plan](docs/plans/end-session-crash.md)
