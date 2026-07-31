@@ -39,7 +39,7 @@ final class SessionFeedbackClientTests: XCTestCase {
     func testWordModeUsesPracticeWordLabel() throws {
         let transcript = "Learner: I finally got around to it.\nChobi: Nice!"
         let data = try SessionFeedbackClient.makeRequestBody(
-            mode: .word, topic: "get around to", transcript: transcript)
+            kind: .word, topic: "get around to", transcript: transcript)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])

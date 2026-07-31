@@ -98,10 +98,10 @@ struct SessionFeedbackClient: Sendable {
     }()
 
     /// フィードバックを生成する。transcript は話者ラベル付きの会話全文。
-    /// mode は評価対象の見出し（`Topic:` / `Practice word:`）だけを変える（system prompt は共通）。
+    /// kind は評価対象の見出し（`Topic:` / `Practice word:`）だけを変える（system prompt は共通）。
     /// usage は SSE の message_start / message_delta から積み上げた利用量（取れなければ nil）。
     func generateFeedback(
-        apiKey: String, mode: PracticeMode = .conversation, topic: String, transcript: String
+        apiKey: String, kind: SessionKind = .conversation, topic: String, transcript: String
     ) async throws -> (feedback: SessionFeedback, usage: AIUsageEvent?) {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
@@ -109,13 +109,13 @@ struct SessionFeedbackClient: Sendable {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try Self.makeRequestBody(
-            mode: mode, topic: topic, transcript: transcript)
+            kind: kind, topic: topic, transcript: transcript)
 
         // 文章が途切れる不具合の調査ログ（docs/plans/feedback-truncated.md Phase 1）。
         // 生成は 1 セッションに 1 回なので、生の応答まで含めて残す
         let transcriptLines = transcript.isEmpty ? 0 : transcript.split(separator: "\n").count
         DiagnosticsLog.record(
-            "feedback: 生成開始 practice=\(mode.rawValue) topic=\(topic) "
+            "feedback: 生成開始 practice=\(kind.rawValue) topic=\(topic) "
             + "transcript=\(transcript.count)字/\(transcriptLines)行")
 
         let (bytes, response) = try await Self.session.bytes(for: request)
@@ -183,7 +183,7 @@ struct SessionFeedbackClient: Sendable {
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
     static func makeRequestBody(
-        mode: PracticeMode = .conversation, topic: String, transcript: String
+        kind: SessionKind = .conversation, topic: String, transcript: String
     ) throws -> Data {
         let correctionSchema: [String: Any] = [
             "type": "object",
@@ -235,7 +235,7 @@ struct SessionFeedbackClient: Sendable {
             "messages": [
                 [
                     "role": "user",
-                    "content": "\(mode.feedbackTopicLabel): \(topic)\n\nTranscript:\n\(transcript)",
+                    "content": "\(kind.feedbackTopicLabel): \(topic)\n\nTranscript:\n\(transcript)",
                 ]
             ],
         ]

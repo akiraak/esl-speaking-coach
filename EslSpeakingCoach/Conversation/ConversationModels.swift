@@ -6,12 +6,13 @@ import Foundation
 enum SessionOpeningMessage {
     /// AI が口火を切る開始（`Opening.assistantFirst`）。
     /// 記憶ノートが空（未生成・空白のみ）のときは Memory 部を省略して [New topic: X] のみ。
-    /// 単語モードは記憶ノートを渡されても混ぜず、常に [New word: X] の 1 行だけになる。
+    /// 単語・クイズは記憶ノートを渡されても混ぜず、常に [New word: X] / [Quiz words: X] の
+    /// 1 行だけになる。
     static func compose(
-        mode: PracticeMode = .conversation, topic: String, memoryNote: String?
+        kind: SessionKind = .conversation, topic: String, memoryNote: String?
     ) -> String {
-        let topicLine = "[\(mode.openingControlKey): \(topic)]"
-        guard mode.usesMemoryNote,
+        let topicLine = "[\(kind.openingControlKey): \(topic)]"
+        guard kind.usesMemoryNote,
               let memoryLine = composeMemoryOnly(memoryNote: memoryNote)
         else {
             return topicLine

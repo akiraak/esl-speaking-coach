@@ -34,8 +34,8 @@ final class ChatSessionRecord {
     /// 生成時に割り当てられた `TopicCatalog` のジャンル id。
     /// 自作トピック・固定候補は nil（ジャンル不明として次回の除外対象にしない）
     var topicGenre: String?
-    /// `PracticeMode.rawValue`。optional なので既存ストアはライトウェイトマイグレーションで開ける
-    /// （モード導入前のセッション = nil = 会話モード）
+    /// `SessionKind.rawValue`。optional なので既存ストアはライトウェイトマイグレーションで開ける
+    /// （種別導入前のセッション = nil = 会話）。プロパティ名は保存済みストアとの互換のため変えない
     var modeRawValue: String?
     var startedAt: Date
     /// nil はセッション中（アプリ強制終了で残った場合は次回起動時に閉じる）
@@ -50,18 +50,18 @@ final class ChatSessionRecord {
 
     init(
         id: UUID = UUID(), topicTitle: String, topicGenre: String? = nil,
-        mode: PracticeMode = .conversation, startedAt: Date = Date()
+        kind: SessionKind = .conversation, startedAt: Date = Date()
     ) {
         self.id = id
         self.topicTitle = topicTitle
         self.topicGenre = topicGenre
-        self.modeRawValue = mode.rawValue
+        self.modeRawValue = kind.rawValue
         self.startedAt = startedAt
     }
 
-    /// 記録されたモード（モード導入前のセッションは会話モードとして扱う）。
-    var mode: PracticeMode {
-        PracticeMode(storedValue: modeRawValue)
+    /// 記録されたセッション種別（種別導入前のセッションは会話として扱う）。
+    var kind: SessionKind {
+        SessionKind(storedValue: modeRawValue)
     }
 }
 

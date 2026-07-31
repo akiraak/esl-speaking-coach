@@ -40,7 +40,7 @@ struct SessionListView: View {
         VStack(alignment: .leading, spacing: 4) {
             // 単語・クイズのセッションは topicTitle が語そのものなので、印が無いと区別できない
             Text(
-                summary.mode.sessionListMarker.map { "\($0) \(summary.topicTitle)" }
+                summary.kind.sessionListMarker.map { "\($0) \(summary.topicTitle)" }
                     ?? summary.topicTitle)
                 .font(.headline)
                 .lineLimit(1)

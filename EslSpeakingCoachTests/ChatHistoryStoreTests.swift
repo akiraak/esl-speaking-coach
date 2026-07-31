@@ -160,44 +160,63 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertTrue(store.recentSessions(limit: 10).isEmpty)
     }
 
-    /// 練習モードはセッションに記録され、単語モードのぶんだけ recentWords で引ける。
+    /// セッション種別は記録され、単語セッションのぶんだけ recentWords で引ける。
     /// トピック重複回避のタイトルには練習語を混ぜない。
-    func testPracticeModeIsRecordedAndWordsAreListedSeparately() throws {
+    func testSessionKindIsRecordedAndWordsAreListedSeparately() throws {
         let store = try makeStore()
-        for (title, mode) in [
-            ("Morning routines", PracticeMode.conversation),
+        for (title, kind) in [
+            ("Morning routines", SessionKind.conversation),
             ("get around to", .word),
             ("Weekend plans", .conversation),
             ("look forward to", .word),
         ] {
-            store.beginSession(id: UUID(), topicTitle: title, mode: mode)
+            store.beginSession(id: UUID(), topicTitle: title, kind: kind)
             store.appendMessage(id: UUID(), speaker: .user, text: "hi")
             store.endActiveSession()
         }
 
         XCTAssertEqual(
-            store.recentSessions(limit: 10).map(\.mode),
+            store.recentSessions(limit: 10).map(\.kind),
             [.conversation, .word, .conversation, .word])
         // 単語カードのピルにそのまま並べるので新しい順で返す
         XCTAssertEqual(store.recentWords(limit: 10), ["look forward to", "get around to"])
         XCTAssertEqual(store.recentWords(limit: 1), ["look forward to"])
         XCTAssertEqual(
             store.recentTopicTitles(limit: 10), ["Morning routines", "Weekend plans"])
-        // 管理画面の一覧（新しい順）でもモードが分かる
+        // 管理画面の一覧（新しい順）でも種別が分かる
         XCTAssertEqual(
-            store.sessionSummaries().map(\.mode), [.word, .conversation, .word, .conversation])
+            store.sessionSummaries().map(\.kind), [.word, .conversation, .word, .conversation])
+    }
+
+    /// クイズの出題済み除外用 quizzedTitlesAll はクイズセッションの topicTitle だけを返す。
+    func testQuizzedTitlesAllReturnsOnlyQuizSessions() throws {
+        let store = try makeStore()
+        for (title, kind) in [
+            ("get around to", SessionKind.word),
+            ("put off, resilient", .quiz),
+            ("Morning routines", .conversation),
+            ("get around to", .quiz),
+        ] {
+            store.beginSession(id: UUID(), topicTitle: title, kind: kind)
+            store.appendMessage(id: UUID(), speaker: .user, text: "hi")
+            store.endActiveSession()
+        }
+
+        XCTAssertEqual(store.quizzedTitlesAll(), ["put off, resilient", "get around to"])
+        // クイズセッションは practicedWordsAll（単語練習）には混ざらない
+        XCTAssertEqual(store.practicedWordsAll(), ["get around to"])
     }
 
     /// ランダム出題の除外用 practicedWordsAll は mode=word のセッションだけを**全件**返す
     /// （recentWords と違い件数を絞らない。絞ると古い練習語が「未学習」に化ける）。
     func testPracticedWordsAllReturnsAllWordSessions() throws {
         let store = try makeStore()
-        var titles: [(String, PracticeMode)] = (0..<15).map { ("word \($0)", .word) }
+        var titles: [(String, SessionKind)] = (0..<15).map { ("word \($0)", .word) }
         titles.append(("Morning routines", .conversation))
         // 同じ語の再練習も履歴のまま返す（重複除去は照合側の正規化キーで行う）
         titles.append(("word 0", .word))
-        for (title, mode) in titles {
-            store.beginSession(id: UUID(), topicTitle: title, mode: mode)
+        for (title, kind) in titles {
+            store.beginSession(id: UUID(), topicTitle: title, kind: kind)
             store.appendMessage(id: UUID(), speaker: .user, text: "hi")
             store.endActiveSession()
         }
@@ -208,7 +227,7 @@ final class ChatHistoryStoreTests: XCTestCase {
         XCTAssertEqual(practiced.filter { $0 == "word 0" }.count, 2)
     }
 
-    /// モード導入前に保存されたセッション（modeRawValue が nil）は会話モードとして扱う。
+    /// 種別導入前に保存されたセッション（modeRawValue が nil）は会話として扱う。
     func testSessionWithoutModeIsTreatedAsConversation() throws {
         let store = try makeStore()
         store.beginSession(id: UUID(), topicTitle: "Legacy")
@@ -219,7 +238,7 @@ final class ChatHistoryStoreTests: XCTestCase {
         let session = try XCTUnwrap(store.recentSessions(limit: 1).first)
         session.modeRawValue = nil
 
-        XCTAssertEqual(session.mode, .conversation)
+        XCTAssertEqual(session.kind, .conversation)
         XCTAssertEqual(store.recentTopicTitles(limit: 10), ["Legacy"])
         XCTAssertTrue(store.recentWords(limit: 10).isEmpty)
     }

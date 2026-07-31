@@ -70,17 +70,17 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertNil(ChatRoomStore.cardReplacement(in: timeline, newMode: .word).removedIndex)
     }
 
-    /// セッション区切りは単語モードだけ「単語:」を前置する。クイズは**出題語を出さない**
+    /// セッション区切りは単語セッションだけ「単語:」を前置する。クイズは**出題語を出さない**
     /// 固定文言（区切りはクイズ開始と同時に出るので、語を出すと答えが見える）。
-    func testDividerLabelPerMode() {
+    func testDividerLabelPerKind() {
         XCTAssertEqual(
-            ChatRoomStore.dividerLabel(mode: .conversation, title: "好きなラーメン屋"),
+            ChatRoomStore.dividerLabel(kind: .conversation, title: "好きなラーメン屋"),
             "好きなラーメン屋")
         XCTAssertEqual(
-            ChatRoomStore.dividerLabel(mode: .word, title: "get around to"),
+            ChatRoomStore.dividerLabel(kind: .word, title: "get around to"),
             "単語: get around to")
         XCTAssertEqual(
-            ChatRoomStore.dividerLabel(mode: .quiz, title: "put off, resilient"),
+            ChatRoomStore.dividerLabel(kind: .quiz, title: "put off, resilient"),
             "クイズ")
     }
 
@@ -90,13 +90,13 @@ final class PracticeModeCardTests: XCTestCase {
         let date = Calendar.current.date(
             from: DateComponents(year: 2026, month: 7, day: 30))!
         XCTAssertEqual(
-            ChatRoomStore.dividerText(mode: .quiz, title: "resilient", date: date),
+            ChatRoomStore.dividerText(kind: .quiz, title: "resilient", date: date),
             "クイズ")
         XCTAssertEqual(
-            ChatRoomStore.dividerText(mode: .conversation, title: "好きなラーメン屋", date: date),
+            ChatRoomStore.dividerText(kind: .conversation, title: "好きなラーメン屋", date: date),
             "7/30 好きなラーメン屋")
         XCTAssertEqual(
-            ChatRoomStore.dividerText(mode: .word, title: "get around to", date: date),
+            ChatRoomStore.dividerText(kind: .word, title: "get around to", date: date),
             "7/30 単語: get around to")
     }
 }

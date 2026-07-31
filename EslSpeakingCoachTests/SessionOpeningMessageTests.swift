@@ -34,17 +34,17 @@ final class SessionOpeningMessageTests: XCTestCase {
     // MARK: - 単語モード（docs/specs/word-practice.md）
 
     /// 練習語は [New word: X] で渡す。
-    func testComposeWordModeUsesNewWordKey() {
+    func testComposeWordKindUsesNewWordKey() {
         XCTAssertEqual(
-            SessionOpeningMessage.compose(mode: .word, topic: "get around to", memoryNote: nil),
+            SessionOpeningMessage.compose(kind: .word, topic: "get around to", memoryNote: nil),
             "[New word: get around to]")
     }
 
     /// 単語モードには記憶ノートを混ぜない（ノートは 1 語の練習に効かず先頭が長くなるだけ）。
-    func testComposeWordModeOmitsMemoryNote() {
+    func testComposeWordKindOmitsMemoryNote() {
         XCTAssertEqual(
             SessionOpeningMessage.compose(
-                mode: .word, topic: "get around to",
+                kind: .word, topic: "get around to",
                 memoryNote: "About the learner\n- Name is Akira."),
             "[New word: get around to]")
     }
@@ -52,27 +52,27 @@ final class SessionOpeningMessageTests: XCTestCase {
     // MARK: - クイズモード（docs/plans/word-quiz-mode.md）
 
     /// 出題語は `", "` 連結のまま [Quiz words: X, Y] の 1 行で渡す。
-    func testComposeQuizModeUsesQuizWordsKey() {
+    func testComposeQuizKindUsesQuizWordsKey() {
         XCTAssertEqual(
             SessionOpeningMessage.compose(
-                mode: .quiz, topic: "put off, resilient", memoryNote: nil),
+                kind: .quiz, topic: "put off, resilient", memoryNote: nil),
             "[Quiz words: put off, resilient]")
     }
 
     /// クイズモードにも記憶ノートを混ぜない（単語モードと同じ理由）。
-    func testComposeQuizModeOmitsMemoryNote() {
+    func testComposeQuizKindOmitsMemoryNote() {
         XCTAssertEqual(
             SessionOpeningMessage.compose(
-                mode: .quiz, topic: "put off, resilient",
+                kind: .quiz, topic: "put off, resilient",
                 memoryNote: "About the learner\n- Name is Akira."),
             "[Quiz words: put off, resilient]")
     }
 
-    /// mode 省略時は従来どおり会話モード（既存の呼び出しの意味を変えない）。
-    func testComposeDefaultsToConversationMode() {
+    /// kind 省略時は従来どおり会話（既存の呼び出しの意味を変えない）。
+    func testComposeDefaultsToConversationKind() {
         XCTAssertEqual(
             SessionOpeningMessage.compose(topic: "Free talk", memoryNote: nil),
-            SessionOpeningMessage.compose(mode: .conversation, topic: "Free talk", memoryNote: nil))
+            SessionOpeningMessage.compose(kind: .conversation, topic: "Free talk", memoryNote: nil))
     }
 
     // MARK: - 学習者ファースト（トピックを渡さない開始）

@@ -236,9 +236,7 @@ struct TopicCardView: View {
                 .foregroundStyle(ChatTheme.accent)
 
             switch card.mode {
-            case .word, .quiz:
-                // .quiz のカードは投稿されなくなった（クイズは単語カード内の導線）が、
-                // switch の網羅性のため word と同じ扱いにする
+            case .word:
                 wordBody
             case .conversation:
                 conversationBody
@@ -463,7 +461,7 @@ struct FeedbackCardView: View {
                 .foregroundStyle(ChatTheme.accent)
             // クイズは出題語をチャット欄に出さない（docs/plans/quiz-one-word.md）。
             // 本文が語に触れるのは会話の内容そのものなので隠さない
-            Text(card.mode == .quiz ? "単語クイズ" : card.topicTitle)
+            Text(card.kind == .quiz ? "単語クイズ" : card.topicTitle)
                 .font(.caption)
                 .foregroundStyle(ChatTheme.nameLabel)
 
@@ -570,8 +568,8 @@ struct FeedbackCardView: View {
 struct TimelineBottomBar: View {
     let isTranslationVisible: Bool
     let isSessionActive: Bool
-    /// 終了ボタンの文言の出し分け（`PracticeMode.endSessionButtonTitle`）
-    var practiceMode: PracticeMode = .conversation
+    /// 終了ボタンの文言の出し分け（`SessionKind.endSessionButtonTitle`）
+    var sessionKind: SessionKind = .conversation
     let onToggleTranslation: () -> Void
     let onEndSession: () -> Void
 
@@ -598,7 +596,7 @@ struct TimelineBottomBar: View {
 
             if isSessionActive {
                 Button(action: onEndSession) {
-                    Label(practiceMode.endSessionButtonTitle, systemImage: "flag.checkered")
+                    Label(sessionKind.endSessionButtonTitle, systemImage: "flag.checkered")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(ChatTheme.userText)
                         .frame(maxWidth: .infinity, minHeight: 44)

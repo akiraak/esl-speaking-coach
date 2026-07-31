@@ -9,7 +9,7 @@ import Foundation
 /// `ScriptStreamChunker` / TTS 側は変更不要。
 ///
 /// **`[end]` の規定を持たない**のが会話モードとの構造的な違い。単語モードは終了ボタンだけで
-/// 終わり、goodbye と言われても短く受けて次の質問に戻る（`PracticeMode.endsOnGoodbye` で
+/// 終わり、goodbye と言われても短く受けて次の質問に戻る（`SessionKind.endsOnGoodbye` で
 /// 実装側からも二重に止めている）。
 enum WordCoachSystemPrompt {
     static let text = """

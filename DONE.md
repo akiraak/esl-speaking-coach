@@ -1,5 +1,13 @@
 # DONE
 
+- 2026-07-30 `PracticeMode` を「UI の練習モード」と「セッション種別」の 2 型に分離した [plan](docs/plans/archive/practice-mode-refactor.md)
+  - **`SessionKind`（conversation / word / quiz）を新設**し、セッションの振る舞い（`systemPrompt` / `openingControlKey` / `usesMemoryNote` / `endsOnGoodbye` / `feedbackTopicLabel`）とセッション文言（`endSessionButtonTitle` / `sessionListMarker`）を移した。SwiftData の保存値・プロパティ名（`ChatSessionRecord.modeRawValue`）・UserDefaults のキー / 値・system prompt・E2E 起動引数は 1 つも変えていない = マイグレーション不要で**機能は不変**
+  - **`PracticeMode` は UI の練習モード（conversation / word の 2 ケース）に縮小**。`selectableModes`（→ `allCases`）・`.quiz` の死にケース・「到達しない」注釈を削除し、quiz→word の正規化は `init(storedValue:)` へ吸収して復元経路を 1 本化（`ChatRoomStore.restoredPracticeMode` を廃止）。通常のセッション開始は `defaultSessionKind` で種別を引く
+  - `ChatRoomStore` は `activeSessionKind` を公開して終了ボタン・確認アラートの文言に直接使い、出し分け機構 `sessionWordingMode` を廃止（非セッション中は前セッションの値が残るが、そのときボタンもアラートも出ない）。`startSession(kind:)` / `dividerText(kind:)` / `FeedbackCard.kind` / `TurnBasedVoiceSession.Configuration.sessionKind` / `SessionOpeningMessage.compose(kind:)` / `SessionFeedbackClient.generateFeedback(kind:)` / `ChatHistoryStore`（`SessionSummary.kind`・`beginSession(kind:)`・フィルタ）/ `SessionListView` / `TopicCardView`（switch 2 分岐化）/ `TimelineBottomBar` / `DebugLaunchArguments` を追随
+  - テスト: `PracticeModeTests` を UI モード観点（2 ケース・quiz→word 正規化・`defaultSessionKind`）に再編し、**`SessionKindTests` を新設**（rawValue 安定性・quiz 維持の復元・`endsOnGoodbye` / `usesMemoryNote` / prompt 契約・文言を引き継ぐ）。`ChatHistoryStoreTests` に `quizzedTitlesAll` のフィルタテストを追加。`sessionWordingMode` の純関数テストは機構ごと削除。全 289 テストパス
+  - シミュレータ E2E: `-practice-mode quiz -start-quiz` で **quiz が word へ正規化されたままクイズ開始**（ヘッダ「単語」・区切り「クイズ」・終了ボタン「このクイズを終了」をスクリーンショット確認）→ `[end]` 自動終了 → `feedback: 生成開始 practice=quiz` → `memory: 記憶ノート更新スキップ` → クイズボタン付き単語カード再投稿。会話モードの goodbye 自動終了 → `practice=conversation` フィードバック → 記憶ノート更新の退行なし。ピルのメニュー・モード切替のカード差し替えは単体テスト（`cardReplacement`）でカバー
+  - `CLAUDE.md` と `docs/specs/word-practice.md` のモード章を 2 型前提の記述に更新
+
 - 2026-07-30 クイズのセッション区切りから日付を外した [plan](docs/plans/archive/quiz-divider-no-date.md)
   - 区切り全文の組み立てを純関数 `dividerText(mode:title:date:)` に集約し、クイズだけ日付を省いて固定文言 **「クイズ」** のみに（会話・単語は従来どおり「M/d ラベル」）。開始時（`startSession`）と復元時（`restoreTimeline`）の両方が同じ関数を通るので、再起動しても日付は復活しない
   - テスト: `testDividerTextOmitsDateForQuiz` を追加。全テストパス

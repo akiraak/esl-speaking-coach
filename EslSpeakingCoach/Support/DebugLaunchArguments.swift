@@ -73,13 +73,13 @@ enum DebugLaunchArguments {
 
     /// 練習モード指定（保存はせずその起動のあいだだけ上書きする）。
     /// 例: -practice-mode word / -practice-mode conversation
-    /// `quiz` も受けるが、UI モードの正規化（`ChatRoomStore.restoredPracticeMode`）で word になる
+    /// `quiz` も受けるが、UI モードの正規化（`PracticeMode(storedValue:)`）で word になる
     static var practiceModeOverride: PracticeMode? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-practice-mode"), index + 1 < args.count else {
             return nil
         }
-        return PracticeMode(rawValue: args[index + 1])
+        return PracticeMode(storedValue: args[index + 1])
     }
 
     /// TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai

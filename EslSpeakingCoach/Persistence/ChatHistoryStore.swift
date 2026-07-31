@@ -10,8 +10,8 @@ final class ChatHistoryStore {
     struct SessionSummary: Identifiable, Sendable {
         let id: UUID
         let topicTitle: String
-        /// 練習モード（単語モードのセッションは topicTitle が練習語そのもの）
-        let mode: PracticeMode
+        /// セッション種別（単語・クイズのセッションは topicTitle が語そのもの）
+        let kind: SessionKind
         let startedAt: Date
         let endedAt: Date?
         let messageCount: Int
@@ -69,10 +69,10 @@ final class ChatHistoryStore {
 
     func beginSession(
         id: UUID, topicTitle: String, topicGenre: String? = nil,
-        mode: PracticeMode = .conversation
+        kind: SessionKind = .conversation
     ) {
         let session = ChatSessionRecord(
-            id: id, topicTitle: topicTitle, topicGenre: topicGenre, mode: mode)
+            id: id, topicTitle: topicTitle, topicGenre: topicGenre, kind: kind)
         context.insert(session)
         activeSession = session
         activeMessagesByID = [:]
@@ -163,26 +163,26 @@ final class ChatHistoryStore {
     /// トピック重複回避用の直近タイトル（古い順・最大 limit 件）。
     /// 単語練習のセッションは除く（練習語をトピック生成の除外リストへ混ぜない）。
     func recentTopicTitles(limit: Int) -> [String] {
-        fetchSessions().filter { $0.mode == .conversation }.suffix(limit).map(\.topicTitle)
+        fetchSessions().filter { $0.kind == .conversation }.suffix(limit).map(\.topicTitle)
     }
 
     /// 単語練習モードで練習した語（**新しい順**・最大 limit 件）。
     /// 単語カードの「前に練習した語」ピルの元データ（docs/plans/vocabulary-continuity.md）。
     /// 重複除去は `ChatRoomStore.practicedWordSuggestions` で行うので、ここは履歴のまま返す。
     func recentWords(limit: Int) -> [String] {
-        fetchSessions().reversed().filter { $0.mode == .word }.prefix(limit).map(\.topicTitle)
+        fetchSessions().reversed().filter { $0.kind == .word }.prefix(limit).map(\.topicTitle)
     }
 
     /// ランダム出題の除外用: 単語練習モードで練習した語の**全件**（docs/plans/wordbook-random-word.md）。
     /// `recentWords(limit:)` と違い件数を絞らない（絞ると古い練習語が「未学習」に化ける）。
     func practicedWordsAll() -> [String] {
-        fetchSessions().filter { $0.mode == .word }.map(\.topicTitle)
+        fetchSessions().filter { $0.kind == .word }.map(\.topicTitle)
     }
 
-    /// クイズの出題済み除外用: mode=quiz セッションの `topicTitle`（`", "` 連結）の**全件**
+    /// クイズの出題済み除外用: クイズセッションの `topicTitle`（`", "` 連結）の**全件**
     /// （docs/plans/word-quiz-mode.md）。語への分割は `ChatRoomStore.quizzedWords` で行う。
     func quizzedTitlesAll() -> [String] {
-        fetchSessions().filter { $0.mode == .quiz }.map(\.topicTitle)
+        fetchSessions().filter { $0.kind == .quiz }.map(\.topicTitle)
     }
 
     /// ジャンル重複回避用の直近ジャンル id（古い順・最大 limit 件）。
@@ -197,7 +197,7 @@ final class ChatHistoryStore {
             SessionSummary(
                 id: session.id,
                 topicTitle: session.topicTitle,
-                mode: session.mode,
+                kind: session.kind,
                 startedAt: session.startedAt,
                 endedAt: session.endedAt,
                 messageCount: session.messages.count,

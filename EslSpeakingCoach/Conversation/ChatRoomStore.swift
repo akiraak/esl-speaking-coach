@@ -74,9 +74,9 @@ final class ChatRoomStore {
         let id = UUID()
         /// 保存先セッション（復元カードでは生成済みのため保存には使わない）
         let sessionID: UUID?
-        /// そのセッションの練習モード（生成の見出しを `Topic:` / `Practice word:` で出し分ける。
-        /// リトライがモード切替後になっても開始時のモードで生成するようカードに持たせる）
-        var mode: PracticeMode = .conversation
+        /// そのセッションの種別（生成の見出しを `Topic:` / `Practice word:` で出し分ける。
+        /// リトライがモード切替後になっても開始時の種別で生成するようカードに持たせる）
+        var kind: SessionKind = .conversation
         let topicTitle: String
         /// リトライ用に生成入力（話者ラベル付き会話全文）のスナップショットを保持する
         let transcript: String
@@ -177,9 +177,9 @@ final class ChatRoomStore {
     private var didAppear = false
     /// 永続化中のセッション ID（正常終了まで保持。エラー再開でも引き継ぐ）
     private var activeSessionID: UUID?
-    /// 現在セッションを始めたときのモード（終了処理の分岐に使う。
-    /// セッション中は practiceMode を変えられないが、終了後の切替と混ざらないよう開始時の値を持つ）
-    private var activeSessionMode: PracticeMode = .conversation
+    /// 現在セッションを始めたときのセッション種別（終了処理の分岐と、終了ボタン・確認アラートの
+    /// 文言に使う。セッション終了後は前セッションの値が残るが、そのときボタンもアラートも出ない）
+    private(set) var activeSessionKind: SessionKind = .conversation
     /// 重複回避用の直近トピックタイトル（起動時に永続化済みセッションから復元。直近 20 件）
     private var recentTopicTitles: [String] = []
     /// 多様性のために避ける直近ジャンル（起動時に復元。カタログが尽きない範囲で 8 件）
@@ -215,26 +215,17 @@ final class ChatRoomStore {
         memoryStore = CharacterMemoryStore(container: container)
         let stored = UserDefaults.standard.string(forKey: Self.inputModeKey)
         inputMode = stored.flatMap(InputMode.init(rawValue:)) ?? .voice
-        // 既定は会話モード
-        practiceMode = Self.restoredPracticeMode(
+        // 既定は会話モード（旧バージョンの quiz は init(storedValue:) が単語モードへ正規化する）
+        practiceMode = PracticeMode(
             storedValue: UserDefaults.standard.string(forKey: Self.practiceModeKey))
         #if DEBUG
-        // シミュレータ確認用の上書き（保存はしない）。quiz 指定も同じ正規化で word にする
+        // シミュレータ確認用の上書き（保存はしない）
         if let override = DebugLaunchArguments.practiceModeOverride {
-            practiceMode = Self.restoredPracticeMode(storedValue: override.rawValue)
+            practiceMode = override
         }
         #endif
         // 既定は OFF（会話中の視界を汚さない）
         isTranslationVisible = UserDefaults.standard.bool(forKey: Self.translationVisibleKey)
-    }
-
-    /// 起動時の UI モードの復元（純関数）。クイズが単語モード内の導線になったため、
-    /// UserDefaults に旧バージョンの `quiz` が残っていたら単語モードへ正規化する
-    /// （docs/plans/archive/quiz-in-word-mode.md）。保存済みセッションの復元
-    /// （`PracticeMode(storedValue:)`）はセッション種別なので正規化しない。
-    static func restoredPracticeMode(storedValue: String?) -> PracticeMode {
-        let mode = PracticeMode(storedValue: storedValue)
-        return mode == .quiz ? .word : mode
     }
 
     // MARK: - ルームのライフサイクル
@@ -264,7 +255,7 @@ final class ChatRoomStore {
             appendItem(.sessionDivider(
                 id: UUID(),
                 text: Self.dividerText(
-                    mode: record.mode, title: record.topicTitle, date: record.startedAt),
+                    kind: record.kind, title: record.topicTitle, date: record.startedAt),
                 topic: record.topicTitle))
             let messages = record.messages.sorted { $0.orderIndex < $1.orderIndex }
             for message in messages {
@@ -281,7 +272,7 @@ final class ChatRoomStore {
             if let data = record.feedbackJSON,
                let feedback = try? JSONDecoder().decode(SessionFeedback.self, from: data) {
                 var card = FeedbackCard(
-                    sessionID: record.id, mode: record.mode,
+                    sessionID: record.id, kind: record.kind,
                     topicTitle: record.topicTitle, transcript: "")
                 card.isLoading = false
                 card.feedback = feedback
@@ -300,8 +291,7 @@ final class ChatRoomStore {
     /// （出題語はカードに出さない。始まる前に見えたらクイズにならない）。
     private func postTopicCard() {
         switch practiceMode {
-        case .word, .quiz:
-            // .quiz は起動時の正規化（restoredPracticeMode）で word になるため実際には来ない
+        case .word:
             var card = TopicCard(mode: .word)
             card.wordSuggestions = Self.practicedWordSuggestions(
                 from: historyStore.recentWords(limit: Self.wordSuggestionScanLimit))
@@ -523,7 +513,7 @@ final class ChatRoomStore {
         practicedWordSuggestions(from: recentWords, limit: Int.max)
     }
 
-    /// 出題済みの語の復元（純関数）。mode=quiz セッションの `topicTitle`（`", "` 連結）を
+    /// 出題済みの語の復元（純関数）。クイズセッションの `topicTitle`（`", "` 連結）を
     /// 分割して語に戻す。語自体にカンマを含むと壊れるが、実際の練習語ではまず無いので許容する。
     static func quizzedWords(fromTitles titles: [String]) -> [String] {
         titles.flatMap { title in
@@ -558,7 +548,7 @@ final class ChatRoomStore {
     }
 
     /// 単語カードの「練習済みからクイズ」。練習済みの語から未出題を優先して最大 `quizWordCount`
-    /// 語を選び、`", "` 連結をトピックとして mode = .quiz のセッション開始へ流す（ネットワーク不要）。
+    /// 語を選び、`", "` 連結をトピックとして kind = .quiz のセッション開始へ流す（ネットワーク不要）。
     /// 連結文字列がそのまま `[Quiz words: ...]` の制御メッセージと `topicTitle` になる。
     func startQuizSession(fromCard cardID: UUID?) {
         guard session == nil, practiceMode == .word else { return }
@@ -572,7 +562,7 @@ final class ChatRoomStore {
         DiagnosticsLog.record(
             "quiz: 母集団\(pool.count)語 未出題\(unquizzedCount)語 → \(words.joined(separator: ", "))"
             + (unquizzedCount == 0 ? "（全語出題済みのため全語から選択）" : ""))
-        startSession(topic: words.joined(separator: ", "), fromCard: cardID, mode: .quiz)
+        startSession(topic: words.joined(separator: ", "), fromCard: cardID, kind: .quiz)
     }
 
     private func findCard(_ cardID: UUID) -> TopicCard? {
@@ -593,10 +583,10 @@ final class ChatRoomStore {
     // MARK: - セッション開始・終了
 
     /// トピックカードの候補選択・自作トピックからセッションを開始する。
-    /// セッションの種別は UI の練習モードと独立に指定できる（既定は一致）――
-    /// クイズは UI モード = word のまま mode = .quiz で開始する（docs/plans/archive/quiz-in-word-mode.md）。
-    func startSession(topic: String, fromCard cardID: UUID?, mode: PracticeMode? = nil) {
-        let mode = mode ?? practiceMode
+    /// セッションの種別は UI の練習モードと独立に指定できる（既定は UI モードと同名の種別）――
+    /// クイズは UI モード = word のまま kind = .quiz で開始する（docs/plans/archive/quiz-in-word-mode.md）。
+    func startSession(topic: String, fromCard cardID: UUID?, kind: SessionKind? = nil) {
+        let kind = kind ?? practiceMode.defaultSessionKind
         let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         guard session == nil, !trimmed.isEmpty else { return }
         canResumeAfterFailure = false
@@ -608,7 +598,7 @@ final class ChatRoomStore {
             .flatMap { TopicCatalog.genre(id: $0)?.id }
         // 選ばなかった候補は次のカードへ持ち越す（生成は補充の 1 件だけで済む）。
         // 単語モードのカードには候補が無いので触らない（会話モードで戻した持ち越しを消さない）
-        if mode == .conversation {
+        if kind == .conversation {
             carryOverCandidates = Self.carryOverCandidates(
                 from: cardID.flatMap(findCard), selectedTitle: trimmed)
         }
@@ -618,13 +608,13 @@ final class ChatRoomStore {
         for index in timeline.indices {
             guard case .topicCard(var card) = timeline[index], !card.isUsed else { continue }
             card.isUsed = true
-            if card.id == cardID, mode != .quiz { card.selectedTitle = trimmed }
+            if card.id == cardID, kind != .quiz { card.selectedTitle = trimmed }
             timeline[index] = .topicCard(card)
         }
         activeTopicTitle = trimmed
         // 重複回避リストはトピック生成用なので練習語は混ぜない
         // （起動時の復元でも単語モードのセッションは除外している）
-        if mode == .conversation {
+        if kind == .conversation {
             recentTopicTitles.append(trimmed)
             if recentTopicTitles.count > 20 {
                 recentTopicTitles.removeFirst(recentTopicTitles.count - 20)
@@ -638,17 +628,17 @@ final class ChatRoomStore {
         }
         appendItem(.sessionDivider(
             id: UUID(),
-            text: Self.dividerText(mode: mode, title: trimmed, date: Date()),
+            text: Self.dividerText(kind: kind, title: trimmed, date: Date()),
             topic: trimmed))
         let sessionID = UUID()
         activeSessionID = sessionID
-        activeSessionMode = mode
-        // 単語・クイズモードでは記憶ノートを注入しない（終了時の更新もしないので対称）
-        activeMemoryNote = mode.usesMemoryNote ? memoryStore.currentNote() : nil
+        activeSessionKind = kind
+        // 単語・クイズでは記憶ノートを注入しない（終了時の更新もしないので対称）
+        activeMemoryNote = kind.usesMemoryNote ? memoryStore.currentNote() : nil
         historyStore.beginSession(
-            id: sessionID, topicTitle: trimmed, topicGenre: genre, mode: mode)
-        // 単語・クイズモードは常に Chobi の導入ターンから始める（学習者ファーストは使わない）
-        if mode == .conversation, Self.isLearnerFirstTopic(trimmed) {
+            id: sessionID, topicTitle: trimmed, topicGenre: genre, kind: kind)
+        // 単語・クイズは常に Chobi の導入ターンから始める（学習者ファーストは使わない）
+        if kind == .conversation, Self.isLearnerFirstTopic(trimmed) {
             // AI が黙ったまま listening になるので、待ち受けであることを 1 行だけ伝える
             appendItem(.systemNotice(id: UUID(), text: "自分から話しかけてみよう"))
             launchSession(opening: .learnerFirst, initialHistory: [])
@@ -695,7 +685,7 @@ final class ChatRoomStore {
         #endif
         configuration.opening = opening
         // UI の練習モードではなくセッションの種別（クイズ中は word / quiz と食い違う）
-        configuration.practiceMode = activeSessionMode
+        configuration.sessionKind = activeSessionKind
         configuration.memoryNote = activeMemoryNote
         configuration.initialHistory = initialHistory
         configuration.voiceInputEnabled = inputMode == .voice && !isVoicePaused
@@ -712,7 +702,7 @@ final class ChatRoomStore {
             })
         DiagnosticsLog.record(
             "session: 開始 topic=\(activeTopicTitle ?? "-") opening=\(opening) "
-            + "practice=\(activeSessionMode.rawValue) "
+            + "practice=\(activeSessionKind.rawValue) "
             + "mode=\(inputMode.rawValue) 再開=\(initialHistory.isEmpty ? "no" : "yes")")
         session = newSession
         isSessionActive = true
@@ -743,7 +733,7 @@ final class ChatRoomStore {
         if wasEnding {
             let endedTopic = activeTopicTitle
             let endedSessionID = activeSessionID
-            let endedMode = activeSessionMode
+            let endedKind = activeSessionKind
             activeTopicTitle = nil
             activeSessionID = nil
             activeMemoryNote = nil
@@ -752,11 +742,11 @@ final class ChatRoomStore {
             // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
             // フィードバックは生成中表示で即投稿し、完了を待たずに次のトピックを選べるようにする
             if let endedTopic {
-                postFeedbackCard(mode: endedMode, topic: endedTopic, sessionID: endedSessionID)
+                postFeedbackCard(kind: endedKind, topic: endedTopic, sessionID: endedSessionID)
                 DiagnosticsLog.record("end: フィードバックカード投稿まで完了")
-                // 単語モードは記憶ノートを更新しない（注入もしないので対称）。
+                // 単語・クイズは記憶ノートを更新しない（注入もしないので対称）。
                 // 単語練習の逐語がノートに入ると会話モードの雑談品質が落ちるため
-                if endedMode.usesMemoryNote {
+                if endedKind.usesMemoryNote {
                     updateCharacterMemory(topic: endedTopic, sessionID: endedSessionID)
                 } else {
                     DiagnosticsLog.record("memory: 単語モードのため記憶ノートの更新をスキップ")
@@ -778,7 +768,7 @@ final class ChatRoomStore {
 
     /// セッション正常終了（手動 / goodbye）時に投稿する。
     /// 学習者の発話が 2 未満のセッションはスキップする（docs/specs/session-feedback.md）。
-    private func postFeedbackCard(mode: PracticeMode, topic: String, sessionID: UUID?) {
+    private func postFeedbackCard(kind: SessionKind, topic: String, sessionID: UUID?) {
         let (transcript, learnerTurnCount) = sessionTranscript()
         guard learnerTurnCount >= 2 else {
             DiagnosticsLog.record("feedback: 発話 \(learnerTurnCount) 件のためスキップ")
@@ -786,7 +776,7 @@ final class ChatRoomStore {
             return
         }
         let card = FeedbackCard(
-            sessionID: sessionID, mode: mode, topicTitle: topic, transcript: transcript)
+            sessionID: sessionID, kind: kind, topicTitle: topic, transcript: transcript)
         let cardID = card.id
         DiagnosticsLog.record("feedback: カード投稿 発話=\(learnerTurnCount)件 transcript=\(transcript.count)字")
         appendItem(.feedbackCard(card))
@@ -816,7 +806,7 @@ final class ChatRoomStore {
         }
         do {
             let (feedback, usage) = try await SessionFeedbackClient().generateFeedback(
-                apiKey: apiKey, mode: card.mode, topic: card.topicTitle,
+                apiKey: apiKey, kind: card.kind, topic: card.topicTitle,
                 transcript: card.transcript)
             if let usage {
                 usageStore.record(usage, sessionID: card.sessionID)
@@ -909,7 +899,7 @@ final class ChatRoomStore {
     /// 連続する AI 発話は 1 つのタグ付き台本メッセージへ再直列化する。
     /// 先頭はセッション開始時と同じ合成メッセージ（[Memory: ...] + [New topic: X]）にする。
     /// 学習者ファーストのセッションでは開始時と同じく [Memory: ...] だけ（無ければ何も置かない）。
-    /// 単語・クイズモードは開始時と同じく [New word: X] / [Quiz words: X] の 1 行だけ
+    /// 単語・クイズは開始時と同じく [New word: X] / [Quiz words: X] の 1 行だけ
     /// （学習者ファーストにはならない）。UI の練習モードではなく開始時のセッション種別で
     /// 組み立てる（クイズ中のエラー再開が [New word:] にならないように）。
     private func rebuildHistory(topic: String) -> [ConversationMessage] {
@@ -919,7 +909,7 @@ final class ChatRoomStore {
             sessionItems.append(item)
         }
         var history: [ConversationMessage] = []
-        if activeSessionMode == .conversation, Self.isLearnerFirstTopic(topic) {
+        if activeSessionKind == .conversation, Self.isLearnerFirstTopic(topic) {
             if let memoryLine = SessionOpeningMessage.composeMemoryOnly(
                 memoryNote: activeMemoryNote)
             {
@@ -929,7 +919,7 @@ final class ChatRoomStore {
             history.append(ConversationMessage(
                 role: .user,
                 text: SessionOpeningMessage.compose(
-                    mode: activeSessionMode, topic: topic, memoryNote: activeMemoryNote)))
+                    kind: activeSessionKind, topic: topic, memoryNote: activeMemoryNote)))
         }
         var pendingScript: [String] = []
         func flushScript() {
@@ -978,23 +968,6 @@ final class ChatRoomStore {
     /// 会話の途中でキャラの役割が変わるのは破綻するため、セッション中とエラー再開待ちは切り替えない。
     var canChangePracticeMode: Bool {
         session == nil && !canResumeAfterFailure
-    }
-
-    /// セッション文言（終了ボタン・確認アラート）に使うモード。クイズ中は UI の練習モード
-    /// （word）とセッションの種別（quiz）が食い違うため、practiceMode を直接使うと
-    /// 終了ボタンが「この単語を終了」になってしまう（docs/plans/archive/quiz-in-word-mode.md）。
-    var sessionWordingMode: PracticeMode {
-        Self.sessionWordingMode(
-            isSessionInProgress: session != nil || canResumeAfterFailure,
-            activeSessionMode: activeSessionMode, practiceMode: practiceMode)
-    }
-
-    /// 上記の出し分け（純関数）。セッション中・エラー再開待ちは開始時のセッション種別、
-    /// それ以外は UI の練習モード。
-    static func sessionWordingMode(
-        isSessionInProgress: Bool, activeSessionMode: PracticeMode, practiceMode: PracticeMode
-    ) -> PracticeMode {
-        isSessionInProgress ? activeSessionMode : practiceMode
     }
 
     func setPracticeMode(_ mode: PracticeMode) {
@@ -1279,16 +1252,16 @@ final class ChatRoomStore {
     /// セッション区切りの表示全文（純関数）。会話・単語は「日付 ラベル」、
     /// クイズは日付を付けず固定文言「クイズ」だけにする（日付があっても出題の役に立たない）。
     /// 開始時と復元時の両方がこれを通る（再起動で日付が復活しない）。
-    static func dividerText(mode: PracticeMode, title: String, date: Date) -> String {
-        let label = dividerLabel(mode: mode, title: title)
-        return mode == .quiz ? label : "\(dividerDateText(for: date)) \(label)"
+    static func dividerText(kind: SessionKind, title: String, date: Date) -> String {
+        let label = dividerLabel(kind: kind, title: title)
+        return kind == .quiz ? label : "\(dividerDateText(for: date)) \(label)"
     }
 
-    /// セッション区切りの日付以降の文言（単語モードは練習語だと分かるよう `単語:` を前置する）。
-    /// クイズモードは**出題語を出さない**固定文言 ―― 区切りはクイズ開始と同時に表示されるので、
+    /// セッション区切りの日付以降の文言（単語セッションは練習語だと分かるよう `単語:` を前置する）。
+    /// クイズは**出題語を出さない**固定文言 ―― 区切りはクイズ開始と同時に表示されるので、
     /// 語を出すと答えが見えてクイズにならない（docs/plans/quiz-one-word.md）。
-    static func dividerLabel(mode: PracticeMode, title: String) -> String {
-        switch mode {
+    static func dividerLabel(kind: SessionKind, title: String) -> String {
+        switch kind {
         case .conversation: return title
         case .word: return "単語: \(title)"
         case .quiz: return "クイズ"

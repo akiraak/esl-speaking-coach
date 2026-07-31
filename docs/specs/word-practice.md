@@ -46,22 +46,33 @@
 | 出力形式・音声・翻訳 | — | **同一**（実装の共通部分は変えない） |
 | フィードバック | `Topic: X` | `Practice word: X`（プロンプト本体は共通） |
 
-## モード（`PracticeMode`）
+## UI の練習モード（`PracticeMode`）とセッション種別（`SessionKind`）
 
-`EslSpeakingCoach/Conversation/PracticeMode.swift`。モードごとの差はすべてこの enum の
-プロパティに寄せ、呼び出し側では `if mode == .word` の分岐を増やさない方針にしている。
+UI の練習モード（`EslSpeakingCoach/Conversation/PracticeMode.swift`。会話 / 単語の 2 ケース）と、
+セッションの種別（`EslSpeakingCoach/Conversation/SessionKind.swift`。会話 / 単語 / クイズの
+3 ケース）は**別の型**（docs/plans/archive/practice-mode-refactor.md）。UI モードが持つのは
+「セッション外の画面がどちらの顔をしているか」（ヘッダのピル・カード・入力バーの案内）だけで、
+セッションの振る舞いとセッションに紐づく文言は種別が持つ。通常のセッション開始は
+`PracticeMode.defaultSessionKind`（UI モードと同名の種別）で始まり、クイズだけは単語カード内の
+導線が `.quiz` を明示的に渡す。モードごとの差はそれぞれの enum のプロパティに寄せ、
+呼び出し側では `if mode == .word` の分岐を増やさない方針にしている。
 
-| プロパティ | 会話 | 単語 | 用途 |
-| --- | --- | --- | --- |
-| `displayName` / `symbolName` | 会話 / `bubble.left.and.bubble.right` | 単語 / `character.book.closed` | ヘッダのピル・メニュー |
-| `openingControlKey` | `New topic` | `New word` | 開始の制御メッセージ |
-| `systemPrompt` | `CoachSystemPrompt.text` | `WordCoachSystemPrompt.text` | セッションへ渡す system |
-| `usesMemoryNote` | true | false | 記憶ノートの注入と更新（両方） |
-| `feedbackTopicLabel` | `Topic` | `Practice word` | フィードバック user メッセージの 1 行目 |
-| `endsOnGoodbye` | true | false | 台本の `[end]` でセッションを終わらせるか |
+| 型・プロパティ | 会話 | 単語 | クイズ | 用途 |
+| --- | --- | --- | --- | --- |
+| `PracticeMode.displayName` / `symbolName` | 会話 / `bubble.left.and.bubble.right` | 単語 / `character.book.closed` | —（UI モードに quiz は無い） | ヘッダのピル・メニュー |
+| `PracticeMode.idlePrompt` / `topicCardTitle` | トピック案内 / 📌 | 単語案内 / 📖 | — | 入力バーの案内・カード見出し |
+| `SessionKind.openingControlKey` | `New topic` | `New word` | `Quiz words` | 開始の制御メッセージ |
+| `SessionKind.systemPrompt` | `CoachSystemPrompt.text` | `WordCoachSystemPrompt.text` | `QuizCoachSystemPrompt.text` | セッションへ渡す system |
+| `SessionKind.usesMemoryNote` | true | false | false | 記憶ノートの注入と更新（両方） |
+| `SessionKind.feedbackTopicLabel` | `Topic` | `Practice word` | `Quiz words` | フィードバック user メッセージの 1 行目 |
+| `SessionKind.endsOnGoodbye` | true | false | true | 台本の `[end]` でセッションを終わらせるか |
+| `SessionKind.endSessionButtonTitle` / `sessionListMarker` | このトピックを終了 / 無印 | この単語を終了 / 📖 | このクイズを終了 / 🎯 | 終了ボタン・管理画面の一覧 |
 
-- **永続化**: `rawValue` をそのまま `UserDefaults`（`chatRoomPracticeMode`）と SwiftData
-  （`ChatSessionRecord.modeRawValue`）に保存する。未知・未保存は会話モード（`init(storedValue:)`）
+- **永続化**: `PracticeMode.rawValue` を `UserDefaults`（`chatRoomPracticeMode`）に、
+  `SessionKind.rawValue` を SwiftData（`ChatSessionRecord.modeRawValue`）に保存する。
+  未知・未保存はどちらも会話（`init(storedValue:)`）。旧バージョンの UI モード保存値 `quiz` は
+  `PracticeMode(storedValue:)` が単語モードへ正規化し、保存済みレコードの `quiz` は
+  `SessionKind(storedValue:)` が quiz のまま復元する
 - **切替可否**: `canChangePracticeMode` = セッション中でなく、エラー再開待ちでもないとき。
   セッション中はピルを無効化して薄く表示する
 - **切替時の副作用**: 末尾の**未使用**トピックカードを新モードのカードへ差し替えるだけ
@@ -96,7 +107,7 @@
   タップすると入力アラートを挟まずその語でセッションを開始する（2026-07-28 追加。
   `docs/plans/archive/vocabulary-continuity.md`）。練習履歴が無いあいだはピルを出さず入力ボタンだけ。
   使用済みになると練習語をピルで残す（履歴を遡ったときに何を練習したか分かる）
-- **前に練習した語の出所**: 専用モデルは作らず `ChatSessionRecord`（mode=word）の `topicTitle` を
+- **前に練習した語の出所**: 専用モデルは作らず `ChatSessionRecord`（kind=word）の `topicTitle` を
   そのまま使う（`ChatHistoryStore.recentWords(limit:)` が新しい順で返し、
   `ChatRoomStore.practicedWordSuggestions(from:limit:)` が正規化キーで畳む）。同じ語を何度練習しても
   ピルは 1 つで、表記は**新しい方**が残る。語を消したいときは管理画面でそのセッションを削除する
@@ -116,21 +127,21 @@
   「この単語を練習する」で行タップと同じ経路のセッション開始。実装は `WordBookDetailView` /
   `WordBookDetailStore` + `WordBookClient.fetchWordDetail`、経緯は
   `docs/plans/archive/wordbook-word-detail.md`
-- 区切り文言は純関数 `ChatRoomStore.dividerLabel(mode:title:)`。起動時の履歴復元でも同じ表記になる
+- 区切り文言は純関数 `ChatRoomStore.dividerLabel(kind:title:)`。起動時の履歴復元でも同じ表記になる
 
 ## セッション
 
-- **system prompt**: `PracticeMode.systemPrompt` で差し替える（付録 A）。
+- **system prompt**: `SessionKind.systemPrompt` で差し替える（付録 A）。
   `WordCoachSystemPrompt.text` は **2,330 トークン**で、`claude-sonnet-5` のキャッシュ最小
   プレフィックス（1024）を満たすので `cache_control` は会話モードと同じく付けたまま
-- **開始メッセージ**: `SessionOpeningMessage.compose(mode:topic:memoryNote:)` が
+- **開始メッセージ**: `SessionOpeningMessage.compose(kind:topic:memoryNote:)` が
   `[New word: <練習語>]` を組み立てる。**記憶ノートは載せない**
-- **記憶ノートを止める場所は 2 つ**: `PracticeMode.usesMemoryNote`（compose 側の保険）と、
+- **記憶ノートを止める場所は 2 つ**: `SessionKind.usesMemoryNote`（compose 側の保険）と、
   `startSession` で `activeMemoryNote` に nil を入れる（そもそも読まない）。後者があるので
   エラー再開の `rebuildHistory` も自動的に Memory 行なしで組み直る
 - **学習者ファーストは使わない**。練習語がたまたま「話しかける」でも Chobi の導入ターンから始める
 - **`[end]` を使わない**: 単語用 system prompt には `[end]` の規定が無く、goodbye と言われても
-  短く受けて次の質問に戻る。実装側でも `PracticeMode.endsOnGoodbye` が false のあいだは
+  短く受けて次の質問に戻る。実装側でも `SessionKind.endsOnGoodbye` が false のあいだは
   終了通知を出さない（二重に止めている）
 - 出力形式（`Chobi: ` / `Naruko: ` のタグ行・1 ターン 1 質問）は会話モードと完全に同一なので、
   `ScriptStreamChunker` / TTS / 翻訳 / 料金記録は変更していない
@@ -154,10 +165,10 @@
 - **フィードバック**: 既存の `SessionFeedbackClient` を流用し、user メッセージの 1 行目だけを
   `Topic: X` → `Practice word: X` に出し分ける。**system prompt は 1 文字も変えていない**
   （プロンプトキャッシュ維持）。スキップ条件（学習者の発話 2 未満）はモード共通
-- `FeedbackCard.mode` を持たせ、生成リトライがモード切替後になっても**開始時のモード**で生成する
+- `FeedbackCard.kind` を持たせ、生成リトライがモード切替後になっても**開始時の種別**で生成する
 - **記憶ノートは更新しない**（注入もしないので対称）。単語練習の逐語がノートに入ると会話モードの
   雑談品質が落ちるため。スキップは診断ログに 1 行残す（何もしないので痕跡が無いと切り分けられない）
-- 終了処理の分岐は `ChatRoomStore.activeSessionMode`（開始時の値）で行う。終了直後のモード切替と
+- 終了処理の分岐は `ChatRoomStore.activeSessionKind`（開始時の値）で行う。終了直後のモード切替と
   混ざらないようにするため
 
 ## 保存と管理画面
@@ -166,7 +177,7 @@
   SwiftData のライトウェイトマイグレーションで既存ストアはそのまま開ける
 - 単語モードのセッションは `topicTitle` に練習語がそのまま入る = **保存はこれで完了**。
   専用モデルは作らない
-- `ChatHistoryStore.recentWords(limit:)`（mode == word のセッションの `topicTitle`・新しい順）が
+- `ChatHistoryStore.recentWords(limit:)`（kind == word のセッションの `topicTitle`・新しい順）が
   単語カードのピルの元データ（2026-07-28 に古い順 → 新しい順へ変更して出題導線で使い始めた）
 - 管理画面のセッション一覧は、単語モードの行だけ見出しを `📖 <練習語>` にする
   （`topicTitle` が練習語そのものなので、印が無いと会話セッションと区別できない）

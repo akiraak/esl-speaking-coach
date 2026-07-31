@@ -62,7 +62,7 @@ struct ChatRoomView: View {
         // ボタンはセッション終了で消えるので、ダイアログはボタンではなく画面側に付ける。
         // 文言はセッション種別基準（クイズ中に「この単語を終了」と出さない）
         .alert(
-            store.sessionWordingMode.endSessionButtonTitle + "しますか？",
+            store.activeSessionKind.endSessionButtonTitle + "しますか？",
             isPresented: $isConfirmingEndSession
         ) {
             Button("終了する") { store.endSession() }
@@ -151,7 +151,7 @@ struct ChatRoomView: View {
         Menu {
             // インラインの Picker にすると現在のモードにチェックが付く（印を自前で描かない）
             Picker("練習モード", selection: practiceModeSelection) {
-                ForEach(PracticeMode.selectableModes, id: \.self) { mode in
+                ForEach(PracticeMode.allCases, id: \.self) { mode in
                     Label(mode.displayName, systemImage: mode.symbolName)
                         .tag(mode)
                 }
@@ -257,7 +257,7 @@ struct ChatRoomView: View {
                     TimelineBottomBar(
                         isTranslationVisible: store.isTranslationVisible,
                         isSessionActive: isEndSessionButtonVisible,
-                        practiceMode: store.sessionWordingMode,
+                        sessionKind: store.activeSessionKind,
                         onToggleTranslation: {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 store.setTranslationVisible(!store.isTranslationVisible)
