@@ -35,20 +35,6 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertNil(replacement.carryOver)
     }
 
-    /// クイズカードも候補を持たないので単語カードと同じ扱い（docs/plans/word-quiz-mode.md）。
-    /// 会話 → クイズは候補を持ち越しへ戻し、クイズ → 会話は持ち越しに触らない。
-    func testQuizCardReplacementBehavesLikeWordCard() {
-        let toQuiz = ChatRoomStore.cardReplacement(
-            in: [.topicCard(makeCard(titles: ["A", "B", "C"]))], newMode: .quiz)
-        XCTAssertEqual(toQuiz.removedIndex, 0)
-        XCTAssertEqual(toQuiz.carryOver?.map(\.title), ["A", "B", "C"])
-
-        let fromQuiz = ChatRoomStore.cardReplacement(
-            in: [.topicCard(makeCard(mode: .quiz))], newMode: .conversation)
-        XCTAssertEqual(fromQuiz.removedIndex, 0)
-        XCTAssertNil(fromQuiz.carryOver)
-    }
-
     /// 使用済みカード（過去の履歴）は差し替えない。
     func testDoesNotReplaceUsedCard() {
         let timeline: [ChatRoomStore.TimelineItem] = [
@@ -96,5 +82,21 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertEqual(
             ChatRoomStore.dividerLabel(mode: .quiz, title: "put off, resilient"),
             "クイズ")
+    }
+
+    /// 区切りの全文は会話・単語だけ日付を前置し、クイズは固定文言「クイズ」のみ
+    /// （日付があっても出題の役に立たない。docs/plans/archive/quiz-divider-no-date.md）。
+    func testDividerTextOmitsDateForQuiz() {
+        let date = Calendar.current.date(
+            from: DateComponents(year: 2026, month: 7, day: 30))!
+        XCTAssertEqual(
+            ChatRoomStore.dividerText(mode: .quiz, title: "resilient", date: date),
+            "クイズ")
+        XCTAssertEqual(
+            ChatRoomStore.dividerText(mode: .conversation, title: "好きなラーメン屋", date: date),
+            "7/30 好きなラーメン屋")
+        XCTAssertEqual(
+            ChatRoomStore.dividerText(mode: .word, title: "get around to", date: date),
+            "7/30 単語: get around to")
     }
 }

@@ -21,9 +21,44 @@ final class PracticeModeTests: XCTestCase {
         XCTAssertEqual(PracticeMode(storedValue: "phrase"), .conversation)
     }
 
-    /// ヘッダのメニューは allCases をそのまま並べる（並び順は会話 → 単語 → クイズ）。
+    /// enum のケースとしては quiz も残す（保存済みレコードの復元・セッション種別に使い続ける）。
     func testAllCasesOrder() {
         XCTAssertEqual(PracticeMode.allCases, [.conversation, .word, .quiz])
+    }
+
+    /// ヘッダのピルの選択肢は会話 / 単語の 2 択（クイズは単語カード内の導線。
+    /// docs/plans/archive/quiz-in-word-mode.md）。
+    func testSelectableModes() {
+        XCTAssertEqual(PracticeMode.selectableModes, [.conversation, .word])
+    }
+
+    /// 起動時の UI モードの復元は quiz を word へ正規化する（クイズが単語モード配下になったため。
+    /// UserDefaults に旧バージョンの quiz が残った端末は単語モードで起動する）。
+    /// 保存済みセッションの復元に使う `PracticeMode(storedValue:)` は正規化しない。
+    @MainActor
+    func testRestoredPracticeModeNormalizesQuizToWord() {
+        XCTAssertEqual(ChatRoomStore.restoredPracticeMode(storedValue: "quiz"), .word)
+        XCTAssertEqual(ChatRoomStore.restoredPracticeMode(storedValue: "word"), .word)
+        XCTAssertEqual(
+            ChatRoomStore.restoredPracticeMode(storedValue: "conversation"), .conversation)
+        XCTAssertEqual(ChatRoomStore.restoredPracticeMode(storedValue: nil), .conversation)
+        XCTAssertEqual(ChatRoomStore.restoredPracticeMode(storedValue: "phrase"), .conversation)
+        // セッション種別の復元は quiz のまま（既存レコードを conversation に化けさせない）
+        XCTAssertEqual(PracticeMode(storedValue: "quiz"), .quiz)
+    }
+
+    /// セッション文言（終了ボタン・確認アラート）はセッション中・エラー再開待ちのあいだ
+    /// セッション種別基準（クイズ中の終了ボタンを「このクイズを終了」に保つ）。
+    @MainActor
+    func testSessionWordingMode() {
+        XCTAssertEqual(
+            ChatRoomStore.sessionWordingMode(
+                isSessionInProgress: true, activeSessionMode: .quiz, practiceMode: .word),
+            .quiz)
+        XCTAssertEqual(
+            ChatRoomStore.sessionWordingMode(
+                isSessionInProgress: false, activeSessionMode: .quiz, practiceMode: .word),
+            .word)
     }
 
     /// 単語モードだけ終了ボタンで終わる。会話は goodbye、クイズは全語出題後の締め

@@ -73,6 +73,7 @@ enum DebugLaunchArguments {
 
     /// 練習モード指定（保存はせずその起動のあいだだけ上書きする）。
     /// 例: -practice-mode word / -practice-mode conversation
+    /// `quiz` も受けるが、UI モードの正規化（`ChatRoomStore.restoredPracticeMode`）で word になる
     static var practiceModeOverride: PracticeMode? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-practice-mode"), index + 1 < args.count else {
@@ -107,9 +108,9 @@ enum DebugLaunchArguments {
         }
     }
 
-    /// 起動時にクイズカードの「クイズを始める」をタップした扱いでセッションを自動開始する
-    /// （`-practice-mode quiz` と併用する。単語クイズの E2E 用。練習済み 0 語なら何も起きない）。
-    /// 例: -practice-mode quiz -start-quiz
+    /// 起動時に単語カードのクイズボタンをタップした扱いでセッションを自動開始する
+    /// （`-practice-mode word` と併用する。単語クイズの E2E 用。練習済み 0 語なら何も起きない）。
+    /// 例: -practice-mode word -start-quiz
     static var shouldStartQuiz: Bool {
         ProcessInfo.processInfo.arguments.contains("-start-quiz")
     }

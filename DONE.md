@@ -1,5 +1,18 @@
 # DONE
 
+- 2026-07-30 クイズのセッション区切りから日付を外した [plan](docs/plans/archive/quiz-divider-no-date.md)
+  - 区切り全文の組み立てを純関数 `dividerText(mode:title:date:)` に集約し、クイズだけ日付を省いて固定文言 **「クイズ」** のみに（会話・単語は従来どおり「M/d ラベル」）。開始時（`startSession`）と復元時（`restoreTimeline`）の両方が同じ関数を通るので、再起動しても日付は復活しない
+  - テスト: `testDividerTextOmitsDateForQuiz` を追加。全テストパス
+  - シミュレータ E2E: `-practice-mode word -start-quiz` でクイズ開始時の区切りが「クイズ」（日付なし）になることを確認
+
+- 2026-07-30 クイズを独立モードから単語モード内の導線に変えた [plan](docs/plans/archive/quiz-in-word-mode.md)
+  - ヘッダのピルを **2 択（会話 / 単語）** に戻し（`PracticeMode.selectableModes`）、クイズ専用カード（`postTopicCard` の quiz 分岐・`TopicCardView.quizBody`）を廃止。単語カードの練習導線と同列の 4 つ目として **「練習済みからクイズ（1語）」**（`quizButtonTitle`。`quizWordCount` から組み立て）を追加（練習済み 0 語は無効化）
+  - UI モードとセッション種別を分離: `startSession(topic:fromCard:mode:)`（既定 = practiceMode。クイズは `mode: .quiz`）とし、区切り・記憶ノート判定・`beginSession`・`launchSession` の configuration・エラー再開の `rebuildHistory` を **渡された mode / `activeSessionMode`** 基準へ（クイズ中のエラー再開が `[New word:]` にならない）。終了ボタン / 確認アラートの文言は新設 `sessionWordingMode`（セッション中・再開待ちはセッション種別、それ以外は UI モード）で「このクイズを終了」を維持
+  - `PracticeMode.quiz` は**セッション種別として残す**（保存済み `modeRawValue` の復元・プロンプト選択・文言）。UserDefaults に旧バージョンの `quiz` が残った端末は起動時に `restoredPracticeMode`（純関数）で **word へ正規化**（`-practice-mode quiz` も同様）。クイズ開始では使用済み単語カードに `selectedTitle` を**設定しない**（語のピル表示で出題語が見えるため）。`-start-quiz` は単語カードのクイズボタンをタップした扱いに変更
+  - クイズセッションの挙動は不変: `[Quiz words: X]`・専用 prompt・`[end]` 自動終了・区切り「クイズ」・フィードバック見出し「単語クイズ」・管理画面 🎯・出題済み除外
+  - テスト: `selectableModes` / `restoredPracticeMode`（quiz → word、セッション復元は quiz のまま）/ `sessionWordingMode` を追加、クイズカードの差し替えテストを削除。全テストパス
+  - シミュレータ E2E: `-practice-mode quiz` で単語モード起動（正規化）/ 単語カードにクイズボタン（練習済み 2 語で有効）/ `-practice-mode word -start-quiz` でヘッダ「単語」のままクイズ開始 → 区切り「クイズ」・終了ボタン「このクイズを終了」・使用済みカードに出題語なし → 自動終了 → フィードバック → クイズボタン付き単語カード / `quiz: 母集団2語 未出題0語 → resilient（全語出題済みのため全語から選択）`（出題済み除外の維持）/ mode=quiz 保存・管理画面 🎯 / 会話モードの退行なし。ピルのメニュー 2 択の見た目とクイズ中エラー再開は**実機確認をユーザーが実施**
+
 - 2026-07-30 クイズの出題数を 1 問にし、チャット欄に出題語を表示しないようにした [plan](docs/plans/archive/quiz-one-word.md)
   - `quizWordCount` を 5 → **1** に変更（1 セッション 1 語で気軽に受けられるテンポ。戻すのは定数 1 箇所）
   - チャット欄から出題語を排除: セッション区切りは固定文言 **「クイズ」**（`dividerLabel` が title を無視）/ 使用済みクイズカードは `selectedTitle`（出題語）を出さず母集団 caption のまま（文言も `…からランダムに1語を出題` に）/ フィードバックカードの見出しは **「単語クイズ」**（本文が語に触れるのは会話の内容そのものなので隠さない）。区切り・カードはクイズ開始と同時に表示されるため、語が出ると答えが見えてクイズにならないのが理由

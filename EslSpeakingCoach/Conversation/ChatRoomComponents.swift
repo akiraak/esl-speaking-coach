@@ -209,9 +209,8 @@ struct CharacterAvatar: View {
 // MARK: - トピックカード
 
 /// 会話モード: トピック候補 3 件 + 固定候補「話しかける」。選択でセッション開始、🔄 で差し替え、＋で自作入力。
-/// 単語モード: 候補を生成しないので、練習する単語の入力ボタンだけを出す。
-/// クイズモード: 出題は全部アプリ任せなので、母集団の説明と開始ボタンだけを出す
-/// （出題語はカードに出さない。docs/plans/word-quiz-mode.md）。
+/// 単語モード: 候補を生成しないので、練習の導線（単語を入力 / 単語帳から選ぶ / ランダムに選ぶ）と
+/// 同列のクイズ開始ボタンを出す（出題語はカードに出さない。docs/plans/archive/quiz-in-word-mode.md）。
 /// 選択済み・過去のカードはグレーアウトして履歴に残す（タップ無効）。
 struct TopicCardView: View {
     let card: ChatRoomStore.TopicCard
@@ -222,7 +221,7 @@ struct TopicCardView: View {
     let onWordBook: () -> Void
     /// 単語モードのみ: 未練習の語をランダムに選んで即開始する
     let onRandomWord: () -> Void
-    /// クイズモードのみ: 出題語を選んで即開始する
+    /// 単語モードのみ: 練習済みの語からクイズを選んで即開始する
     var onStartQuiz: () -> Void = {}
     /// ランダム出題の取得中（3 ボタンとも無効化して二重タップを防ぐ）
     var isRandomWordLoading = false
@@ -237,10 +236,10 @@ struct TopicCardView: View {
                 .foregroundStyle(ChatTheme.accent)
 
             switch card.mode {
-            case .word:
+            case .word, .quiz:
+                // .quiz のカードは投稿されなくなった（クイズは単語カード内の導線）が、
+                // switch の網羅性のため word と同じ扱いにする
                 wordBody
-            case .quiz:
-                quizBody
             case .conversation:
                 conversationBody
             }
@@ -305,8 +304,9 @@ struct TopicCardView: View {
         }
     }
 
-    /// 単語モードのカード本体（候補は生成しないので入力ボタンだけ）。
-    /// 使用済みのカードには練習した語を残す（履歴を遡ったときに何を練習したか分かる）。
+    /// 単語モードのカード本体（候補は生成しないので練習・クイズの開始ボタンだけ）。
+    /// 使用済みのカードには練習した語を残す（履歴を遡ったときに何を練習したか分かる。
+    /// クイズ開始では `selectedTitle` を設定しない ―― 語を出すと答えが見える）。
     @ViewBuilder
     private var wordBody: some View {
         // 単語帳の進捗（例: 練習済み 42/185語 22%・未練習 143語）。見出し直下の caption
@@ -379,31 +379,17 @@ struct TopicCardView: View {
         .buttonBorderShape(.capsule)
         .tint(ChatTheme.accent)
         .disabled(card.isUsed || isRandomWordLoading)
-    }
 
-    /// クイズモードのカード本体（母集団の説明 + 開始ボタンだけ）。
-    /// 出題語（`selectedTitle`）は使用済みカードにも出さない ―― カードはクイズ開始と同時に
-    /// 使用済みになるので、語を出すと答えが見えてクイズにならない（docs/plans/quiz-one-word.md）。
-    @ViewBuilder
-    private var quizBody: some View {
-        if card.quizPoolCount == 0 {
-            Text("先に単語モードで練習してください")
-                .font(.caption)
-                .foregroundStyle(ChatTheme.systemText)
-        } else {
-            Text("練習済み \(card.quizPoolCount)語からランダムに\(ChatRoomStore.quizWordCount)語を出題")
-                .font(.caption)
-                .foregroundStyle(ChatTheme.systemText)
-        }
-
+        // 練習の導線と同列のクイズ開始（docs/plans/archive/quiz-in-word-mode.md）。
+        // 練習済み 0 語は無効化だけ（ピル・集計で状況は伝わるので案内文は出さない）
         Button(action: onStartQuiz) {
-            Label("クイズを始める", systemImage: "play.fill")
+            Label(ChatRoomStore.quizButtonTitle, systemImage: "questionmark.circle")
                 .font(.caption.weight(.semibold))
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
         .tint(ChatTheme.accent)
-        .disabled(card.isUsed || card.quizPoolCount == 0)
+        .disabled(card.quizPoolCount == 0 || card.isUsed || isRandomWordLoading)
     }
 
     /// 使用済みカードに残す「このカードから始めたもの」（練習語 / 出題語の連結）。

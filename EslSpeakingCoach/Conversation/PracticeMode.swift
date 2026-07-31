@@ -1,18 +1,24 @@
 import Foundation
 
-/// トークルームの練習モード（docs/specs/word-practice.md / docs/plans/word-quiz-mode.md）。
+/// トークルームの練習モード（docs/specs/word-practice.md / docs/plans/archive/quiz-in-word-mode.md）。
 /// 会話モードは従来どおりのトピック雑談、単語モードは 1 語を Chobi（先生）と
-/// Naruko（学習者と一緒に学ぶ生徒）で練習する。クイズモードは練習済みの語から
-/// ランダムに選んだ最大 5 語を Chobi が出題し、思い出す練習をする。
+/// Naruko（学習者と一緒に学ぶ生徒）で練習する。クイズは独立した UI モードではなく
+/// 単語カード内の導線から始まる**セッションの種別**で、練習済みの語から
+/// ランダムに選んだ語を Chobi が出題し、思い出す練習をする。
 ///
 /// `rawValue` は UserDefaults（`chatRoomPracticeMode`）と SwiftData
-/// （`ChatSessionRecord.modeRawValue`）にそのまま保存するので、既存の値は変えない。
+/// （`ChatSessionRecord.modeRawValue`）にそのまま保存するので、既存の値は変えない
+/// （保存済みレコードがあるため `.quiz` のケースは消せない）。
 enum PracticeMode: String, Sendable, CaseIterable {
     case conversation
     case word
     case quiz
 
-    /// ヘッダのモードピルに出す短いラベル。
+    /// ヘッダのモードピルに出す選択肢（クイズは単語カード内の導線なのでピルには出さない）。
+    static let selectableModes: [PracticeMode] = [.conversation, .word]
+
+    /// ヘッダのモードピルに出す短いラベル
+    /// （quiz はピルに出ないため到達しないが、switch の網羅性のため残す）。
     var displayName: String {
         switch self {
         case .conversation: return "会話"
@@ -21,7 +27,7 @@ enum PracticeMode: String, Sendable, CaseIterable {
         }
     }
 
-    /// モードピルのアイコン（SF Symbols）。
+    /// モードピルのアイコン（SF Symbols。quiz はピルに出ないため到達しない）。
     var symbolName: String {
         switch self {
         case .conversation: return "bubble.left.and.bubble.right"
@@ -90,7 +96,8 @@ enum PracticeMode: String, Sendable, CaseIterable {
         }
     }
 
-    /// セッション未開始のとき入力バーに出す案内。
+    /// セッション未開始のとき入力バーに出す案内
+    /// （セッション外の UI モードは会話 / 単語だけなので quiz には到達しない）。
     var idlePrompt: String {
         switch self {
         case .conversation: return "トピックカードから話題を選んでスタート"
@@ -99,7 +106,7 @@ enum PracticeMode: String, Sendable, CaseIterable {
         }
     }
 
-    /// トピックカードの見出し。
+    /// トピックカードの見出し（クイズ専用カードは廃止したため quiz には到達しない）。
     var topicCardTitle: String {
         switch self {
         case .conversation: return "📌 次のトピック"
