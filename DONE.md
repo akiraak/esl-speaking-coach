@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-31 会話開始時にチャット欄が最下部までスクロールされず、翻訳ボタンと AI のコメントが被る不具合を修正した [plan](docs/plans/archive/session-start-scroll.md)
+  - 原因 1（主因）: `onScrollPhaseChange` が `.tracking`（タップでも入る）で自動追従を切っており、トピック候補のタップ → セッション開始の追記でコンテンツが伸びた直後に `.idle` の「最下部付近なら再開」判定が走ると「最下部から遠い」と誤判定 → 追従が切れたまま AI の開始ターンが流れて下端バーに被っていた。手動スクロール扱いを実ドラッグ（`.interacting`）に限定し、`.idle` 復帰時の再判定もドラッグ由来（`wasDragging`）に限定
+  - 原因 2: ストリーミングでバブルが伸びる間のアニメーションスクロールは着地が古いフレーム基準で手前にずれることがある。`scrollToBottom` に 250ms 後のアニメーション無しセトル（連続呼び出しは最後の 1 回だけ）を追加して自己修正するようにした
+  - 変更は `ChatRoomView.swift` のみ。手動で遡って読む間の追従停止は実ドラッグ経由でそのまま維持。シミュレータ E2E（`-start-from-card` で開始ターン後に最下部まで追従・被りなし）+ 実機で確認、全 305 テストパス
+
 - 2026-07-31 音声入力を自分が話すターン（listening）のときだけ動かし、入力の窓を開始 / 終了の 2 ジングルで知らせるようにした [plan](docs/plans/archive/turn-gated-voice-input.md)
   - **入力ゲート**: `AudioTapRouter.setSpeechGateOpen(_:)`（attach 直後は閉）。閉じている間はクライアント VAD の判定・遡り蓄積・append を丸ごと停止（暗騒音の推定とレベル表示は継続）。`TurnBasedVoiceSession.syncVoiceInputGate()` が state didSet とマイク再アタッチ時に `state == .listening && 音声入力有効` へ同期
   - 発話の途中でゲートが閉じたら（テキスト送信での割り込み等）セグメントを破棄し、`input_audio_buffer.clear`（`clearClientBuffer` 新設）でサーバ側の append 済み音声も破棄。`isUserSpeaking` / レベルセグメント / partial 表示も仕切り直す

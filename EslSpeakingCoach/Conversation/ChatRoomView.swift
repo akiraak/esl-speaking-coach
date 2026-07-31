@@ -23,6 +23,8 @@ struct ChatRoomView: View {
     /// ユーザーが手動で遡っている間は自動スクロールしない。
     /// 手動スクロールが最下部付近で終わったら再開する
     @State private var isAutoScrollEnabled = true
+    /// アニメーションスクロールの着地を確定させるセトル（最後の呼び出しだけ実行する）
+    @State private var scrollSettleTask: Task<Void, Never>?
 
     private static let bottomAnchorID = "timeline-bottom"
     /// 固定表示の下端バー（高さ 44 + 下余白 12）に隠れない分のスクロール下余白
@@ -218,12 +220,17 @@ struct ChatRoomView: View {
             .scrollDismissesKeyboard(.interactively)
             .onScrollPhaseChange { oldPhase, newPhase, context in
                 switch newPhase {
-                case .tracking, .interacting:
-                    // ユーザーがスクロールを始めた（コンテンツ追記による自動移動はここに来ない）
+                case .interacting:
+                    // ユーザーが実際にドラッグを始めた（コンテンツ追記による自動移動はここに来ない）。
+                    // `.tracking` では切らない — タップ（トピック候補の選択等）でも入ることがあり、
+                    // タップの動作でタイムラインが伸びた直後に .idle の判定が走ると
+                    // 「最下部から遠い」と誤判定して追従が切れたままになる
+                    // （docs/plans/archive/session-start-scroll.md 仮説 1）
                     isAutoScrollEnabled = false
-                case .idle where oldPhase.isUserDriven:
-                    // 指を離して止まった位置で判定する。プログラム側スクロールの
-                    // 完了（.animating → .idle）で誤って追従を切らないよう限定する
+                case .idle where oldPhase.wasDragging:
+                    // 指を離して止まった位置で判定する。ドラッグ由来のときだけ —
+                    // プログラム側スクロールの完了（.animating → .idle）やタップの
+                    // .tracking → .idle で状態を変えないよう限定する
                     let geometry = context.geometry
                     isAutoScrollEnabled =
                         geometry.contentOffset.y + geometry.containerSize.height
@@ -346,6 +353,15 @@ struct ChatRoomView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
         }
+        // ストリーミングでバブルが伸びている間は、アニメーション中に測ったフレームが古く
+        // 着地が最後の伸長ぶん手前になることがある。レイアウトが落ち着いた頃に
+        // アニメーション無しでもう一度寄せて確定させる（最後の呼び出しだけ実行）
+        scrollSettleTask?.cancel()
+        scrollSettleTask = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, isAutoScrollEnabled else { return }
+            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+        }
     }
 
     // MARK: - 操作
@@ -445,10 +461,11 @@ struct ChatRoomView: View {
 }
 
 private extension ScrollPhase {
-    /// 指の操作に由来するフェーズ（プログラム側の `.animating` と区別する）。
-    var isUserDriven: Bool {
+    /// ドラッグ由来のフェーズ（プログラム側の `.animating` や、タップでも入り得る
+    /// `.tracking` と区別する）。
+    var wasDragging: Bool {
         switch self {
-        case .tracking, .interacting, .decelerating: return true
+        case .interacting, .decelerating: return true
         default: return false
         }
     }
