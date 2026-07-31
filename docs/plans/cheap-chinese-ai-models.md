@@ -176,8 +176,22 @@ Kimi は見送り（上記判定）。MiniMax M3 は structured outputs 欠如�
 
 必要なアカウント / キーの用意は **Phase 2（API キー収集）** として切り出した（対応方針の Phase 2 節参照。Alibaba Model Studio + OpenRouter の 2 つ、Z.ai 直は保留）。
 
+## Phase 2 実施記録（2026-07-31）
+
+アカウント 2 つ・キー 2 本を用意し、両方とも curl での疎通確認に成功。**Phase 2 完了**。
+
+- **Alibaba Cloud（国際版）**: アカウント作成 → Model Studio はコンソール初回アクセスで明示的な有効化画面なしに利用可能になっていた。API キー（Singapore / Default Workspace）を `.secrets/dashscope-api-key` に配置。`https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions` へ `qwen-flash` で疎通 OK（消費 14 トークン、無料枠内）
+- **OpenRouter**: アカウント作成（Google ログイン）→ クレジット $5 購入 → キーを `.secrets/openrouter-api-key` に配置。`z-ai/glm-4.7` で疎通 OK（$0.000204）
+
+Phase 1 の想定から更新した事実:
+
+- **Model Studio の無料枠（モデルごと 100 万トークン）はシンガポールリージョン限定**。API キー・モデルリスト・エンドポイントはリージョンごとに別で相互流用不可。東京リージョン（ap-northeast-1）はワークスペース専用ドメイン `{WorkspaceId}.ap-northeast-1.maas.aliyuncs.com` のみ（DashScope ドメイン・トライアルとも非対応）→ **品質検証はシンガポール無料枠で行い、東京は Phase 3 のレイテンシ実測時に日本リージョンのワークスペース + 専用キーを別途作って少額課金で使う**（出典: https://www.alibabacloud.com/help/en/model-studio/regions/ ）
+- **GLM-4.7 は OpenRouter 経由で reasoning が既定 ON**。「OK」と返すだけの疎通リクエストで reasoning 87 トークンを出力した（出力 90 トークン中）。会話ターン用途ではレイテンシ・コストに直結するため、**Phase 3 では reasoning の抑制（OpenRouter の `reasoning` パラメータ）を必ず検証項目に入れる**
+- OpenRouter のモデル一覧に `qwen/qwen3.7-plus` / `qwen3.7-max` / `deepseek/deepseek-v4-flash` / `minimax/minimax-m3` の掲載を確認済み（Qwen のルーティング先が Alibaba 本家のみである点は Phase 1 記載どおり）
+
 **Phase 3 の追加確認項目**（調査で未確認だったもの）:
 
 - Qwen Anthropic 互換エンドポイントで既存リクエスト形（system cache_control / streaming / max_tokens / effort 系パラメータの受容）がそのまま通るか
 - Qwen / GLM の structured outputs（json_schema 相当）がフィードバック生成の出力形式を安定して満たすか
 - 英語固定（2 キャラ台本 system prompt）で中国語・ピンイン混入が起きないか
+- GLM / DeepSeek（OpenRouter 経由）で reasoning を抑制した場合の品質・レイテンシ・コスト（既定 ON のままでは会話ターンに不向き。Phase 2 実施記録参照）
