@@ -128,8 +128,9 @@ final class ChatRoomStore {
     static let wordSuggestionCount = 6
     /// 重複を畳む前に履歴から読む単語セッションの件数（同じ語を繰り返し練習しても上限まで埋まるよう多めに取る）
     static let wordSuggestionScanLimit = 40
-    /// 1 回のクイズで出題する語数（1 周 10 分程度を想定。妥当性は実機で体感して調整する）
-    static let quizWordCount = 5
+    /// 1 回のクイズで出題する語数（1 セッション 1 語で気軽に受けられるテンポにする。
+    /// 増やしたくなったらこの定数を戻す）
+    static let quizWordCount = 1
 
     private static let inputModeKey = "chatRoomInputMode"
     private static let practiceModeKey = "chatRoomPracticeMode"
@@ -1241,13 +1242,14 @@ final class ChatRoomStore {
         (try? KeychainStore().read(account: account)) ?? nil
     }
 
-    /// セッション区切りの日付以降の文言
-    /// （単語・クイズモードは語の羅列だと分かるよう `単語:` / `クイズ:` を前置する）。
+    /// セッション区切りの日付以降の文言（単語モードは練習語だと分かるよう `単語:` を前置する）。
+    /// クイズモードは**出題語を出さない**固定文言 ―― 区切りはクイズ開始と同時に表示されるので、
+    /// 語を出すと答えが見えてクイズにならない（docs/plans/quiz-one-word.md）。
     static func dividerLabel(mode: PracticeMode, title: String) -> String {
         switch mode {
         case .conversation: return title
         case .word: return "単語: \(title)"
-        case .quiz: return "クイズ: \(title)"
+        case .quiz: return "クイズ"
         }
     }
 

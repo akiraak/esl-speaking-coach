@@ -381,18 +381,17 @@ struct TopicCardView: View {
         .disabled(card.isUsed || isRandomWordLoading)
     }
 
-    /// クイズモードのカード本体（母集団の説明 + 開始ボタンだけ。出題語は始まる前に見せない）。
-    /// 使用済みのカードには出題した語の連結（`selectedTitle`）を残す（単語カードと同じ流儀）。
+    /// クイズモードのカード本体（母集団の説明 + 開始ボタンだけ）。
+    /// 出題語（`selectedTitle`）は使用済みカードにも出さない ―― カードはクイズ開始と同時に
+    /// 使用済みになるので、語を出すと答えが見えてクイズにならない（docs/plans/quiz-one-word.md）。
     @ViewBuilder
     private var quizBody: some View {
-        if let selectedTitle = card.selectedTitle {
-            selectedTitleLabel(selectedTitle)
-        } else if card.quizPoolCount == 0 {
+        if card.quizPoolCount == 0 {
             Text("先に単語モードで練習してください")
                 .font(.caption)
                 .foregroundStyle(ChatTheme.systemText)
         } else {
-            Text("練習済み \(card.quizPoolCount)語からランダムに最大\(ChatRoomStore.quizWordCount)語を出題")
+            Text("練習済み \(card.quizPoolCount)語からランダムに\(ChatRoomStore.quizWordCount)語を出題")
                 .font(.caption)
                 .foregroundStyle(ChatTheme.systemText)
         }
@@ -476,7 +475,9 @@ struct FeedbackCardView: View {
             Text("📝 Session Feedback")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(ChatTheme.accent)
-            Text(card.topicTitle)
+            // クイズは出題語をチャット欄に出さない（docs/plans/quiz-one-word.md）。
+            // 本文が語に触れるのは会話の内容そのものなので隠さない
+            Text(card.mode == .quiz ? "単語クイズ" : card.topicTitle)
                 .font(.caption)
                 .foregroundStyle(ChatTheme.nameLabel)
 

@@ -84,7 +84,8 @@ final class PracticeModeCardTests: XCTestCase {
         XCTAssertNil(ChatRoomStore.cardReplacement(in: timeline, newMode: .word).removedIndex)
     }
 
-    /// セッション区切りは単語・クイズモードだけ「単語:」「クイズ:」を前置する（履歴を遡ったときの見分け）。
+    /// セッション区切りは単語モードだけ「単語:」を前置する。クイズは**出題語を出さない**
+    /// 固定文言（区切りはクイズ開始と同時に出るので、語を出すと答えが見える）。
     func testDividerLabelPerMode() {
         XCTAssertEqual(
             ChatRoomStore.dividerLabel(mode: .conversation, title: "好きなラーメン屋"),
@@ -94,6 +95,6 @@ final class PracticeModeCardTests: XCTestCase {
             "単語: get around to")
         XCTAssertEqual(
             ChatRoomStore.dividerLabel(mode: .quiz, title: "put off, resilient"),
-            "クイズ: put off, resilient")
+            "クイズ")
     }
 }
