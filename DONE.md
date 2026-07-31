@@ -1,5 +1,18 @@
 # DONE
 
+- 2026-07-31 音声入力を自分が話すターン（listening）のときだけ動かし、入力の窓を開始 / 終了の 2 ジングルで知らせるようにした [plan](docs/plans/archive/turn-gated-voice-input.md)
+  - **入力ゲート**: `AudioTapRouter.setSpeechGateOpen(_:)`（attach 直後は閉）。閉じている間はクライアント VAD の判定・遡り蓄積・append を丸ごと停止（暗騒音の推定とレベル表示は継続）。`TurnBasedVoiceSession.syncVoiceInputGate()` が state didSet とマイク再アタッチ時に `state == .listening && 音声入力有効` へ同期
+  - 発話の途中でゲートが閉じたら（テキスト送信での割り込み等）セグメントを破棄し、`input_audio_buffer.clear`（`clearClientBuffer` 新設）でサーバ側の append 済み音声も破棄。`isUserSpeaking` / レベルセグメント / partial 表示も仕切り直す
+  - **仕様変更: 音声での barge-in を廃止**（AI のターン中は入力ごと停止。回り込み・環境音の誤割り込みも消える）。割り込みは一時停止ボタンとテキスト送信のみ。4o（サーバ VAD）経路は従来どおり常時入力 + 音声 barge-in で不変。`CLAUDE.md` の音声レイヤの方針を更新
+  - **ジングル 2 種**: `ListeningCue` を `Kind.start`（上昇 E5→A5）/ `.end`（下降 A5→E5）に拡張。終了音は発話終端（`.speechStopped`）受付時に鳴らし（テキスト送信ターンでは鳴らない）、開始音は listening 入りに加えて空セグメント（雑音破棄等）で聞き取りに戻るパスでも鳴らし直す
+  - テスト: ゲート開閉（閉時は無反応 / 発話中破棄の戻り値 / idle 閉鎖は破棄なし）+ clear の JSON + ジングル波形（開始と別波形・クリックなし・互換）を追加し全 305 件パス。シミュレータのテキスト会話回帰・実機（ターン外で入力が動かない・ジングルの聞こえ方）とも確認済み
+
+- 2026-07-31 gpt-live-transcribe に対応し、実機検証を経て既定 STT に採用した（クライアント側発話終端検知 + 手動 commit） [plan](docs/plans/archive/gpt-live-transcribe-adoption.md)
+  - **Phase 1**: `Voice/ClientSpeechEndpointer.swift` を新設。タップバッファごとの RMS から発話開始 / 終端を判定する純粋な値型の状態機械（エネルギー VAD）。閾値は `min(max(暗騒音 × 3.0, 0.01), 0.05)` の 1 本で `SpeechLevelGate` の実機調整値を流用。判定はバッファ数ではなく実時間（開始 120ms 継続 / 終端 800ms 無音 / 60 秒で強制終端 = 持続環境音での課金無制限伸長のフェイルセーフ）。暗騒音は `SegmentLevelMeter.currentNoiseFloor`（新設）を共有し二重推定しない。ユニットテスト 12 件
+  - **Phase 2**: `AudioTapRouter` に送信ゲート（`attachGatedPCM16` / `resetSpeechGate`）。live では発話区間 + 遡り 0.5 秒だけを append し、無音・AI 発話中は送らない（= 課金しない）。音声と発話境界を 1 本の `GatedMicEvent` ストリームで運び「append 完了後に commit」を順序だけで保証。`OpenAITranscriptionStream` に `noteClientSpeechStarted` / `commitClientSegment`（commit は sendQueue 経由）。`TurnBasedVoiceSession` は `isLiveTranscribe` で受け方を分岐するだけで状態遷移・barge-in・レベルゲート・メトリクスは共通。STT 再接続時はゲートをリセットして言い直してもらう。`input_audio_buffer` 系サーバエラー（空 commit 等）は ignorable 化。ゲート開閉 4 件 + JSON 2 件のテスト追加
+  - **Phase 3**: シミュレータで live の ready 到達 + テキスト会話回帰、4o 既定の通常起動回帰、全 298 テストパス。実機で精度・終端の体感・barge-in・課金を確認
+  - **Phase 4**: 既定を `gpt-live-transcribe` に切替（`delay` は検証基準の `low` を明示固定）。約 3 倍のコスト（$0.017/分）とターン確定 +0.7 秒（commit → completed 待ち）を認識精度の向上が上回ると判断。旧経路（`gpt-4o-transcribe` + サーバ VAD）は削除せず `-stt-model` か既定値 1 箇所で戻せる。`CLAUDE.md` / `ai-cost-map.md`（課金マップ・単価表・概算例 約 $0.55/セッション）を更新。live で長期安定したら旧経路の掃除タスクを起こす
+
 - 2026-07-31 クライアント側の発話終端検知の実装方法を調査した（gpt-live-transcribe 採用の前提） [plan](docs/plans/archive/client-side-endpointing.md)
   - 推奨は 2 段構え: まず**自前エネルギー VAD**（既存 `AudioTapRouter` / `SegmentLevelMeter` の RMS・暗騒音中央値・遡り 0.5 秒バッファに状態機械を足すだけ。追加依存ゼロ）、精度不足なら **Apple 純正 `SpeechDetector`**（iOS 26+ の VAD モジュール。アセット要否は要スパイク）か **Silero VAD**（CoreML ポートあり）へ差し替え
   - gpt-live-transcribe 側の成立条件を probe で実測: 1 セッションで append → commit を繰り返せる / **発話区間だけ送れば課金も発話ぶんだけ**（usage は commit 音声の秒数・セグメントごと切り上げ）/ `clear` も受理 / commit → completed は約 0.7 秒（現行よりターン確定 +0.7 秒の見込み）/ セグメント間で文脈は引き継がれず prefix padding 必須

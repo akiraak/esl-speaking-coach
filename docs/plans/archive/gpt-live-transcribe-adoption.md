@@ -2,6 +2,31 @@
 
 2026-07-31 作成。検証（`archive/gpt-live-transcribe-verification.md`）と調査（`archive/client-side-endpointing.md`）の後続タスク。
 
+## 進捗（2026-07-31）
+
+- **Phase 1 完了**: `Voice/ClientSpeechEndpointer.swift`（純粋な値型の状態機械）+ ユニットテスト 12 件。
+  判定はバッファ数ではなく実時間で数える（HFP 等でサンプルレートが変わっても基準を保つため、
+  `record(level:duration:noiseFloor:)` にバッファの実時間を渡す）。閾値は
+  `min(max(floor × snrRatio, minimumPeak), unconditionalPeak)` の 1 本
+  （unconditionalPeak は「フロア推定が不当に高くても拾う」保険を閾値の上限として表現）。
+  暗騒音は `SegmentLevelMeter.currentNoiseFloor`（新設の読み出し口）を共有し二重推定しない
+- **Phase 2 完了**: `AudioTapRouter` に送信ゲート（`attachGatedPCM16` / `GatedMicEvent` /
+  `resetSpeechGate`）、`OpenAITranscriptionStream` に `noteClientSpeechStarted` /
+  `commitClientSegment`（commit は sendQueue 経由で append との順序保証）、
+  `TurnBasedVoiceSession` は `isLiveTranscribe` でストリームの受け方だけ分岐。
+  音声と発話境界を 1 本の `GatedMicEvent` ストリームで運ぶことで「append 完了後に commit」を
+  ストリーム順序そのままで保証。`input_audio_buffer` 系のサーバエラー（空 commit 等）は
+  ignorable 扱いにしてセッションを殺さない。ユニットテスト追加（ゲート開閉 4 件 + JSON 2 件）
+- **Phase 3 完了**: シミュレータは live 指定（`-stt-model gpt-live-transcribe -start-conversation
+  -send-text ...`）で ready 到達 + テキスト会話回帰 OK、4o 既定の通常起動回帰 OK、
+  全ユニットテスト 298 件パス。実機検証（精度・終端の体感・barge-in・課金）もユーザー実施で完了
+- **Phase 4 完了（2026-07-31 採用）**: 実機検証の結果を受けて既定を切替。
+  `OpenAITranscriptionConfiguration.model` = `gpt-live-transcribe`、`delay` は検証の基準にした
+  `low` をサーバ既定任せにせず明示固定。旧経路（`gpt-4o-transcribe` + サーバ VAD）は削除せず、
+  `-stt-model gpt-4o-transcribe` か既定値 1 箇所でいつでも戻せる。`CLAUDE.md`（技術スタック・
+  音声レイヤの方針・経緯）と `docs/specs/ai-cost-map.md`（課金マップ・単価表・概算例）を更新。
+  live で長期安定した時点で旧経路の掃除タスクを別途起こす
+
 ## 目的・背景
 
 - OpenAI の新 STT `gpt-live-transcribe` は現行 `gpt-4o-transcribe` より認識精度が良い（公称 + 簡易実測）が、**サーバ VAD 非対応**のため、発話終端・barge-in の検知をクライアントで行い `input_audio_buffer.commit` を送る実装が必要
@@ -19,8 +44,9 @@
   - 開始: `max(暗騒音 × snrRatio, minimumPeak)` を **N バッファ連続**で超えたら発話開始（単発の物音で発火しない）。`SpeechLevelGate.Thresholds` の実機調整値（snrRatio 3.0 / minimumPeak 0.01 / unconditionalPeak 0.05）を初期値に流用する
   - 終端: 閾値未満が **800ms 継続**（現行のサーバ VAD `silence_duration_ms` と同値）で発話終端
   - 遡り: 開始判定時に直近 0.5 秒（`lookbackWindow` 相当）を prefix padding としてセグメントに含める
+  - フェイルセーフ: 発話開始から `maxSegmentDuration`（初期値 60 秒）で**強制終端**する。エネルギー VAD は持続的な環境音（テレビ等）で終端が出ないことがあり、その場合 append と課金が無制限に伸びる（サーバ VAD 時代には無かった故障モード）
 - 暗騒音の推定・読み上げ中の更新停止は `SegmentLevelMeter` の実装を共有（二重推定しない形に整理する）
-- **テスト**: 合成レベル系列 → イベント列の純関数ユニットテスト（開始の連続条件 / 800ms 終端 / 物音単発で発火しない / 静かな部屋でフロア 0 のときの絶対値フォールバック / 読み上げ中の抑制）
+- **テスト**: 合成レベル系列 → イベント列の純関数ユニットテスト（開始の連続条件 / 800ms 終端 / 物音単発で発火しない / 静かな部屋でフロア 0 のときの絶対値フォールバック / 読み上げ中の抑制 / `maxSegmentDuration` 到達で強制終端）
 
 ### Phase 2: live 用の送信ゲートと commit の組み込み
 
@@ -31,6 +57,7 @@
   - completed は commit への応答としてしか届かない（約 0.7 秒）。メトリクスの「STT確定」がそのぶん伸びるので、`TurnMetricsBuilder` の計測点はそのまま比較できるようにする
   - セグメント間で認識文脈は引き継がれないため、遡りパディングの欠けは精度に直撃する（Phase 1 の lookback を必ず通す）
   - barge-in はクライアント判定になる。読み上げ中は Voice Processing + フロア更新停止が前提（現行と同じ）
+  - 再接続時、送信中セグメントの append 済み音声はサーバ側で失われる（新しい接続のバッファは空なので `input_audio_buffer.clear` は不要）。**エンドポインタと送信ゲートを idle にリセットしてセグメントを破棄**し、言い直してもらう。現行のサーバ VAD でも切断時のセグメントは失われるため挙動として同等。セグメント PCM をローカル保持して再 append する案は複雑化に見合わないので、採用後の改善候補に留める
 - **テスト**: commit / append の JSON とゲート開閉のユニットテスト。4o 経路が不変であることは既存の `sessionUpdate` GA 形テストで担保
 
 ### Phase 3: シミュレータ E2E + 実機検証
@@ -45,7 +72,11 @@
 
 ### Phase 4: 採用判断と既定切替
 
-- Phase 3 の結果で採用可否を判断する。採用なら `OpenAITranscriptionConfiguration.model` の既定値を切替え、`CLAUDE.md`（音声レイヤの方針の表・不採用リスト）と `docs/specs/ai-cost-map.md` を更新
+- Phase 3 の結果で採用可否を判断する。判断基準:
+  - **コスト**: 発話分あたり約 3 倍（$0.017/分 vs 現行約 $0.006/分）の増加に、認識精度の改善（短い発話の言語誤判定・prompt エコー幻覚・雑音誤認識の解消度合い）が見合うか
+  - **レイテンシ**: ターン確定が約 +0.7 秒遅くなる（commit → completed 待ち）体感悪化が許容できるか
+  - **終端品質**: 自前 VAD の切りどころ（早切れ・切れ残り）が実用レベルか
+- 採用なら `OpenAITranscriptionConfiguration.model` の既定値を切替え、`CLAUDE.md`（音声レイヤの方針の表・不採用リスト）と `docs/specs/ai-cost-map.md` を更新
 - **旧経路（4o + サーバ VAD）は削除しない**。既定値 1 箇所でいつでも戻せる状態を維持し、live で長期安定した時点で掃除タスクを別途起こす
 - 見送りなら本プランに理由を記録してアーカイブ（切替スイッチと Phase 1〜2 の実装は DEBUG 検証用に残すか、そのとき判断）
 

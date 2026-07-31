@@ -14,7 +14,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | 領域 | 選択 | 備考 |
 | --- | --- | --- |
 | プラットフォーム | iOS ネイティブ / Swift + SwiftUI | Android は対象外 |
-| 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-4o-transcribe`、TTS: Gemini Flash TTS。下記「音声レイヤの方針」参照 |
+| 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-live-transcribe`、TTS: Gemini Flash TTS。下記「音声レイヤの方針」参照 |
 | 会話・評価の LLM | Claude API（会話・トピック生成: `claude-sonnet-5` / 評価: `claude-opus-5`） | アプリから直接呼ぶ |
 | データ保存 | 端末内（SwiftData） | サーバーなし。iCloud 同期もしない |
 | バックエンド | **なし** | 自分専用前提でアプリから API を直叩きする |
@@ -25,13 +25,14 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 | 役割 | 採用 | 備考 |
 | --- | --- | --- |
-| STT | OpenAI `gpt-4o-transcribe`（Realtime API の transcription セッション / WebSocket） | `language: en` + prompt ヒントで英語固定（短い発話の言語誤判定対策） |
-| 発話終端・barge-in | transcription セッションのサーバ VAD | 無音判定 800ms を明示指定（既定 200ms は ESL 学習者に短すぎる） |
+| STT | OpenAI `gpt-live-transcribe`（Realtime API の transcription セッション / WebSocket。2026-07-31 採用） | `languages: [en]` + prompt ヒントで英語固定（短い発話の言語誤判定対策）。`delay: low` を明示固定。分数課金 $0.017/分（発話セグメント分のみ）。旧既定 `gpt-4o-transcribe` へは `-stt-model` か既定値 1 箇所で戻せる |
+| 発話終端・入力の窓 | クライアント VAD（`ClientSpeechEndpointer` + `AudioTapRouter` の送信ゲート）+ 手動 commit。**音声入力は自分が話すターン（listening）のときだけ動く** | live はサーバ VAD 非対応。無音 800ms で終端・遡り 0.5 秒・60 秒で強制終端。AI のターン中は入力ごと停止するため**音声での barge-in は無い**（割り込みは一時停止ボタン / テキスト送信のみ）。入力の窓の開始 / 終了はジングル 2 種で提示（`docs/plans/archive/turn-gated-voice-input.md`）。発話区間だけ append するので無音・AI 発話中は課金されない。4o 経路では従来どおり常時入力 + サーバ VAD + 音声 barge-in |
 | 会話 LLM | `claude-sonnet-5`（下記規約どおりストリーミング + 文単位 TTS） | 2026-07-25 に opus-5 / sonnet-5 / haiku-4-5 を比較して決定（記録: `docs/plans/archive/spike-conversation/`） |
 | TTS | Gemini Flash TTS（現行 `gemini-3.1-flash-tts-preview`。`streamGenerateContent` SSE、24kHz PCM16 LE） | モデル・voice は調整中。聞き比べ用に `gpt-4o-mini-tts` へ切替可 |
 
 - Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。この構成は Anthropic 公式の Claude アプリ音声モードと同型
-- 不採用にしたもの: iPhone 純正音声系（STT のモデル DL・シミュレータ検証不可・TTS 品質）、OpenAI Realtime / Gemini Live の speech-to-speech（会話相手が Claude でなくなる）。検証記録は `docs/plans/archive/voice-layer-spike.md`。OpenAI `gpt-live-transcribe`（2026-07-28 発表の新 STT）は**サーバ VAD 非対応**（turn_detection が使えず手動 commit のみ）で現行ターン制に組み込めないため見送り（2026-07-31 検証: `docs/plans/archive/gpt-live-transcribe-verification.md`。`-stt-model` 起動引数の切替だけ残してある）
+- 不採用にしたもの: iPhone 純正音声系（STT のモデル DL・シミュレータ検証不可・TTS 品質）、OpenAI Realtime / Gemini Live の speech-to-speech（会話相手が Claude でなくなる）。検証記録は `docs/plans/archive/voice-layer-spike.md`
+- STT は当初 `gpt-4o-transcribe` + サーバ VAD で採用し、`gpt-live-transcribe`（2026-07-28 発表）は**サーバ VAD 非対応**のため一度見送った（`docs/plans/archive/gpt-live-transcribe-verification.md`）。その後クライアント側の発話終端検知 + 手動 commit を実装し、実機検証を経て **2026-07-31 に live を既定へ切替**（`docs/plans/archive/gpt-live-transcribe-adoption.md`）。旧経路（4o + サーバ VAD）は削除せず維持している（live で長期安定したら掃除タスクを別途起こす）
 - ターン制のため会話中の音声レベルの発音指摘はしない（発音・表現のフィードバックはセッション後にテキストベースで行う）
 - **出力経路に `.defaultToSpeaker` を使わない**（2026-07-28 決定）。カテゴリは `.playAndRecord` / `mode: .voiceChat` / options は `AudioRoutePolicy.categoryOptions`（Bluetooth HFP・A2DP・AirPlay を許可）。スピーカーへは「出力が**本体内蔵（受話口 / スピーカー）だけのとき**」に `overrideOutputAudioPort(.speaker)` で寄せ、経路変更のたびに再評価する。**内蔵スピーカーを判定から外さない**（外すと自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復で AVAudioEngine が止まり無音になる。`docs/plans/archive/speaker-no-audio.md`）。`.defaultToSpeaker` を付けるとイヤフォン / Bluetooth があっても出力が内蔵スピーカーへ固定される（`AudioRoutePolicy` / `docs/plans/archive/earphone-audio-route.md`）
 

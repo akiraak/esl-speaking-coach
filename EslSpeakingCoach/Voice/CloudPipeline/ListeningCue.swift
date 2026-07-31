@@ -1,14 +1,31 @@
 import Foundation
 
-/// 入力待ち（listening）開始を知らせるジングルの波形合成。
-/// 音源ファイルは持たず、短い 2 音の上昇チャイム（サイン波 + アタック / 減衰包絡）を生成する。
+/// 音声入力の窓の開始 / 終了を知らせるジングルの波形合成。
+/// 音源ファイルは持たず、短い 2 音のチャイム（サイン波 + アタック / 減衰包絡）を生成する。
+/// 開始は上昇 2 音、終了は聞き分けられる下降 2 音（docs/plans/archive/turn-gated-voice-input.md）。
 enum ListeningCue {
+    enum Kind: Sendable {
+        /// 入力待ち（listening）が始まった = 話してよい
+        case start
+        /// 発話終端を受け付けて入力の窓が閉じた
+        case end
+    }
+
     /// mono の Float32 サンプル列（約 0.3 秒）。振幅は ±1 に収まり、先頭・末尾はほぼ 0（クリック防止）。
-    static func makeSamples(sampleRate: Double) -> [Float] {
-        let notes: [(frequency: Double, duration: Double)] = [
-            (659.25, 0.11),  // E5
-            (880.00, 0.16),  // A5
-        ]
+    static func makeSamples(kind: Kind = .start, sampleRate: Double) -> [Float] {
+        let notes: [(frequency: Double, duration: Double)] =
+            switch kind {
+            case .start:
+                [
+                    (659.25, 0.11),  // E5
+                    (880.00, 0.16),  // A5
+                ]
+            case .end:
+                [
+                    (880.00, 0.11),  // A5
+                    (659.25, 0.16),  // E5
+                ]
+            }
         let amplitude = 0.3
         let gapSamples = Int(0.02 * sampleRate)
         var samples: [Float] = []

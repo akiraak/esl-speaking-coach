@@ -89,10 +89,10 @@ enum DebugLaunchArguments {
         return TTSProvider(rawValue: args[index + 1])
     }
 
-    /// STT モデル指定（gpt-live-transcribe の検証用。既定は gpt-4o-transcribe）。
-    /// live 系はサーバ VAD 非対応のため接続・live 字幕までで音声ターンは確定しない
-    /// （docs/plans/archive/gpt-live-transcribe-verification.md）。
-    /// 例: -stt-model gpt-live-transcribe
+    /// STT モデル指定（既定は gpt-live-transcribe = クライアント VAD + 手動 commit。
+    /// 旧構成 gpt-4o-transcribe + サーバ VAD へ戻す比較用。
+    /// docs/plans/archive/gpt-live-transcribe-adoption.md）。
+    /// 例: -stt-model gpt-4o-transcribe
     static var sttModelOverride: String? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-stt-model"), index + 1 < args.count else { return nil }

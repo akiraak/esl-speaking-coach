@@ -2,6 +2,19 @@ import Accelerate
 import AVFAudio
 import Foundation
 
+/// live（クライアント VAD）モードの送信ゲートが流すイベント。
+/// 音声と発話境界を 1 本のストリームで運ぶことで、「append がすべて済んでから commit」の
+/// 順序をストリームの順序そのままで保証する（docs/plans/archive/gpt-live-transcribe-adoption.md Phase 2）。
+enum GatedMicEvent: Sendable, Equatable {
+    /// 発話区間（+ 遡り）の PCM16 生バイト列
+    case audio(Data)
+    /// エンドポインタが発話開始を検知した（barge-in の起点。この直後に遡りぶんの audio が続く）
+    case speechStarted
+    /// エンドポインタが発話終端を検知した（受け手はここで commit を送る）。
+    /// forced = true は maxSegmentDuration 到達の強制終端
+    case speechStopped(forced: Bool)
+}
+
 /// マイクのタップから受け取ったバッファを、RMS レベルと（接続中なら）PCM16 の生バイト列へ配る。
 /// process(buffer:) はオーディオスレッドから呼ばれるため NSLock で守る。
 /// AVAudioConverter 等の非 Sendable な状態はこのクラス内に閉じ込める。
@@ -13,6 +26,17 @@ final class AudioTapRouter: @unchecked Sendable {
     private var rawContinuation: AsyncStream<Data>.Continuation?
     private var rawFormat: AVAudioFormat?
     private var rawConverter: AVAudioConverter?
+    private var gatedContinuation: AsyncStream<GatedMicEvent>.Continuation?
+    private var gatedFormat: AVAudioFormat?
+    private var gatedConverter: AVAudioConverter?
+    /// live モードのクライアント VAD（暗騒音は meter の推定を共有する）
+    private var endpointer = ClientSpeechEndpointer()
+    /// live の送信ゲートの開閉。自分が話すターン（listening）のときだけ開く
+    /// （docs/plans/archive/turn-gated-voice-input.md。attach 直後は閉、セッションが state に同期させる）
+    private var isSpeechGateOpen = false
+    /// 発話開始判定時に prefix padding として送る直近チャンク（合計 ≒ lookbackDuration）
+    private var lookbackChunks: [(data: Data, duration: TimeInterval)] = []
+    private var lookbackTotal: TimeInterval = 0
     private var buffersReceived = 0
     /// 雑音セグメントの判定用。levels ストリームは .bufferingNewest(1) で取りこぼすため、
     /// 統計はここ（タップの呼び出しごと）で積む
@@ -40,6 +64,43 @@ final class AudioTapRouter: @unchecked Sendable {
         rawConverter = nil
     }
 
+    /// live（サーバ VAD 非対応モデル）用の送信ゲート。PCM を常時流すのではなく、
+    /// クライアント VAD が判定した発話区間 + 遡り（lookbackDuration）だけを流し、
+    /// 発話境界イベントを同じストリームに挟む。attachRawPCM16 とは排他で使う。
+    func attachGatedPCM16(
+        format: AVAudioFormat,
+        thresholds: ClientSpeechEndpointer.Thresholds,
+        continuation: AsyncStream<GatedMicEvent>.Continuation
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        gatedContinuation = continuation
+        gatedFormat = format
+        gatedConverter = nil
+        endpointer = ClientSpeechEndpointer(thresholds: thresholds)
+        isSpeechGateOpen = false
+        lookbackChunks.removeAll()
+        lookbackTotal = 0
+    }
+
+    /// live の送信ゲートを開閉する。閉じている間はエンドポインタ判定・遡り蓄積・append を
+    /// 丸ごと止める（暗騒音の推定とレベル表示は動き続ける）。
+    /// - Returns: 発話中セグメントを破棄したか。true なら呼び出し側でサーバ側の
+    ///   append 済みバッファも clear すること（次セグメントの commit への混入防止）
+    @discardableResult
+    func setSpeechGateOpen(_ open: Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard open != isSpeechGateOpen else { return false }
+        isSpeechGateOpen = open
+        let discardedActiveSegment = endpointer.isSpeaking
+        endpointer.reset()
+        lookbackChunks.removeAll()
+        lookbackTotal = 0
+        return discardedActiveSegment
+    }
+
+    /// raw / gated 両モードの配送を止める（マイク停止・セッション終了の共通処理）。
     func detachRaw() {
         lock.lock()
         defer { lock.unlock() }
@@ -47,6 +108,23 @@ final class AudioTapRouter: @unchecked Sendable {
         rawContinuation = nil
         rawFormat = nil
         rawConverter = nil
+        gatedContinuation?.finish()
+        gatedContinuation = nil
+        gatedFormat = nil
+        gatedConverter = nil
+        endpointer.reset()
+        lookbackChunks.removeAll()
+        lookbackTotal = 0
+    }
+
+    /// STT 再接続時の仕切り直し（live のみ意味を持つ）。送信中セグメントの append 済み音声は
+    /// 旧接続側で失われているため、エンドポインタと遡りバッファを idle に戻して次の発話を待つ。
+    func resetSpeechGate() {
+        lock.lock()
+        defer { lock.unlock() }
+        endpointer.reset()
+        lookbackChunks.removeAll()
+        lookbackTotal = 0
     }
 
     /// AVAudioEngine のタップブロックとして渡す（オーディオスレッドから呼ばれる）。
@@ -88,6 +166,54 @@ final class AudioTapRouter: @unchecked Sendable {
            let converted = convert(buffer, to: format, converter: &rawConverter),
            let data = Self.pcm16Data(from: converted) {
             continuation.yield(data)
+        }
+        if gatedContinuation != nil {
+            processGated(buffer: buffer, level: level)
+        }
+    }
+
+    /// 送信ゲート（ロック下で呼ぶ）: エンドポインタを駆動し、発話区間 + 遡りだけを流す。
+    /// ゲートが閉じている間（AI のターン中）は何もしない。
+    private func processGated(buffer: AVAudioPCMBuffer, level: Float) {
+        guard isSpeechGateOpen else { return }
+        guard let continuation = gatedContinuation, let format = gatedFormat else { return }
+        // バッファ数ではなく実時間で判定する（HFP 等でサンプルレートが変わっても基準を保つ）
+        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
+        let data = convert(buffer, to: format, converter: &gatedConverter)
+            .flatMap { Self.pcm16Data(from: $0) }
+        let event = endpointer.record(
+            level: level, duration: duration, noiseFloor: meter.currentNoiseFloor)
+
+        switch event {
+        case .speechStarted:
+            // 現在のバッファも遡りに積んでから丸ごと流す。セグメント間で認識文脈が
+            // 引き継がれないため、語頭の欠けは精度に直撃する
+            if let data { appendLookback(data, duration: duration) }
+            continuation.yield(.speechStarted)
+            for chunk in lookbackChunks { continuation.yield(.audio(chunk.data)) }
+            lookbackChunks.removeAll()
+            lookbackTotal = 0
+        case .speechStopped(let forced):
+            // 終端判定のバッファまで送り切ってから境界を流す（受け手はここで commit する）
+            if let data { continuation.yield(.audio(data)) }
+            continuation.yield(.speechStopped(forced: forced))
+        case nil:
+            guard let data else { return }
+            if endpointer.isSpeaking {
+                continuation.yield(.audio(data))
+            } else {
+                appendLookback(data, duration: duration)
+            }
+        }
+    }
+
+    private func appendLookback(_ data: Data, duration: TimeInterval) {
+        lookbackChunks.append((data, duration))
+        lookbackTotal += duration
+        while let first = lookbackChunks.first,
+              lookbackTotal - first.duration >= endpointer.thresholds.lookbackDuration {
+            lookbackTotal -= first.duration
+            lookbackChunks.removeFirst()
         }
     }
 

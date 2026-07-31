@@ -4,11 +4,22 @@ import XCTest
 final class CloudPipelineProtocolTests: XCTestCase {
     // MARK: - STT（transcription セッション）のクライアントイベント
 
+    /// 既定構成は gpt-live-transcribe + delay low（2026-07-31 採用。
+    /// docs/plans/archive/gpt-live-transcribe-adoption.md。model 1 箇所で 4o へ戻せる）
+    func testDefaultConfigurationUsesLiveTranscribe() {
+        let configuration = OpenAITranscriptionConfiguration()
+        XCTAssertEqual(configuration.model, "gpt-live-transcribe")
+        XCTAssertTrue(configuration.isLiveTranscribe)
+        XCTAssertEqual(configuration.delay, "low")
+    }
+
     /// session.update が GA 形式の transcription セッション（session.type = transcription、
-    /// audio.input のみ）に従うことを固定する。
+    /// audio.input のみ）に従うことを固定する。gpt-4o-transcribe（サーバ VAD の旧経路）は
+    /// 既定を live に切り替えた後も戻せる状態で維持する
     func testTranscriptionSessionUpdateFollowsGAShape() throws {
-        let data = try OpenAITranscriptionClientEvent.sessionUpdate(
-            configuration: OpenAITranscriptionConfiguration())
+        var configuration = OpenAITranscriptionConfiguration()
+        configuration.model = "gpt-4o-transcribe"
+        let data = try OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration)
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         XCTAssertEqual(object["type"] as? String, "session.update")
@@ -45,13 +56,15 @@ final class CloudPipelineProtocolTests: XCTestCase {
     /// OpenAI に "max decimal places exceeded"（上限 16 桁）で弾かれた回帰。
     /// パース後の値ではなく **JSON の文字列**を見ないと検出できない
     func testTranscriptionThresholdIsSerializedWithFewDecimals() throws {
-        let data = try OpenAITranscriptionClientEvent.sessionUpdate(
-            configuration: OpenAITranscriptionConfiguration())
+        // threshold はサーバ VAD（4o 経路）だけが送る
+        var base = OpenAITranscriptionConfiguration()
+        base.model = "gpt-4o-transcribe"
+        let data = try OpenAITranscriptionClientEvent.sessionUpdate(configuration: base)
         let json = try XCTUnwrap(String(data: data, encoding: .utf8))
         XCTAssertTrue(json.contains("\"threshold\":0.6"), json)
 
         for value in [0.0, 0.5, 0.55, 0.65, 1.0] {
-            var configuration = OpenAITranscriptionConfiguration()
+            var configuration = base
             configuration.vadThreshold = value
             let text = try XCTUnwrap(String(
                 data: try OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration),
@@ -89,10 +102,11 @@ final class CloudPipelineProtocolTests: XCTestCase {
         XCTAssertTrue(input["turn_detection"] is NSNull, "\(String(describing: input["turn_detection"]))")
     }
 
-    /// delay 未指定ならキー自体を送らない（サーバ既定に任せる）
-    func testTranscriptionSessionUpdateForLiveTranscribeOmitsDelayByDefault() throws {
+    /// delay を nil にしたらキー自体を送らない（サーバ既定に任せる。既定構成は low を明示）
+    func testTranscriptionSessionUpdateForLiveTranscribeOmitsDelayWhenNil() throws {
         var configuration = OpenAITranscriptionConfiguration()
         configuration.model = "gpt-live-transcribe"
+        configuration.delay = nil
         let data = try OpenAITranscriptionClientEvent.sessionUpdate(configuration: configuration)
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let transcription = try XCTUnwrap(
@@ -112,6 +126,22 @@ final class CloudPipelineProtocolTests: XCTestCase {
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(object["type"] as? String, "input_audio_buffer.append")
         XCTAssertEqual(object["audio"] as? String, "QUJD")
+    }
+
+    /// クライアント側の発話終端検知が送る手動 commit（gpt-live-transcribe 用。
+    /// docs/plans/archive/gpt-live-transcribe-adoption.md Phase 2）
+    func testTranscriptionInputAudioCommit() throws {
+        let data = try OpenAITranscriptionClientEvent.inputAudioCommit()
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: String])
+        XCTAssertEqual(object, ["type": "input_audio_buffer.commit"])
+    }
+
+    /// 発話の途中で入力ゲートを閉じたときに中途セグメントを捨てる clear
+    /// （docs/plans/archive/turn-gated-voice-input.md）
+    func testTranscriptionInputAudioClear() throws {
+        let data = try OpenAITranscriptionClientEvent.inputAudioClear()
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: String])
+        XCTAssertEqual(object, ["type": "input_audio_buffer.clear"])
     }
 
     // MARK: - STT の prompt エコー幻覚フィルタ
@@ -224,6 +254,15 @@ final class CloudPipelineProtocolTests: XCTestCase {
             OpenAITranscriptionServerEvent.parse(
                 #"{"type":"error","error":{"code":"response_cancel_not_active","message":"Cancellation failed"}}"#),
             .serverError(message: "Cancellation failed", ignorable: true))
+    }
+
+    /// input_audio_buffer 系のエラー（再接続直後の空 commit 等）はセグメント 1 個の欠落で
+    /// 済むため、セッションを殺さない（ignorable）
+    func testTranscriptionParseBufferErrorsAreIgnorable() {
+        XCTAssertEqual(
+            OpenAITranscriptionServerEvent.parse(
+                #"{"type":"error","error":{"code":"input_audio_buffer_commit_empty","message":"buffer too small"}}"#),
+            .serverError(message: "buffer too small", ignorable: true))
     }
 
     func testTranscriptionParseUnknownTypeIsIgnored() {

@@ -19,7 +19,10 @@ final class StreamingAudioPlayer {
     private let cuePlayer = AVAudioPlayerNode()
     private let format = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
-    private lazy var cueBuffer: AVAudioPCMBuffer? = Self.makeCueBuffer(format: format)
+    private lazy var startCueBuffer: AVAudioPCMBuffer? = Self.makeCueBuffer(
+        kind: .start, format: format)
+    private lazy var endCueBuffer: AVAudioPCMBuffer? = Self.makeCueBuffer(
+        kind: .end, format: format)
 
     private var pendingBuffers = 0
     /// スケジュール済みバッファと並行するマーカー列。先頭 = 再生中（または次に再生される）バッファ
@@ -94,10 +97,11 @@ final class StreamingAudioPlayer {
         }
     }
 
-    /// 入力待ち開始のジングルを鳴らす。TTS 再生キューとは独立で、ターン管理には影響しない。
-    func playCue() {
-        guard engine.isRunning, let cueBuffer else { return }
-        cuePlayer.scheduleBuffer(cueBuffer)
+    /// 入力の窓の開始 / 終了ジングルを鳴らす。TTS 再生キューとは独立で、ターン管理には影響しない。
+    func playCue(_ kind: ListeningCue.Kind) {
+        let buffer = kind == .start ? startCueBuffer : endCueBuffer
+        guard engine.isRunning, let buffer else { return }
+        cuePlayer.scheduleBuffer(buffer)
         if !cuePlayer.isPlaying {
             cuePlayer.play()
         }
@@ -154,8 +158,10 @@ final class StreamingAudioPlayer {
         onTurnFinished?()
     }
 
-    private static func makeCueBuffer(format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let samples = ListeningCue.makeSamples(sampleRate: format.sampleRate)
+    private static func makeCueBuffer(
+        kind: ListeningCue.Kind, format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        let samples = ListeningCue.makeSamples(kind: kind, sampleRate: format.sampleRate)
         guard !samples.isEmpty,
               let buffer = AVAudioPCMBuffer(
                   pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))

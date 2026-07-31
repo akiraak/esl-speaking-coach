@@ -3,15 +3,23 @@ import Foundation
 import UIKit
 
 /// クラウド STT + Claude + クラウド TTS の VoiceSession 実装（2 キャラ台本方式）。
-/// マイク → gpt-4o-transcribe（WebSocket） → Claude（SSE・Chobi / Naruko の台本） →
+/// マイク → OpenAI transcription セッション（WebSocket。既定 gpt-live-transcribe） →
+/// Claude（SSE・Chobi / Naruko の台本） →
 /// クラウド TTS（発話ごとに voice 切替）をターン制で回す。
 ///
-/// 発話終端・barge-in は STT セッションのサーバ VAD を使う。
+/// 発話終端は、live（既定）はクライアント VAD（ClientSpeechEndpointer +
+/// AudioTapRouter の送信ゲート）、gpt-4o-transcribe は STT セッションのサーバ VAD を使う。
+/// イベントの形（.speechStarted / .speechStopped）は共通で、以降の状態遷移は変わらない。
+///
+/// live の音声入力は**自分が話すターン（listening）のときだけ**動く
+/// （syncVoiceInputGate。docs/plans/archive/turn-gated-voice-input.md）。AI のターン中は入力ごと
+/// 止まるため音声での barge-in は無く、割り込みは一時停止ボタンとテキスト送信のみ。
+/// 入力の窓は開始 / 終了のジングルで知らせる。4o 経路は従来どおり常時入力 + 音声 barge-in。
 ///
 /// 状態遷移:
-///   listening --(サーバ VAD: speech_stopped / テキスト送信)--> thinking
+///   listening --(VAD: speech_stopped / テキスト送信)--> thinking
 ///     --(STT 確定 → Claude → 初文 TTS 再生)--> speaking --> listening
-///   speaking / thinking 中に speech_started かテキスト送信が来たら barge-in
+///   speaking / thinking 中に speech_started（4o のみ）かテキスト送信が来たら barge-in
 ///   （TTS 停止 + Claude キャンセル + 読み上げ開始済み発話まで履歴確定）で listening へ戻る。
 ///   STT 切断時は reconnecting（backoff 付き再接続）、割り込み・バックグラウンド遷移時は
 ///   suspended を経由して復帰する。
@@ -66,6 +74,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         var initialHistory: [ConversationMessage] = []
         /// 雑音セグメントを落とすレベルゲートの閾値（docs/plans/noise-input-rejection.md Phase 3）
         var levelGate = SpeechLevelGate.Thresholds()
+        /// live（サーバ VAD 非対応モデル）のときに使うクライアント VAD の閾値
+        /// （docs/plans/archive/gpt-live-transcribe-adoption.md）
+        var clientEndpointer = ClientSpeechEndpointer.Thresholds()
     }
 
     let events: AsyncStream<VoiceSessionEvent>
@@ -87,6 +98,24 @@ final class TurnBasedVoiceSession: VoiceSession {
             eventContinuation.yield(.stateChanged(state))
             // 読み上げ中はスピーカーの回り込みで暗騒音が持ち上がりうるので推定を止める
             microphone.router.setNoiseFloorUpdateSuppressed(state == .speaking)
+            syncVoiceInputGate()
+        }
+    }
+
+    /// live の音声入力ゲートを state に同期する。自分が話すターン（listening）のときだけ
+    /// 開き、AI のターン中は入力を止める（docs/plans/archive/turn-gated-voice-input.md。
+    /// 帰結として音声での barge-in は行わない。割り込みは一時停止ボタンとテキスト送信のみ）。
+    private func syncVoiceInputGate() {
+        guard configuration.transcription.isLiveTranscribe else { return }
+        let discarded = microphone.router.setSpeechGateOpen(
+            state == .listening && isVoiceInputEnabled)
+        if discarded {
+            // テキスト送信などで発話の途中にゲートが閉じた。中途セグメントは
+            // クライアント / サーバ両方で破棄し、対応する計測・フラグも仕切り直す
+            isUserSpeaking = false
+            _ = microphone.router.endLevelSegment()
+            transcriber?.clearClientBuffer()
+            eventContinuation.yield(.userPartialTranscript(""))
         }
     }
 
@@ -385,6 +414,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         sttEventTask = nil
         transcriber?.stop()
         transcriber = nil
+        // live: 送信中セグメントの append 済み音声は旧接続側で失われている。
+        // エンドポインタとゲートを idle に戻し、言い直してもらう（サーバ VAD でも切断時は同等）
+        microphone.router.resetSpeechGate()
 
         guard let delay = reconnectPolicy.nextDelay() else {
             fail("STT への再接続に失敗しました: \(message)")
@@ -433,11 +465,13 @@ final class TurnBasedVoiceSession: VoiceSession {
             handleSpeechStarted()
 
         case .speechStopped:
-            // サーバ VAD が発話終端を判定した。ここから応答音声の再生開始までが体感レイテンシ
+            // VAD が発話終端を判定した。ここから応答音声の再生開始までが体感レイテンシ
             // （VAD の無音待ち自体は計測に含まれない）
             isUserSpeaking = false
             pendingSegments += 1
             pendingSegmentLevels.append(microphone.router.endLevelSegment())
+            // 入力の窓が閉じたことを知らせる（テキスト送信ターンでは鳴らない）
+            speaker.playInputEndCue()
             metrics = TurnMetricsBuilder()
             let now = Date()
             metrics.utteranceEndedAt = now
@@ -516,8 +550,11 @@ final class TurnBasedVoiceSession: VoiceSession {
         let text = pendingTurnText
         pendingTurnText = ""
         guard !text.isEmpty else {
-            // ノイズ等で VAD だけ発火して空だった。聞き取りへ戻す
-            if state == .thinking { state = .listening }
+            // ノイズ等で VAD だけ発火して空だった。聞き取りへ戻し、入力の再開を知らせる
+            if state == .thinking {
+                state = .listening
+                playListeningCueIfListening()
+            }
             return
         }
         if state != .thinking { state = .thinking }
@@ -948,14 +985,45 @@ final class TurnBasedVoiceSession: VoiceSession {
         isMicStreaming = true
         eventContinuation.yield(.info("マイク起動: \(microphone.inputFormatDescription)"))
 
-        let (stream, continuation) = AsyncStream.makeStream(
-            of: Data.self, bufferingPolicy: .unbounded)
-        microphone.router.attachRawPCM16(format: Self.micFormat, continuation: continuation)
+        if configuration.transcription.isLiveTranscribe {
+            // live はサーバ VAD が無い。送信ゲートが発話区間 + 遡りだけを流し（無音・AI 発話中は
+            // append しない = 課金しない）、同じストリームで届く発話境界を STT へ中継する。
+            // 音声と境界が 1 本のストリームなので「append がすべて済んでから commit」が保たれる
+            let (stream, continuation) = AsyncStream.makeStream(
+                of: GatedMicEvent.self, bufferingPolicy: .unbounded)
+            microphone.router.attachGatedPCM16(
+                format: Self.micFormat,
+                thresholds: configuration.clientEndpointer,
+                continuation: continuation)
+            micStreamTask = Task { [weak self] in
+                for await event in stream {
+                    guard let self, !self.isStopped, !Task.isCancelled else { return }
+                    switch event {
+                    case .audio(let chunk):
+                        self.transcriber?.sendAudio(chunk)
+                    case .speechStarted:
+                        self.transcriber?.noteClientSpeechStarted()
+                    case .speechStopped(let forced):
+                        if forced {
+                            self.eventContinuation.yield(.info(
+                                "発話が最大長に達したためセグメントを区切りました"))
+                        }
+                        self.transcriber?.commitClientSegment()
+                    }
+                }
+            }
+            // attach 直後のゲートは閉。現在の state（再アタッチなら thinking / speaking もある）に合わせる
+            syncVoiceInputGate()
+        } else {
+            let (stream, continuation) = AsyncStream.makeStream(
+                of: Data.self, bufferingPolicy: .unbounded)
+            microphone.router.attachRawPCM16(format: Self.micFormat, continuation: continuation)
 
-        micStreamTask = Task { [weak self] in
-            for await chunk in stream {
-                guard let self, !self.isStopped, !Task.isCancelled else { return }
-                self.transcriber?.sendAudio(chunk)
+            micStreamTask = Task { [weak self] in
+                for await chunk in stream {
+                    guard let self, !self.isStopped, !Task.isCancelled else { return }
+                    self.transcriber?.sendAudio(chunk)
+                }
             }
         }
         startLevelMonitor()

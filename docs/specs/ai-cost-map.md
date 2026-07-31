@@ -12,7 +12,7 @@
 
 | # | 操作 | API / モデル | 課金単位 | 発生タイミング | 実装状況 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 発話の文字起こし（STT） | OpenAI Realtime transcription / `gpt-4o-transcribe` | **ユーザーが実際に話した音声の長さ**（VAD が切り出した発話セグメントのみ。無音・待機中は課金されない） | 会話セッション中、ユーザーが話すたび | 実装済み |
+| 1 | 発話の文字起こし（STT） | OpenAI Realtime transcription / `gpt-live-transcribe`（2026-07-31 採用） | **ユーザーが実際に話した音声の長さ**（クライアント VAD が切り出した発話セグメント + 遡り 0.5 秒だけを送信・commit する。無音・待機中は送らないので課金されない。セグメントごと秒単位切り上げ） | 会話セッション中、ユーザーが話すたび | 実装済み |
 | 2 | 会話ターン生成（LLM） | Claude Messages / `claude-sonnet-5` | 入力トークン + 出力トークン（**毎ターン履歴全体を再送**） | ユーザー発話が確定するたび 1 回 | 実装済み |
 | 3 | 読み上げ（TTS） | Gemini `gemini-3.1-flash-tts-preview` | テキスト入力トークン + **音声出力トークン（25 トークン/秒）** | AI 発話の **1 文ごと**に 1 リクエスト | 実装済み |
 | 4 | トピック候補生成 | Claude Messages / `claude-sonnet-5` | 入力 + 出力トークン(少量) | 初回起動時 / セッション終了直後 / 「🔄 他の候補」タップ時 | 実装済み |
@@ -24,8 +24,8 @@
 
 | API | 単価 | 目安に直すと |
 | --- | --- | --- |
-| OpenAI `gpt-4o-transcribe`（STT） | 約 $0.006 / 音声 1 分 | ユーザーが 10 分話して約 $0.06 |
-| （参考）OpenAI `gpt-live-transcribe`（STT 検証用切替・未採用） | セッション音声 $0.017 / 分（usage は duration 型・秒単位切り上げ） | サーバ VAD 非対応のため見送り（[検証記録](../plans/archive/gpt-live-transcribe-verification.md)） |
+| OpenAI `gpt-live-transcribe`（STT・既定） | セッション音声 $0.017 / 分（usage は duration 型・セグメントごと秒単位切り上げ） | ユーザーが 10 分話して約 $0.17。認識精度向上と引き換えに旧既定の約 3 倍（[採用記録](../plans/archive/gpt-live-transcribe-adoption.md)） |
+| （参考）OpenAI `gpt-4o-transcribe`（STT。`-stt-model` で戻せる旧既定） | 約 $0.006 / 音声 1 分 | ユーザーが 10 分話して約 $0.06 |
 | Gemini 3.1 Flash TTS preview | 入力 $1 / 1M トークン、音声出力 $20 / 1M トークン（25 トークン/秒） | **生成音声 1 分 ≈ $0.03**（1,500 トークン） |
 | （参考）Gemini 2.5 Flash TTS preview | 入力 $0.50 / 1M、出力 $10 / 1M | 生成音声 1 分 ≈ $0.015（3.1 の半額） |
 | （参考）OpenAI `gpt-4o-mini-tts`（切替用） | 音声 1 分 ≈ $0.015（参考値・要再確認） | — |
@@ -37,9 +37,10 @@
 
 ### 1. STT（発話の文字起こし）
 
-- 実装: `Voice/CloudPipeline/OpenAITranscriptionStream.swift` + `OpenAITranscriptionProtocol.swift`
-- セッション開始時に WebSocket（`wss://api.openai.com/v1/realtime?intent=transcription`）を張り、マイク音声（PCM16 24kHz）を**セッション中ずっと**流し続ける
-- ただし課金対象はサーバ VAD が発話と判定して transcription にかけたセグメントのみ。**無音や AI の発話待ち時間はストリームしていても課金されない**（OpenAI の課金ドキュメントの明記事項。逆に言うと「アプリを開いている時間」ではなく「ユーザーが話した時間」に比例する）
+- 実装: `Voice/CloudPipeline/OpenAITranscriptionStream.swift` + `OpenAITranscriptionProtocol.swift` + `Voice/ClientSpeechEndpointer.swift`（クライアント VAD）+ `Voice/MicrophoneCapture.swift`（送信ゲート）
+- セッション開始時に WebSocket（`wss://api.openai.com/v1/realtime?intent=transcription`）を張る。既定の `gpt-live-transcribe` はサーバ VAD 非対応のため、クライアント VAD が判定した**発話区間 + 遡り 0.5 秒だけ**を append し、終端で手動 commit する。**無音や AI の発話待ち時間はそもそも送らないので課金されない**（「アプリを開いている時間」ではなく「ユーザーが話した時間」に比例する）
+- 課金は commit した音声の長さ（セグメントごと秒単位切り上げ）。細切れ commit は切り上げのぶんコスト効率が落ちる。エネルギー VAD が終端を出せない持続環境音対策に 60 秒で強制終端するフェイルセーフあり（課金の無制限伸長を防ぐ）
+- 旧既定 `gpt-4o-transcribe`（`-stt-model` で切替）はマイク音声をセッション中ずっと流し、サーバ VAD が切り出したセグメントのみ課金される（挙動は従来どおり）
 - シミュレータではマイク無効のため STT 課金はゼロ（接続だけでは課金されない）
 
 ### 2. 会話ターン生成（Claude）
@@ -97,17 +98,17 @@
 
 | 項目 | 計算 | 概算 |
 | --- | --- | --- |
-| STT（ユーザー発話 5 分） | 5 × $0.006 | $0.03 |
+| STT（ユーザー発話 5 分） | 5 × $0.017 | $0.09 |
 | TTS（生成音声 5 分、3.1 Flash TTS） | 5 × $0.03 | $0.15 |
 | 会話 LLM 入力（履歴、平均 1,500 × 30 ターン） | 45K トークン × $3/1M | $0.14 |
 | 会話 LLM 入力（キャッシュ済み system、2,000 × 30） | 60K × $0.3/1M + 初回書込 | $0.03 |
 | 会話 LLM 出力（約 100 × 30 ターン） | 3K × $15/1M | $0.05 |
 | フィードバック生成（opus、入力 5K / 出力 3K） | $5/1M × 5K + $25/1M × 3K | $0.10 |
 | トピック生成 | — | $0.01 未満 |
-| **合計** | | **約 $0.5 / セッション** |
+| **合計** | | **約 $0.55 / セッション** |
 
-- 毎日 1 セッションで **月 $15 前後**が目安
-- コストの並びは概ね **TTS ＞ 会話 LLM ≧ フィードバック ＞ STT ＞ トピック生成**
+- 毎日 1 セッションで **月 $17 前後**が目安
+- コストの並びは概ね **TTS ＞ 会話 LLM ≧ フィードバック ≧ STT ＞ トピック生成**
 
 ## 利用量の記録（2026-07-25 実装）
 

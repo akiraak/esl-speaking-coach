@@ -63,7 +63,12 @@ final class CloudSentenceSpeaker {
 
     /// 入力待ち（listening）開始のジングルを鳴らす。読み上げキューとは独立。
     func playListeningCue() {
-        player.playCue()
+        player.playCue(.start)
+    }
+
+    /// 発話終端を受け付けて入力の窓が閉じたことを知らせるジングル（下降 2 音）。
+    func playInputEndCue() {
+        player.playCue(.end)
     }
 
     func enqueue(_ item: SpeechItem) {

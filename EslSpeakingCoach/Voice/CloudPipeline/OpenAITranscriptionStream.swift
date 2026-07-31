@@ -1,6 +1,8 @@
 import Foundation
 
-/// gpt-4o-transcribe の WebSocket ストリーミング実装（OpenAI Realtime API の transcription セッション）。
+/// OpenAI Realtime API の transcription セッション（WebSocket）の実装。
+/// gpt-live-transcribe（既定。クライアント VAD + 手動 commit）と
+/// gpt-4o-transcribe（サーバ VAD）の両方に対応する。
 /// インスタンスは使い捨て（connect → stop。再接続は作り直す）。
 @MainActor
 final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
@@ -69,6 +71,34 @@ final class OpenAITranscriptionStream: StreamingSpeechTranscriber {
         guard let data = try? OpenAITranscriptionClientEvent.inputAudioAppend(
             base64Audio: chunk.base64EncodedString()) else { return }
         sendQueue?.yield(data)
+    }
+
+    // MARK: - クライアント VAD 駆動（gpt-live-transcribe: サーバ VAD 非対応）
+
+    /// 送信ゲートの発話開始。サーバの speech_started と同じ形で events へ流す。
+    func noteClientSpeechStarted() {
+        guard !isStopped else { return }
+        partialTranscript = ""
+        eventContinuation.yield(.speechStarted)
+    }
+
+    /// 送信ゲートの発話終端。append 済みセグメントを commit し（sendQueue 経由なので
+    /// 先行する音声チャンクとの順序が保証される）、speechStopped を events へ流す。
+    func commitClientSegment() {
+        guard !isStopped else { return }
+        if let data = try? OpenAITranscriptionClientEvent.inputAudioCommit() {
+            sendQueue?.yield(data)
+        }
+        eventContinuation.yield(.speechStopped)
+    }
+
+    /// 発話の途中で入力ゲートが閉じた。append 済みの中途セグメントをサーバ側でも破棄する
+    /// （イベントは流さない。セグメントは無かったことになる）。
+    func clearClientBuffer() {
+        guard !isStopped else { return }
+        if let data = try? OpenAITranscriptionClientEvent.inputAudioClear() {
+            sendQueue?.yield(data)
+        }
     }
 
     func stop() {

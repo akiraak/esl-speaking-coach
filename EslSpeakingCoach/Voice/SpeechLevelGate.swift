@@ -100,6 +100,10 @@ struct SegmentLevelMeter: Sendable {
     /// スピーカー出力が回り込み、フロアが不当に持ち上がって本人の発話を弾いてしまう
     var isNoiseFloorUpdateSuppressed = false
 
+    /// 現時点の暗騒音の推定値（未推定なら 0）。`ClientSpeechEndpointer` が毎バッファ参照する
+    /// （エンドポインタ側で二重推定しないための読み出し口）。
+    var currentNoiseFloor: Float { Self.median(noiseSamples) }
+
     /// タップバッファ 1 つぶんの RMS を取り込む（オーディオスレッドから毎回呼ばれる）。
     mutating func record(_ level: Float) {
         recent.append(level)

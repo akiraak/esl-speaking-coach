@@ -3,17 +3,19 @@ import Foundation
 /// OpenAI Realtime API の transcription セッション（STT）の設定。
 /// GA 形式のイベント体系で、audio.input のみを構成する。
 struct OpenAITranscriptionConfiguration: Sendable {
-    /// STT モデル（voice-layer-spike.md Phase 3 の第一候補）。
-    /// 2026-07-28 発表の gpt-live-transcribe へは -stt-model 起動引数で切替可だが、
-    /// サーバ VAD 非対応のため音声ターンは確定しない（見送りの検証記録:
-    /// docs/plans/archive/gpt-live-transcribe-verification.md）
-    var model = "gpt-4o-transcribe"
+    /// STT モデル。2026-07-31 の実機検証を経て gpt-live-transcribe を既定に採用
+    /// （認識精度向上。サーバ VAD 非対応のためクライアント VAD + 手動 commit で動く。
+    /// docs/plans/archive/gpt-live-transcribe-adoption.md）。
+    /// 旧構成（gpt-4o-transcribe + サーバ VAD）へは -stt-model 起動引数か
+    /// この既定値 1 箇所でいつでも戻せる
+    var model = "gpt-live-transcribe"
     /// 認識言語のヒント。会話は英語のみ（CLAUDE.md）なので en 固定
     var language = "en"
     /// gpt-live-transcribe のレイテンシ / 精度トレードオフ
-    /// （minimal / low / medium / high / xhigh。高いほど WER 改善）。nil ならサーバ既定に任せる。
-    /// gpt-4o-transcribe では送らない
-    var delay: String?
+    /// （minimal / low / medium / high / xhigh。高いほど WER 改善）。会話のターン制は
+    /// レイテンシ優先なので、検証の基準にした low をサーバ既定任せにせず明示固定する。
+    /// nil ならキー自体を送らない。gpt-4o-transcribe では送らない
+    var delay: String? = "low"
     /// 認識バイアス用ヒント。language=en 指定だけでは "Hello" 等の短い発話が
     /// 他言語（韓国語など）に誤判定される事象が実機で確認されたため併用する
     var prompt = """
@@ -83,6 +85,18 @@ enum OpenAITranscriptionClientEvent {
             "type": "input_audio_buffer.append",
             "audio": base64Audio,
         ])
+    }
+
+    /// append 済みバッファの手動確定。サーバ VAD 非対応の gpt-live-transcribe で、
+    /// クライアント側の発話終端検知が呼ぶ（これへの応答として completed が届く）。
+    static func inputAudioCommit() throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["type": "input_audio_buffer.commit"])
+    }
+
+    /// append 済みバッファの破棄。発話の途中で入力ゲートを閉じたとき（テキスト送信での
+    /// 割り込み等）に、中途半端な音声が次セグメントの commit に混入しないよう捨てる。
+    static func inputAudioClear() throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["type": "input_audio_buffer.clear"])
     }
 
     /// `Double` をそのまま `JSONSerialization` に渡すと 0.6 が `0.59999999999999998` と
@@ -209,7 +223,10 @@ enum OpenAITranscriptionServerEvent: Sendable, Equatable {
             let error = object["error"] as? [String: Any]
             let code = error?["code"] as? String ?? ""
             let message = error?["message"] as? String ?? "unknown error"
+            // input_audio_buffer 系（再接続直後の空 commit 等）はセグメント 1 個の欠落で
+            // 済むため、セッションを殺さず言い直してもらう
             let ignorable = code == "response_cancel_not_active"
+                || code.hasPrefix("input_audio_buffer")
                 || message.lowercased().contains("no active response")
             return .serverError(message: message, ignorable: ignorable)
         default:
@@ -222,9 +239,9 @@ enum OpenAITranscriptionServerEvent: Sendable, Equatable {
 enum STTStreamEvent: Sendable, Equatable {
     /// 接続・セッション設定が完了し、音声を送れる状態になった
     case ready
-    /// サーバ VAD がユーザーの発話開始を検知した
+    /// ユーザーの発話開始を検知した（4o: サーバ VAD / live: クライアント VAD）
     case speechStarted
-    /// サーバ VAD が発話終端を検知した（この後 finalTranscript が届く）
+    /// 発話終端を検知した（この後 finalTranscript が届く。live は commit への応答として届く）
     case speechStopped
     /// 認識途中のテキスト（セグメント内の累積）
     case partialTranscript(String)
@@ -247,5 +264,13 @@ protocol StreamingSpeechTranscriber: AnyObject {
     func connect()
     /// PCM16 24kHz mono の生バイト列を送る
     func sendAudio(_ chunk: Data)
+    /// クライアント VAD が発話開始を検知した（サーバ VAD 非対応モデルの送信ゲートが呼ぶ）。
+    /// サーバイベントと同じ形で events へ .speechStarted を流す
+    func noteClientSpeechStarted()
+    /// クライアント VAD が発話終端を検知した。append 済みセグメントを確定（commit）し、
+    /// events へ .speechStopped を流す
+    func commitClientSegment()
+    /// 発話の途中で入力ゲートを閉じたとき、append 済みの中途セグメントをサーバ側でも破棄する
+    func clearClientBuffer()
     func stop()
 }

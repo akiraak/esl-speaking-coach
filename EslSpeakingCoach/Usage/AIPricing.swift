@@ -67,11 +67,11 @@ enum AIPricing {
 
     // MARK: - OpenAI STT（gpt-4o-transcribe / gpt-live-transcribe）
 
-    /// gpt-4o-transcribe: 音声入力 $6 / 1M、テキスト入力 $2.50 / 1M、出力 $10 / 1M。
-    /// トークンが取れないときは音声 1 分 ≈ $0.006 で概算する。
-    /// gpt-live-transcribe（検証用切替のみ・未採用）: セッション音声 $0.017 / 分の分数課金
-    /// （docs/plans/archive/gpt-live-transcribe-verification.md。usage は duration 型・秒単位
+    /// gpt-live-transcribe（2026-07-31 採用・既定）: セッション音声 $0.017 / 分の分数課金
+    /// （docs/plans/archive/gpt-live-transcribe-adoption.md。usage は duration 型・秒単位
     /// 切り上げで届く。秒数が取れないときは 0 になるが生 usage から再計算できる）。
+    /// gpt-4o-transcribe（-stt-model で戻せる旧既定）: 音声入力 $6 / 1M、テキスト入力
+    /// $2.50 / 1M、出力 $10 / 1M。トークンが取れないときは音声 1 分 ≈ $0.006 で概算する。
     private static func openAITranscribeCost(event: AIUsageEvent) -> Double {
         if event.model.hasPrefix("gpt-live-transcribe") {
             return (event.audioSeconds ?? 0) * 0.017 / 60
