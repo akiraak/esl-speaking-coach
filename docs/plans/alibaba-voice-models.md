@@ -117,9 +117,56 @@ scratchpad `phase1/` の node スクリプトで実施（`qwen-tts.mjs` / `gemin
 - `completed` イベントに `usage: {duration 秒 + input/output トークン}` が両建てで入っており、現行 `STTSegmentUsage`（duration 型 / tokens 型両対応）の枠にそのまま載る
 - 消費は無料枠内（ASR 10 時間 / 90 日）
 
+### 生成サンプル（実聴用。[assets/alibaba-voice-models/](assets/alibaba-voice-models/) にコミット済み・計 5.2MB）
+
+**TTS のテキスト**（Qwen 全 voice 共通。会話 1 ターン相当の 2 文を文単位に commit したものの連結。1 文目が Chobi 想定・2 文目が Naruko 想定の発話）:
+
+1. `That sounds like a great weekend! Did you go anywhere special with your family?`
+2. `Oh, I love ramen too! What kind of toppings do you usually get?`
+
+**現行（基準。本番と同一のスタイル指示付き。こちらは各キャラの 1 文のみ）**:
+
+| ファイル | 内容 |
+| --- | --- |
+| [gemini-Leda.wav](assets/alibaba-voice-models/gemini-Leda.wav) | 現行 Chobi（Leda）。上の 1 文目 |
+| [gemini-Aoede.wav](assets/alibaba-voice-models/gemini-Aoede.wav) | 現行 Naruko（Aoede）。上の 2 文目 |
+
+**Qwen base（qwen3-tts-flash-realtime。スタイル指示は指定不可、voice 素のまま）**:
+
+| ファイル | voice | 傾向 |
+| --- | --- | --- |
+| [qwen-Cherry.wav](assets/alibaba-voice-models/qwen-Cherry.wav) | Cherry | 女声。実装の暫定 Chobi |
+| [qwen-Serena.wav](assets/alibaba-voice-models/qwen-Serena.wav) | Serena | 女声。実装の暫定 Naruko |
+| [qwen-Jennifer.wav](assets/alibaba-voice-models/qwen-Jennifer.wav) | Jennifer | 女声 |
+| [qwen-Katerina.wav](assets/alibaba-voice-models/qwen-Katerina.wav) | Katerina | 女声 |
+| [qwen-Chelsie.wav](assets/alibaba-voice-models/qwen-Chelsie.wav) | Chelsie | 女声 |
+| [qwen-Ethan.wav](assets/alibaba-voice-models/qwen-Ethan.wav) | Ethan | 男声 |
+| [qwen-Ryan.wav](assets/alibaba-voice-models/qwen-Ryan.wav) | Ryan | 男声 |
+| [qwen-Nofish.wav](assets/alibaba-voice-models/qwen-Nofish.wav) | Nofish | 男声 |
+
+**Qwen instruct 変種（qwen3-tts-instruct-flash-realtime。`instructions` でスタイル指示可。TTFB は +90ms 程度・単価未確認）**:
+
+| ファイル | voice + 指示 |
+| --- | --- |
+| [qwen-Cherry-instruct-chobi.wav](assets/alibaba-voice-models/qwen-Cherry-instruct-chobi.wav) | Cherry + Chobi 指示 |
+| [qwen-Cherry-instruct-naruko.wav](assets/alibaba-voice-models/qwen-Cherry-instruct-naruko.wav) | Cherry + Naruko 指示 |
+| [qwen-Serena-instruct-naruko.wav](assets/alibaba-voice-models/qwen-Serena-instruct-naruko.wav) | Serena + Naruko 指示 |
+
+- Chobi 指示: `Speak in a warm, lively, gently cheerful voice, like a friendly teacher chatting with a student. Speak at a brisk, natural conversational pace, without dragging out words.`（本番 styleInstruction と同旨）
+- Naruko 指示: `Speak in a bright, energetic voice, full of curiosity, like an enthusiastic student chatting with friends.`
+- Jennifer は instruct 変種だと音声が一切返らず生成不可（相性問題。Phase 1 本文参照）
+
+**ASR のテスト音声と結果**:
+
+- 入力音声: [say-learner.wav](assets/alibaba-voice-models/say-learner.wav)（macOS `say` Samantha・16kHz。学習者らしい文法誤り入り）
+- 原文: `Last weekend I go to Yokohama with my family, and we eat ramen. It was very delicious, so I want to go again.`
+- Qwen 確定: `Last weekend I go to Yokohama with my family and we eat ramen. It was very delicious, so I want to go again.`（誤りを訂正せず忠実。カンマの有無だけ揺れ）
+- 現行 gpt-live-transcribe 確定: `Last weekend I go to Yokohama with my family, and we eat ramen. It was very delicious. So I want to go again.`（同等。文の切り方だけ揺れ）
+- ほかに qwen-Cherry.wav / gemini-Leda.wav を 16kHz へ落とした音源でも Qwen は全回同一の正しい書き起こしを返した
+
 ### 残作業（Phase 1 完了条件）
 
-- [ ] **ユーザー実聴**: voice サンプル聞き比べ（現行 Gemini Leda / Aoede と比較して Chobi / Naruko の voice を仮決め。base か instruct 変種かもここで判断）
+- [ ] **ユーザー実聴**: 上の生成サンプルを聞き比べ（現行 Gemini Leda / Aoede と比較して Chobi / Naruko の voice を仮決め。base か instruct 変種かもここで判断）
 - 単価は cheap-chinese-ai-models Phase 1（2026-07-31 に公式料金ページで確認済み: TTS $0.13/1 万字・ASR $0.000090/秒）から変化がない前提。採用決定時に再確認する
 
 ## Phase 2 実施記録（2026-08-01）: アプリ組み込み（切替可能・既定は現行のまま）
