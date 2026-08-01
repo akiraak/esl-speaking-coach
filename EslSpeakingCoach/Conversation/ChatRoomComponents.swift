@@ -5,12 +5,14 @@ import SwiftUI
 /// AI メッセージ: 左寄せ・アバター + 名前ラベル付き（LINE のグループトーク準拠）。
 struct AIMessageRow: View {
     let message: ChatRoomStore.AIMessage
-    /// 読み上げ中はアバター横（名前の隣）に 🔊 を出す
+    /// 読み上げ中（セッションの読み上げ or 再読み上げ）はアバター横（名前の隣）に 🔊 を出す
     let isSpeaking: Bool
     /// 翻訳トグル ON のとき吹き出しの下に出す日本語訳
     let translation: ChatRoomStore.TranslationDisplay
     /// 長押しメニュー「単語・熟語を登録」（登録シートを開く。docs/plans/tap-word-registration.md）
     var onRegisterWords: () -> Void = {}
+    /// 吹き出しタップの再読み上げ（docs/plans/utterance-replay.md。セッション中は store 側で無視）
+    var onReplay: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -39,6 +41,9 @@ struct AIMessageRow: View {
                             bottomTrailingRadius: ChatTheme.bubbleRadius,
                             topTrailingRadius: ChatTheme.bubbleRadius))
                     .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+                    // タップ = 再読み上げ / 長押し = メニュー（登録・コピー）の同居。
+                    // 語の直接タップは持たせない（登録はシート内で選ぶ）
+                    .onTapGesture(perform: onReplay)
                     .contextMenu { MessageBubbleMenu(text: message.text, onRegisterWords: onRegisterWords) }
                 TranslationLine(display: translation, alignment: .leading)
             }

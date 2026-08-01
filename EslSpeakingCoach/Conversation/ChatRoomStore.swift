@@ -146,6 +146,10 @@ final class ChatRoomStore {
     private(set) var micLevel: Float = 0
     /// 読み上げ中の発話（🔊 表示用）
     private(set) var speakingUtteranceID: UUID?
+    /// 再読み上げ中の発話（🔊 表示用。セッション外のみ。docs/plans/utterance-replay.md）
+    private(set) var replayingUtteranceID: UUID?
+    /// 再読み上げの失敗（キー未設定・再生成の取得失敗）。タイムラインは汚さず一時アラートで出す
+    private(set) var replayErrorText: String?
     private(set) var isSessionActive = false
     private(set) var activeTopicTitle: String?
     /// 致命的エラーでセッションが落ちた（履歴を保持したまま再開できる）
@@ -172,6 +176,8 @@ final class ChatRoomStore {
 
     private var session: (any VoiceSession)?
     private var eventTask: Task<Void, Never>?
+    /// 吹き出しタップの再読み上げ（初回タップ時に生成。セッションと TTS 構成を共有する）
+    private var replayer: UtteranceReplayer?
     /// 手動終了 / goodbye による正常終了か（events 終了時の分岐用）
     private var isEndingSession = false
     private var didAppear = false
@@ -234,6 +240,12 @@ final class ChatRoomStore {
         guard !didAppear else { return }
         didAppear = true
         restoreTimeline()
+        // 音声キャッシュの起動時掃除: 最新セッション以外と、書きかけ（.part）を消す
+        // （クラッシュ等でセッション開始時の掃除を通らなかったぶんの取りこぼし対策）
+        let latestSessionID = historyStore.recentSessions(limit: 1).first?.id
+        Task.detached(priority: .utility) {
+            UtteranceAudioCache.default.cleanUpAtLaunch(keepingSessionID: latestSessionID)
+        }
         // 訳 ON のまま再起動した場合、復元した直前セッションの未翻訳分をここで埋める
         scheduleTranslationFlush()
         postTopicCard()
@@ -242,9 +254,23 @@ final class ChatRoomStore {
             startSession(topic: word, fromCard: nil)
         } else if DebugLaunchArguments.shouldStartConversation {
             startSession(topic: Self.talkFirstCandidate.title, fromCard: nil)
+        } else if DebugLaunchArguments.shouldReplayLatest {
+            // 復元済みタイムラインの最後の AI 吹き出しをタップした扱い（再読み上げの E2E）
+            if let message = lastAIMessage() {
+                replayUtterance(id: message.id)
+            }
         }
         #endif
     }
+
+    #if DEBUG
+    private func lastAIMessage() -> AIMessage? {
+        for item in timeline.reversed() {
+            if case .aiMessage(let message) = item { return message }
+        }
+        return nil
+    }
+    #endif
 
     /// 起動時に直近セッションをタイムラインへ復元する（全履歴は管理画面で閲覧する）。
     private func restoreTimeline() {
@@ -590,6 +616,9 @@ final class ChatRoomStore {
         let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         guard session == nil, !trimmed.isEmpty else { return }
         canResumeAfterFailure = false
+        // 再読み上げ中に始めたら止める。音声キャッシュはこれから使う sessionID 以外を消す
+        // （「直前の 1 セッション分だけ残す」不変条件。docs/plans/utterance-replay.md）
+        stopReplay()
         // 生成候補から選んだときだけジャンルが分かる（自作トピック・固定候補は nil）
         let genre = cardID
             .flatMap(findCard)?
@@ -633,6 +662,9 @@ final class ChatRoomStore {
         let sessionID = UUID()
         activeSessionID = sessionID
         activeSessionKind = kind
+        Task.detached(priority: .utility) {
+            UtteranceAudioCache.default.purge(keepingSessionID: sessionID)
+        }
         // 単語・クイズでは記憶ノートを注入しない（終了時の更新もしないので対称）
         activeMemoryNote = kind.usesMemoryNote ? memoryStore.currentNote() : nil
         historyStore.beginSession(
@@ -678,35 +710,23 @@ final class ChatRoomStore {
         initialHistory: [ConversationMessage]
     ) {
         var configuration = TurnBasedVoiceSession.Configuration()
+        configuration.tts = Self.currentTTSConfiguration()
         #if DEBUG
-        configuration.ttsProvider = DebugLaunchArguments.ttsProviderOverride ?? .gemini
         if let sttModel = DebugLaunchArguments.sttModelOverride {
             configuration.transcription.model = sttModel
         }
         if let sttDelay = DebugLaunchArguments.sttDelayOverride {
             configuration.transcription.delay = sttDelay
         }
-        // Qwen TTS の voice はリビルドせずに聞き比べられるよう起動引数で差し替え可
-        // （SpeechStyle.voice は Gemini の voice 名で届くため、そのキーで写像を上書きする）
-        if let chobiVoice = DebugLaunchArguments.qwenVoiceChobiOverride {
-            configuration.qwenTTS.voiceMap[ChatCharacter.chobi.speechStyle.voice] = chobiVoice
-        }
-        if let narukoVoice = DebugLaunchArguments.qwenVoiceNarukoOverride {
-            configuration.qwenTTS.voiceMap[ChatCharacter.naruko.speechStyle.voice] = narukoVoice
-        }
-        // instruct 変種（スタイル指示対応）への切替と指示文の差し替えも同様に起動引数で
-        if DebugLaunchArguments.qwenTTSInstructEnabled {
-            configuration.qwenTTS.model = QwenTTSConfiguration.instructModel
-        }
-        if let chobiInstruction = DebugLaunchArguments.qwenInstructChobiOverride {
-            configuration.qwenTTS.instructionMap[ChatCharacter.chobi.speechStyle.voice] = chobiInstruction
-        }
-        if let narukoInstruction = DebugLaunchArguments.qwenInstructNarukoOverride {
-            configuration.qwenTTS.instructionMap[ChatCharacter.naruko.speechStyle.voice] = narukoInstruction
-        }
         // AI から始まるセッションでは、開始ターンの最初の発話が出るまで -send-text を止める
         if case .assistantFirst = opening { awaitsOpeningTurn = true }
         #endif
+        // 読み上げ音声を再読み上げ用にローカル保存する（sessionID 単位。エラー再開でも
+        // 同じ ID を引き継ぐので同じディレクトリへ追記される）
+        if let activeSessionID {
+            configuration.utteranceRecorder = UtteranceAudioRecorder(
+                directory: UtteranceAudioCache.default.sessionDirectory(for: activeSessionID))
+        }
         configuration.opening = opening
         // UI の練習モードではなくセッションの種別（クイズ中は word / quiz と食い違う）
         configuration.sessionKind = activeSessionKind
@@ -1049,6 +1069,103 @@ final class ChatRoomStore {
         guard inputMode == .voice else { return }
         isVoicePaused.toggle()
         session?.setVoiceInputEnabled(!isVoicePaused)
+    }
+
+    // MARK: - 再読み上げ（docs/plans/utterance-replay.md）
+
+    /// AI 吹き出しのタップ。同じ吹き出し再タップ = 停止 / 別の吹き出し = 切り替え。
+    /// セッション中は無視する（TurnBasedVoiceSession がオーディオを占有しているため）。
+    func replayUtterance(id: UUID) {
+        guard session == nil, !canResumeAfterFailure else { return }
+        if replayingUtteranceID == id {
+            stopReplay()
+            return
+        }
+        guard let message = aiMessage(id: id) else { return }
+        let replayer = ensureReplayer()
+        if replayer.play(
+            utteranceID: id, text: message.text, style: message.speaker.speechStyle)
+        {
+            replayingUtteranceID = id
+        } else {
+            replayingUtteranceID = nil
+        }
+    }
+
+    /// 再読み上げの失敗アラートを閉じる（View のバインディングから）。
+    func dismissReplayError() {
+        replayErrorText = nil
+    }
+
+    private func stopReplay() {
+        replayer?.stop()
+        replayingUtteranceID = nil
+    }
+
+    private func ensureReplayer() -> UtteranceReplayer {
+        if let replayer { return replayer }
+        let tts = Self.currentTTSConfiguration()
+        let account = Self.ttsKeyAccount(for: tts.provider)
+        let created = UtteranceReplayer(
+            ttsConfiguration: tts,
+            apiKeyProvider: { (try? KeychainStore().read(account: account)) ?? nil })
+        created.onFinished = { [weak self] in self?.replayingUtteranceID = nil }
+        // 再生成時のみ流れる（ファイル再生は無料なので記録しない）。セッション外なので sessionID なし
+        created.onUsage = { [weak self] usage in self?.usageStore.record(usage, sessionID: nil) }
+        created.onError = { [weak self] message in
+            DiagnosticsLog.record("!! replay: \(message)")
+            self?.replayErrorText = message
+        }
+        replayer = created
+        return created
+    }
+
+    /// セッションと再読み上げが同じ TTS 構成（既定 = Qwen instruct・同じ voice 写像）を使うための
+    /// 一元組み立て。既定は SentenceTTSClientFactory.Configuration の 1 箇所が持ち、
+    /// DEBUG の起動引数は指定があるときだけ上書きする（既定を DEBUG 側で固定しない）。
+    private static func currentTTSConfiguration() -> SentenceTTSClientFactory.Configuration {
+        var tts = SentenceTTSClientFactory.Configuration()
+        #if DEBUG
+        if let provider = DebugLaunchArguments.ttsProviderOverride {
+            tts.provider = provider
+        }
+        // Qwen TTS の voice はリビルドせずに聞き比べられるよう起動引数で差し替え可
+        // （SpeechStyle.voice は Gemini の voice 名で届くため、そのキーで写像を上書きする）
+        if let chobiVoice = DebugLaunchArguments.qwenVoiceChobiOverride {
+            tts.qwen.voiceMap[ChatCharacter.chobi.speechStyle.voice] = chobiVoice
+        }
+        if let narukoVoice = DebugLaunchArguments.qwenVoiceNarukoOverride {
+            tts.qwen.voiceMap[ChatCharacter.naruko.speechStyle.voice] = narukoVoice
+        }
+        // instruct 変種（スタイル指示対応）への切替と指示文の差し替えも同様に起動引数で
+        if DebugLaunchArguments.qwenTTSInstructEnabled {
+            tts.qwen.model = QwenTTSConfiguration.instructModel
+        }
+        if let chobiInstruction = DebugLaunchArguments.qwenInstructChobiOverride {
+            tts.qwen.instructionMap[ChatCharacter.chobi.speechStyle.voice] = chobiInstruction
+        }
+        if let narukoInstruction = DebugLaunchArguments.qwenInstructNarukoOverride {
+            tts.qwen.instructionMap[ChatCharacter.naruko.speechStyle.voice] = narukoInstruction
+        }
+        #endif
+        return tts
+    }
+
+    /// 再読み上げ（再生成経路）が使う API キーの Keychain アカウント。
+    private static func ttsKeyAccount(for provider: TTSProvider) -> String {
+        switch provider {
+        case .openAI: return KeychainStore.openAIAPIKeyAccount
+        case .gemini: return KeychainStore.geminiAPIKeyAccount
+        case .qwen: return KeychainStore.dashScopeAPIKeyAccount
+        }
+    }
+
+    /// タイムラインから AI 発話を引く（再読み上げの対象は AI 吹き出しのみ）。
+    private func aiMessage(id: UUID) -> AIMessage? {
+        for item in timeline.reversed() {
+            if case .aiMessage(let message) = item, message.id == id { return message }
+        }
+        return nil
     }
 
     // MARK: - 会話の翻訳

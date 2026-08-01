@@ -154,6 +154,13 @@ enum DebugLaunchArguments {
         return args[index + 1]
     }
 
+    /// 起動直後に復元済みタイムラインの最後の AI 吹き出しをタップした扱いで再読み上げする
+    /// （再読み上げの E2E 用。docs/plans/utterance-replay.md。
+    /// 音声キャッシュがあればファイル再生、無ければ TTS 再生成になる）。
+    static var shouldReplayLatest: Bool {
+        ProcessInfo.processInfo.arguments.contains("-replay-latest")
+    }
+
     /// 診断ログのクラッシュ記録が生きているかを確かめるためのわざと落とす起動引数。
     /// 例: -crash-test exception（Objective-C 例外）/ -crash-test fatal（Swift の実行時エラー）
     /// 起動 3 秒後に落とす（ログの初期化と画面表示を跨いだ状態を模す）。

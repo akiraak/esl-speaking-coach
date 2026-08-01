@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-08-01 DEBUG ビルドの TTS 既定が Gemini のままだった不具合を修正した
+  - `ChatRoomStore.launchSession` の `ttsProviderOverride ?? .gemini` が Qwen 切替（7c95fdb）後も残り、`-tts-provider` 未指定の実機・シミュレータ（= 普段の使い方）では Configuration 既定の qwen が gemini に上書きされていた
+  - 再読み上げの TTS ファクトリ化（docs/plans/utterance-replay.md Phase 1）と同時に対応: TTS 構成の組み立てを `ChatRoomStore.currentTTSConfiguration()` に一元化し、既定は `SentenceTTSClientFactory.Configuration` の 1 箇所が持ち、DEBUG は override があるときだけ上書きする形に正した。シミュレータで `-tts-provider` 未指定のセッションが `qwen3-tts-instruct-flash-realtime` で合成されることを確認
+
 - 2026-08-01 会話の文面から長押しで単語・熟語を単語帳（esl.chobi.me）へ登録できるようにした [plan](docs/plans/archive/tap-word-registration.md)
   - 吹き出し（AI・ユーザー）長押し →「単語・熟語を登録」→ 登録シート。発話全文を単語チップで表示し、複数選択（離れた語も可）→ 正規化 API（`POST /api/word-normalize`・文脈 240 字付き）の提案を編集可能な候補へ反映 →「登録」で `POST /api/word-info`（context = 発話全文。サーバ側で語義を AI 生成して保存）。重複は cached 返却で「すでに単語帳にあります」。サーバは esl-learning-assistant の既存 API のまま改修なし・認証も既存 X-API-Secret。コピーも同メニューに追加（タップは再読み上げ用に温存）
   - 基本形での登録を保証（Phase 4）: 提案の適用を status ではなく **lemma の差**で判定（サーバが「makes sense」を phrase のまま lemma だけ直して返すケースに対応）。register 時は実行中の正規化を待ち、未正規化なら登録前に 1 回だけ実行してから送る。手動編集した候補はそのまま登録（変化形をあえて登録する逃げ道）。「makes sense」→「make sense」になることを実機で確認

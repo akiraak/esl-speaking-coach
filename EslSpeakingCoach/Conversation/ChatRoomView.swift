@@ -93,6 +93,18 @@ struct ChatRoomView: View {
         } message: {
             Text("会話をまとめてフィードバックを作ります")
         }
+        // 再読み上げの失敗（キー未設定・再生成の取得失敗）。タイムラインは汚さず一時アラート
+        // （docs/plans/utterance-replay.md）
+        .alert(
+            "再生できませんでした",
+            isPresented: Binding(
+                get: { store.replayErrorText != nil },
+                set: { if !$0 { store.dismissReplayError() } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.replayErrorText ?? "")
+        }
         // ピッカーと同じ文言・同じ分類（WordBookError.errorDescription）で失敗を伝える
         .alert(
             "ランダムに選べませんでした",
@@ -334,13 +346,15 @@ struct ChatRoomView: View {
         case .aiMessage(let message):
             AIMessageRow(
                 message: message,
-                isSpeaking: store.speakingUtteranceID == message.id
-                    && store.voiceState == .speaking,
+                isSpeaking: (store.speakingUtteranceID == message.id
+                    && store.voiceState == .speaking)
+                    || store.replayingUtteranceID == message.id,
                 translation: store.translationDisplay(
                     id: message.id, translation: message.translation),
                 onRegisterWords: {
                     wordRegisterTarget = WordRegisterTarget(id: message.id, text: message.text)
-                })
+                },
+                onReplay: { store.replayUtterance(id: message.id) })
         case .userMessage(let message):
             UserMessageRow(
                 message: message,

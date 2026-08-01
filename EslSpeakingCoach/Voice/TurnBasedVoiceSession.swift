@@ -56,14 +56,12 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     struct Configuration: Sendable {
         var transcription = OpenAITranscriptionConfiguration()
-        /// 採用構成は Gemini TTS（2026-07-25 決定）。OpenAI TTS へは聞き比べ用、
-        /// Qwen TTS へは Alibaba 音声モデルの検証用に切替可
-        /// 2026-08-01 に Gemini から Qwen（instruct 変種）へ切替（docs/plans/archive/alibaba-voice-models.md）。
-        /// 旧既定へは -tts-provider gemini で戻せる
-        var ttsProvider: TTSProvider = .qwen
-        var openAITTS = OpenAITTSConfiguration()
-        var geminiTTS = GeminiTTSConfiguration()
-        var qwenTTS = QwenTTSConfiguration()
+        /// TTS のプロバイダ選択と各プロバイダ設定。既定（Qwen instruct）と生成の分岐は
+        /// SentenceTTSClientFactory に一元化し、再読み上げ（UtteranceReplayer）と共有する
+        var tts = SentenceTTSClientFactory.Configuration()
+        /// AI 発話音声のローカル保存（再読み上げ用。nil なら保存しない。
+        /// docs/plans/utterance-replay.md）
+        var utteranceRecorder: UtteranceAudioRecorder?
         /// ready 後の始まり方（既定は再開 = 開始ターンを起こさない）
         var opening: Opening = .resume
         /// セッションの種別（会話 / 単語 / クイズ）。system prompt・開始の制御メッセージ・
@@ -186,20 +184,16 @@ final class TurnBasedVoiceSession: VoiceSession {
         self.pendingOpening = configuration.opening
         self.isVoiceInputEnabled = configuration.voiceInputEnabled
         self.history = configuration.initialHistory
-        switch configuration.ttsProvider {
-        case .openAI:
-            speaker = CloudSentenceSpeaker(
-                client: OpenAITTSClient(configuration: configuration.openAITTS),
-                apiKeyProvider: openAIKeyProvider)
-        case .gemini:
-            speaker = CloudSentenceSpeaker(
-                client: GeminiTTSClient(configuration: configuration.geminiTTS),
-                apiKeyProvider: geminiKeyProvider)
-        case .qwen:
-            speaker = CloudSentenceSpeaker(
-                client: QwenTTSClient(configuration: configuration.qwenTTS),
-                apiKeyProvider: dashScopeKeyProvider)
+        let ttsKeyProvider: @Sendable () -> String?
+        switch configuration.tts.provider {
+        case .openAI: ttsKeyProvider = openAIKeyProvider
+        case .gemini: ttsKeyProvider = geminiKeyProvider
+        case .qwen: ttsKeyProvider = dashScopeKeyProvider
         }
+        speaker = CloudSentenceSpeaker(
+            client: SentenceTTSClientFactory.make(configuration.tts),
+            apiKeyProvider: ttsKeyProvider)
+        speaker.recorder = configuration.utteranceRecorder
         (events, eventContinuation) = AsyncStream.makeStream(
             of: VoiceSessionEvent.self, bufferingPolicy: .unbounded)
 
@@ -207,12 +201,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         speaker.onTurnFinished = { [weak self] in self?.handleTurnFinished() }
         speaker.onUtteranceAudioStarted = { [weak self] id in self?.handleUtteranceAudioStarted(id) }
         speaker.onError = { [weak self] message in self?.eventContinuation.yield(.info(message)) }
-        let ttsProvider: AIUsageEvent.Provider
-        switch configuration.ttsProvider {
-        case .openAI: ttsProvider = .openai
-        case .gemini: ttsProvider = .gemini
-        case .qwen: ttsProvider = .alibaba
-        }
+        let ttsProvider = configuration.tts.provider.usageProvider
         let ttsModel = speaker.modelDescription
         speaker.onUsage = { [weak self] usage in
             self?.eventContinuation.yield(.apiUsage(AIUsageEvent(
@@ -245,13 +234,13 @@ final class TurnBasedVoiceSession: VoiceSession {
                 }
             }
         }
-        if configuration.ttsProvider == .gemini {
+        if configuration.tts.provider == .gemini {
             guard let geminiKey = geminiKeyProvider(), !geminiKey.isEmpty else {
                 fail("Gemini API キーが未設定です。.secrets/gemini-api-key を用意して再インストールしてください。")
                 return
             }
         }
-        if configuration.ttsProvider == .qwen {
+        if configuration.tts.provider == .qwen {
             guard let dashScopeKey = dashScopeKeyProvider(), !dashScopeKey.isEmpty else {
                 fail("DashScope API キーが未設定です。.secrets/dashscope-api-key を用意して再インストールしてください。")
                 return

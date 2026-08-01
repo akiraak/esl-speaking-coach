@@ -25,10 +25,13 @@ final class CloudSentenceSpeaker {
     var onError: ((String) -> Void)?
     /// TTS 1 リクエスト（1 文）分の利用量（料金記録用）。
     var onUsage: ((TTSUsage) -> Void)?
+    /// 取得した音声チャンクの発話単位のローカル保存（再読み上げ用。未注入なら保存しない。
+    /// docs/plans/utterance-replay.md）
+    var recorder: UtteranceAudioRecorder?
 
     private let client: any SentenceTTSClient
     private let apiKeyProvider: @Sendable () -> String?
-    private let player = StreamingAudioPlayer()
+    private let player: StreamingAudioPlayer
 
     private var sentenceQueue: [SpeechItem] = []
     private var fetchTask: Task<Void, Never>?
@@ -38,9 +41,16 @@ final class CloudSentenceSpeaker {
     /// stopNow 後に取得途中の古い音声を積まないための世代カウンタ。
     private var turnID = 0
 
-    init(client: any SentenceTTSClient, apiKeyProvider: @escaping @Sendable () -> String?) {
+    /// player は通常内蔵のものを使う。再読み上げ（UtteranceReplayer）だけは
+    /// ファイル再生と再生エンジンを共有するため外から渡す。
+    init(
+        client: any SentenceTTSClient,
+        apiKeyProvider: @escaping @Sendable () -> String?,
+        player: StreamingAudioPlayer = StreamingAudioPlayer()
+    ) {
         self.client = client
         self.apiKeyProvider = apiKeyProvider
+        self.player = player
         player.onTurnAudioStarted = { [weak self] in self?.onTurnAudioStarted?() }
         player.onTurnFinished = { [weak self] in self?.onTurnFinished?() }
         player.onMarkerReached = { [weak self] id in self?.onUtteranceAudioStarted?(id) }
@@ -81,6 +91,8 @@ final class CloudSentenceSpeaker {
     func endStream() {
         streamEnded = true
         if fetchTask == nil, sentenceQueue.isEmpty {
+            // このターンの取得はすべて済んでいる。最後の発話の保存を完結する
+            recorder?.finishCurrent()
             player.endStream()
         }
     }
@@ -92,6 +104,8 @@ final class CloudSentenceSpeaker {
         fetchTask?.cancel()
         fetchTask = nil
         streamEnded = false
+        // 取得途中の発話は未完（.part のまま）にする
+        recorder?.abandonCurrent()
         player.stopNow()
     }
 
@@ -102,6 +116,7 @@ final class CloudSentenceSpeaker {
         sentenceQueue.removeAll()
         fetchTask?.cancel()
         fetchTask = nil
+        recorder?.abandonCurrent()
         player.shutdown()
     }
 
@@ -129,6 +144,9 @@ final class CloudSentenceSpeaker {
                         switch chunk {
                         case .pcm(let pcm):
                             self.player.enqueue(pcm16Data: pcm, marker: pendingMarker)
+                            // 発話単位の音声キャッシュへ追記（発話の切り替わりは recorder 側が
+                            // utteranceID の変化で検知して前の発話を完結する）
+                            self.recorder?.append(utteranceID: item.utteranceID, pcm: pcm)
                             if pendingMarker != nil {
                                 self.lastMarkedUtteranceID = item.utteranceID
                                 pendingMarker = nil
@@ -141,6 +159,8 @@ final class CloudSentenceSpeaker {
                     return
                 } catch {
                     guard self.turnID == startedTurnID else { return }
+                    // 文が欠けた発話は保存しない（.part のまま残し、再生はフォールバックさせる）
+                    self.recorder?.markFailed(utteranceID: item.utteranceID)
                     self.onError?("読み上げの取得に失敗（この文はスキップ）: \(error.localizedDescription)")
                 }
             }
@@ -150,6 +170,7 @@ final class CloudSentenceSpeaker {
                 // ループを抜けた後に enqueue された文があれば拾い直す
                 self.startFetchingIfIdle()
             } else if self.streamEnded {
+                self.recorder?.finishCurrent()
                 self.player.endStream()
             }
         }
