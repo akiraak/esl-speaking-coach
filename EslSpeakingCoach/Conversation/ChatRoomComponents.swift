@@ -620,6 +620,8 @@ struct ChatInputBar: View {
     let store: ChatRoomStore
     @Binding var draftText: String
     let onSend: () -> Void
+    /// セッション未開始の案内（idleBar）のタップ。タイムラインを最下部（カードの位置）へ戻す
+    let onIdleTap: () -> Void
 
     var body: some View {
         Group {
@@ -642,11 +644,17 @@ struct ChatInputBar: View {
     }
 
     /// セッション未開始（トピック選択・単語入力・クイズ開始待ち）。
+    /// 案内は「下のカードから始めて」という誘導なので、タップでカードの位置（最下部）へ戻せる。
     private var idleBar: some View {
-        Text(store.practiceMode.idlePrompt)
-            .font(.footnote)
-            .foregroundStyle(ChatTheme.systemText)
-            .frame(maxWidth: .infinity, minHeight: 36)
+        Button(action: onIdleTap) {
+            Text(store.practiceMode.idlePrompt)
+                .font(.footnote)
+                .foregroundStyle(ChatTheme.systemText)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("タップで最新のカードまでスクロールします")
     }
 
     /// 致命的エラーでセッションが落ちたときの再開導線。

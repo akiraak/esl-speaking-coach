@@ -31,13 +31,23 @@ struct ChatRoomView: View {
     private static let bottomBarInset: CGFloat = 72
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            timeline
-            ChatInputBar(
-                store: store,
-                draftText: $draftText,
-                onSend: sendDraft)
+        // ScrollViewReader はタイムラインの外まで広げ、入力バー（idleBar タップで最下部へ
+        // スクロール）からも proxy を使えるようにする
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                header
+                timeline(proxy)
+                ChatInputBar(
+                    store: store,
+                    draftText: $draftText,
+                    onSend: sendDraft,
+                    onIdleTap: {
+                        // 案内は「下のカードから始めて」という誘導なので、タップで
+                        // カード（最下部）まで戻し、以後の追記への自動追従も再開する
+                        isAutoScrollEnabled = true
+                        scrollToBottom(proxy)
+                    })
+            }
         }
         .background(ChatTheme.chatBackground.ignoresSafeArea())
         // ダークモードの暖色トーン再設計は未決（screen-layout.md）。決まるまでライト固定
@@ -192,88 +202,86 @@ struct ChatRoomView: View {
 
     // MARK: - タイムライン
 
-    private var timeline: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(store.timeline) { item in
-                        timelineRow(item)
-                            .id(item.id)
-                    }
-                    if !store.partialTranscript.isEmpty {
-                        LiveTranscriptRow(text: store.partialTranscript)
-                    }
-                    if store.voiceState == .thinking {
-                        TypingIndicatorRow()
-                    }
-                    // 最下部アンカー。固定表示の下端バーに最新メッセージが隠れないよう、
-                    // バーの高さぶんの余白をアンカー自体に持たせる
-                    Color.clear
-                        .frame(height: isBottomBarVisible ? Self.bottomBarInset : 1)
-                        .id(Self.bottomAnchorID)
+    private func timeline(_ proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                ForEach(store.timeline) { item in
+                    timelineRow(item)
+                        .id(item.id)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-            }
-            // 起動直後は履歴復元の直後に最下部から始める
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .scrollDismissesKeyboard(.interactively)
-            .onScrollPhaseChange { oldPhase, newPhase, context in
-                switch newPhase {
-                case .interacting:
-                    // ユーザーが実際にドラッグを始めた（コンテンツ追記による自動移動はここに来ない）。
-                    // `.tracking` では切らない — タップ（トピック候補の選択等）でも入ることがあり、
-                    // タップの動作でタイムラインが伸びた直後に .idle の判定が走ると
-                    // 「最下部から遠い」と誤判定して追従が切れたままになる
-                    // （docs/plans/archive/session-start-scroll.md 仮説 1）
-                    isAutoScrollEnabled = false
-                case .idle where oldPhase.wasDragging:
-                    // 指を離して止まった位置で判定する。ドラッグ由来のときだけ —
-                    // プログラム側スクロールの完了（.animating → .idle）やタップの
-                    // .tracking → .idle で状態を変えないよう限定する
-                    let geometry = context.geometry
-                    isAutoScrollEnabled =
-                        geometry.contentOffset.y + geometry.containerSize.height
-                        >= geometry.contentSize.height - 120
-                default:
-                    break
+                if !store.partialTranscript.isEmpty {
+                    LiveTranscriptRow(text: store.partialTranscript)
                 }
-            }
-            .onChange(of: store.timelineRevision) {
-                scrollToBottom(proxy)
-            }
-            .task {
-                // 履歴復元は .onAppear（初期レイアウト後）に走り、LazyVStack は
-                // 画面外セルを推定高さで扱うため初期位置がずれる。
-                // 高さが確定するまで数フレーム、アニメーション無しで最下部へ寄せ直す
-                for _ in 0..<3 {
-                    try? await Task.sleep(for: .milliseconds(50))
-                    guard isAutoScrollEnabled else { return }
-                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                if store.voiceState == .thinking {
+                    TypingIndicatorRow()
                 }
+                // 最下部アンカー。固定表示の下端バーに最新メッセージが隠れないよう、
+                // バーの高さぶんの余白をアンカー自体に持たせる
+                Color.clear
+                    .frame(height: isBottomBarVisible ? Self.bottomBarInset : 1)
+                    .id(Self.bottomAnchorID)
             }
-            .onChange(of: store.partialTranscript) {
-                if !store.partialTranscript.isEmpty { scrollToBottom(proxy) }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+        }
+        // 起動直後は履歴復元の直後に最下部から始める
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .scrollDismissesKeyboard(.interactively)
+        .onScrollPhaseChange { oldPhase, newPhase, context in
+            switch newPhase {
+            case .interacting:
+                // ユーザーが実際にドラッグを始めた（コンテンツ追記による自動移動はここに来ない）。
+                // `.tracking` では切らない — タップ（トピック候補の選択等）でも入ることがあり、
+                // タップの動作でタイムラインが伸びた直後に .idle の判定が走ると
+                // 「最下部から遠い」と誤判定して追従が切れたままになる
+                // （docs/plans/archive/session-start-scroll.md 仮説 1）
+                isAutoScrollEnabled = false
+            case .idle where oldPhase.wasDragging:
+                // 指を離して止まった位置で判定する。ドラッグ由来のときだけ —
+                // プログラム側スクロールの完了（.animating → .idle）やタップの
+                // .tracking → .idle で状態を変えないよう限定する
+                let geometry = context.geometry
+                isAutoScrollEnabled =
+                    geometry.contentOffset.y + geometry.containerSize.height
+                    >= geometry.contentSize.height - 120
+            default:
+                break
             }
-            .onChange(of: store.voiceState) {
-                scrollToBottom(proxy)
+        }
+        .onChange(of: store.timelineRevision) {
+            scrollToBottom(proxy)
+        }
+        .task {
+            // 履歴復元は .onAppear（初期レイアウト後）に走り、LazyVStack は
+            // 画面外セルを推定高さで扱うため初期位置がずれる。
+            // 高さが確定するまで数フレーム、アニメーション無しで最下部へ寄せ直す
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard isAutoScrollEnabled else { return }
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
-            // スクロールに乗せずタイムライン下端へ固定する（会話追記でも位置が動かない）
-            .overlay(alignment: .bottom) {
-                if isBottomBarVisible {
-                    TimelineBottomBar(
-                        isTranslationVisible: store.isTranslationVisible,
-                        isSessionActive: isEndSessionButtonVisible,
-                        sessionKind: store.activeSessionKind,
-                        onToggleTranslation: {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                store.setTranslationVisible(!store.isTranslationVisible)
-                            }
-                        },
-                        onEndSession: { isConfirmingEndSession = true })
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 12)
-                }
+        }
+        .onChange(of: store.partialTranscript) {
+            if !store.partialTranscript.isEmpty { scrollToBottom(proxy) }
+        }
+        .onChange(of: store.voiceState) {
+            scrollToBottom(proxy)
+        }
+        // スクロールに乗せずタイムライン下端へ固定する（会話追記でも位置が動かない）
+        .overlay(alignment: .bottom) {
+            if isBottomBarVisible {
+                TimelineBottomBar(
+                    isTranslationVisible: store.isTranslationVisible,
+                    isSessionActive: isEndSessionButtonVisible,
+                    sessionKind: store.activeSessionKind,
+                    onToggleTranslation: {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            store.setTranslationVisible(!store.isTranslationVisible)
+                        }
+                    },
+                    onEndSession: { isConfirmingEndSession = true })
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
             }
         }
     }

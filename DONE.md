@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-08-01 チャット欄を 1 番下までスクロールさせる機能を入れた [plan](docs/plans/archive/scroll-to-bottom-on-idle-bar-tap.md)
+  - セッション未開始時に入力バーへ出る案内（「トピックカードから話題を選んでスタート」「カードから練習する単語を入力してスタート」）をタップ可能にし、タップで最下部（カードの位置）までスクロール + 自動追従を再開する
+  - `ChatRoomView` の `ScrollViewReader` を body 全体へ持ち上げて入力バーからも proxy を使えるようにし、`ChatInputBar` に `onIdleTap` を追加・`idleBar` を Button 化
+  - シミュレータで実操作（履歴を遡る → 案内バーをタップ → 最下部のカードへ戻る）を確認
+
 - 2026-08-01 管理画面「料金」タブの種別内訳を今月ベースにし、使用モデル・単価の併記と今月合計比の % 表示に変えた（単価表セクションは削除） [plan](docs/plans/archive/usage-dashboard-kind-rates.md)
   - `AIPricing.rateTable()` を、種別 → 現在の既定モデル・単価を返す `currentRate(for:)` に置き換え（sonnet-5 の導入価格切替・TTS 暫定計上の note は引き継ぎ。切替用の旧経路は表示しない）。`UsageStore.kindTotals(monthOf:)` で今月分のみを合算し、**今月利用のない種別（月初の翻訳・STT 等）も $0 で全 7 種別を常時表示**（金額降順・同額は課金経路の定義順）
   - 各行は「種別ラベル + モデル・単価（+note）／右側に金額と今月合計比 %」。単価表 footer の「推定額は記録時の単価で計算・保存」の注意書きは種別内訳の footer へ移動し、`ai-cost-map.md` の `rateTable()` への言及も `currentRate(for:)` に更新
