@@ -9,6 +9,8 @@ struct AIMessageRow: View {
     let isSpeaking: Bool
     /// 翻訳トグル ON のとき吹き出しの下に出す日本語訳
     let translation: ChatRoomStore.TranslationDisplay
+    /// 長押しメニュー「単語・熟語を登録」（登録シートを開く。docs/plans/tap-word-registration.md）
+    var onRegisterWords: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -37,6 +39,7 @@ struct AIMessageRow: View {
                             bottomTrailingRadius: ChatTheme.bubbleRadius,
                             topTrailingRadius: ChatTheme.bubbleRadius))
                     .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+                    .contextMenu { MessageBubbleMenu(text: message.text, onRegisterWords: onRegisterWords) }
                 TranslationLine(display: translation, alignment: .leading)
             }
             Spacer(minLength: 48)
@@ -49,6 +52,8 @@ struct UserMessageRow: View {
     let message: ChatRoomStore.UserMessage
     /// 翻訳トグル ON のとき吹き出しの下に出す日本語訳
     let translation: ChatRoomStore.TranslationDisplay
+    /// 長押しメニュー「単語・熟語を登録」（登録シートを開く。docs/plans/tap-word-registration.md）
+    var onRegisterWords: () -> Void = {}
 
     var body: some View {
         HStack {
@@ -67,8 +72,28 @@ struct UserMessageRow: View {
                             bottomTrailingRadius: ChatTheme.bubbleRadius,
                             topTrailingRadius: ChatTheme.bubbleTailRadius))
                     .shadow(color: ChatTheme.bubbleShadow, radius: 2, y: 1)
+                    .contextMenu { MessageBubbleMenu(text: message.text, onRegisterWords: onRegisterWords) }
                 TranslationLine(display: translation, alignment: .trailing)
             }
+        }
+    }
+}
+
+/// 吹き出し長押しのコンテキストメニュー（AI・ユーザー共通）。
+/// タップは将来の再読み上げ（docs/plans/utterance-replay.md）に空けてあるため、
+/// 登録・コピーの導線は長押しに置く（SystemPillRow の長押しコピーと同型）。
+struct MessageBubbleMenu: View {
+    let text: String
+    let onRegisterWords: () -> Void
+
+    var body: some View {
+        Button(action: onRegisterWords) {
+            Label("単語・熟語を登録", systemImage: "plus.circle")
+        }
+        Button {
+            UIPasteboard.general.string = text
+        } label: {
+            Label("コピー", systemImage: "doc.on.doc")
         }
     }
 }

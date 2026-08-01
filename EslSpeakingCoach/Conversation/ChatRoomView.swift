@@ -11,6 +11,8 @@ struct ChatRoomView: View {
     /// 単語帳ピッカー（単語モードのカードの「単語帳から選ぶ」）
     @State private var isShowingWordBookPicker = false
     @State private var wordBookCardID: UUID?
+    /// 吹き出し長押し「単語・熟語を登録」の対象発話（nil でないとき登録シートを表示）
+    @State private var wordRegisterTarget: WordRegisterTarget?
     /// ランダム出題（単語モードのカードの「ランダムに選ぶ」）の取得中フラグ。
     /// カードの 3 ボタンを無効化して二重タップを防ぐ（docs/plans/wordbook-random-word.md）
     @State private var isFetchingRandomWord = false
@@ -71,6 +73,15 @@ struct ChatRoomView: View {
                 wordBookCardID = nil
             })
         }
+        // 吹き出し長押し →「単語・熟語を登録」（docs/plans/tap-word-registration.md）。
+        // 新規登録できたら未使用の単語カードの集計を取り直す（総数・未練習数が動くため）
+        .sheet(item: $wordRegisterTarget) { target in
+            WordRegisterSheet(
+                messageText: target.text,
+                onRegistered: {
+                    Task { await fetchWordBookTally() }
+                })
+        }
         // ボタンはセッション終了で消えるので、ダイアログはボタンではなく画面側に付ける。
         // 文言はセッション種別基準（クイズ中に「この単語を終了」と出さない）
         .alert(
@@ -117,6 +128,9 @@ struct ChatRoomView: View {
             }
             if DebugLaunchArguments.shouldStartRandomWord {
                 startRandomWordSessionFromLatestCard()
+            }
+            if let text = DebugLaunchArguments.wordRegisterText {
+                wordRegisterTarget = WordRegisterTarget(id: UUID(), text: text)
             }
             #endif
         }
@@ -323,12 +337,18 @@ struct ChatRoomView: View {
                 isSpeaking: store.speakingUtteranceID == message.id
                     && store.voiceState == .speaking,
                 translation: store.translationDisplay(
-                    id: message.id, translation: message.translation))
+                    id: message.id, translation: message.translation),
+                onRegisterWords: {
+                    wordRegisterTarget = WordRegisterTarget(id: message.id, text: message.text)
+                })
         case .userMessage(let message):
             UserMessageRow(
                 message: message,
                 translation: store.translationDisplay(
-                    id: message.id, translation: message.translation))
+                    id: message.id, translation: message.translation),
+                onRegisterWords: {
+                    wordRegisterTarget = WordRegisterTarget(id: message.id, text: message.text)
+                })
         case .topicCard(let card):
             TopicCardView(
                 card: card,
@@ -466,6 +486,12 @@ struct ChatRoomView: View {
         }
     }
     #endif
+}
+
+/// 登録シートの表示対象（`sheet(item:)` 用）。id は発話 ID（DEBUG の起動引数経由では仮 ID）。
+private struct WordRegisterTarget: Identifiable {
+    let id: UUID
+    let text: String
 }
 
 private extension ScrollPhase {

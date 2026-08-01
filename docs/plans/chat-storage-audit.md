@@ -8,7 +8,7 @@
 
 ## 関連プランとの整合（共通決定）
 
-3 つのプラン（[tap-word-registration](tap-word-registration.md) /
+3 つのプラン（[tap-word-registration](archive/tap-word-registration.md)（実装済み） /
 [utterance-replay](utterance-replay.md) / 本プラン）で保存ポリシーを共有する。
 **変更するときは 3 プラン同時に見直すこと。**
 

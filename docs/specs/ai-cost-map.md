@@ -96,6 +96,14 @@
 - WebSocket / HTTP の接続自体（リクエストを投げるまで課金なし）
 - 会話履歴の保存（SwiftData・端末内）、Keychain、UI 全般
 - シミュレータでのテキスト入力検証は STT 課金なし（Claude + TTS は通常どおり課金）
+- 単語帳（esl.chobi.me）の一覧・詳細の取得（読み取りのみ・AI を呼ばない）
+
+## 本アプリの usage 記録の対象外（サーバ側課金）
+
+- 吹き出し長押しの**単語・熟語登録**（`POST /api/word-normalize` / `POST /api/word-info`。
+  docs/plans/tap-word-registration.md）は esl-learning-assistant サーバ側で
+  `claude-haiku-4-5` が動くが、課金はサーバ側（単語帳）の管理。
+  本アプリの `UsageStore`・料金画面には載せない
 
 ## 1 セッションの概算例
 

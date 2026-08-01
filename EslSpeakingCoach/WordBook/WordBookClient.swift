@@ -64,6 +64,43 @@ struct WordBookWordDetail: Sendable, Equatable {
     let commonMistakes: String?
 }
 
+/// 選択語の正規化結果（`POST /api/word-normalize`）。
+/// backend の WordNormalization（wordNormalize.ts）と同構造。status で確認 UI の出し分けを決める。
+struct WordNormalization: Sendable, Equatable {
+    enum Status: String, Sendable {
+        /// 既に辞書見出し語（lemma は入力と同じ・reason は空）
+        case canonical
+        /// 語形変化（lemma は原形）
+        case inflected
+        /// 綴り間違い（lemma は正しい綴りの原形）
+        case misspelled
+        /// 固有名詞（訂正しない）
+        case properNoun = "proper_noun"
+        /// 既に基本形の複数語連語（句動詞・イディオム）
+        case phrase
+        /// タップ語が文中の複数語表現の一部（lemma は表現全体。例: "up" → "look up"）
+        case phrasePart = "phrase_part"
+        /// 判定不能・英語でない
+        case unknown
+    }
+
+    let input: String
+    /// 登録すべき辞書見出し語（canonical / proper_noun / phrase / unknown では入力と同じ）
+    let lemma: String
+    let status: Status
+    /// 訂正理由（日本語 1 文）。canonical / proper_noun / phrase / unknown は空文字で来る
+    let reason: String
+    let cached: Bool
+}
+
+/// 登録結果（`POST /api/word-info`）。wordInfo 全体は使わず結果表示に要る最小限だけ持つ。
+struct WordRegistrationResult: Sendable, Equatable {
+    /// true = 既に単語帳にあった（サーバは AI を呼ばず保存済みを返す）
+    let cached: Bool
+    /// 第 1 義（結果表示用。応答に無ければ nil）
+    let firstMeaning: String?
+}
+
 enum WordBookError: Error, LocalizedError {
     case missingSecret
     case invalidResponse
@@ -91,8 +128,10 @@ enum WordBookError: Error, LocalizedError {
     }
 }
 
-/// 単語帳（esl-learning-assistant / esl.chobi.me）の読み取り専用 API クライアント。
-/// 認証は `X-API-Secret` ヘッダ（生の共有シークレット）。AI は呼ばれないので課金・usage 記録はない。
+/// 単語帳（esl-learning-assistant / esl.chobi.me）の API クライアント。
+/// 認証は `X-API-Secret` ヘッダ（生の共有シークレット。読み書き同一）。
+/// 一覧・詳細（GET）は AI を呼ばないが、正規化・登録（POST）はサーバ側で AI が動く
+/// （課金はサーバ側の管理で、本アプリの usage 記録の対象外。docs/plans/tap-word-registration.md）。
 /// base URL と targetLanguage=ja は自分専用アプリの既存流儀どおりハードコード。
 struct WordBookClient: Sendable {
     static var baseURL: URL {
@@ -116,6 +155,15 @@ struct WordBookClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
+        return URLSession(configuration: configuration)
+    }()
+
+    /// 正規化・登録（POST）用。サーバ側で AI 生成を同期で待つため（体感 5〜20 秒）、
+    /// 一覧用より大きいタイムアウトを取る。
+    private static let writeSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 90
+        configuration.timeoutIntervalForResource = 120
         return URLSession(configuration: configuration)
     }()
 
@@ -335,6 +383,123 @@ struct WordBookClient: Sendable {
         struct ExamplePayload: Decodable {
             let english: String
             let translation: String
+        }
+    }
+
+    // MARK: - 正規化・登録（docs/plans/tap-word-registration.md）
+
+    /// 選択語を辞書見出し語へ正規化する。`context` はタップ語を含む文
+    /// （句動詞の一部タップ → 句全体の提案に使う。サーバ側クランプ 300 字より
+    /// 手前でクライアントが 240 字に切ってから渡す）。
+    func normalizeWord(
+        secret: String, word: String, context: String?
+    ) async throws -> WordNormalization {
+        let request = Self.makeNormalizeRequest(secret: secret, word: word, context: context)
+        let data = try await Self.postData(request)
+        return try Self.parseNormalization(data)
+    }
+
+    /// 単語帳へ登録する（`POST /api/word-info`）。サーバ側で語義を AI 生成して保存する。
+    /// 既に登録済みなら AI を呼ばず既存データが `cached: true` で返る（エラーにならない）。
+    /// `context` は発話全文（その会話での意味に合った語義を作らせる。サーバ側クランプ 8000 字）。
+    func registerWord(
+        secret: String, word: String, context: String?
+    ) async throws -> WordRegistrationResult {
+        let request = Self.makeRegisterRequest(secret: secret, word: word, context: context)
+        let data = try await Self.postData(request)
+        return try Self.parseRegistration(data)
+    }
+
+    /// POST 共通の送受信（`writeSession` + ステータス検査）。
+    private static func postData(_ request: URLRequest) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await writeSession.data(for: request)
+        } catch {
+            throw WordBookError.invalidResponse
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw WordBookError.invalidResponse
+        }
+        guard http.statusCode == 200 else {
+            throw WordBookError.httpError(
+                statusCode: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "")
+        }
+        return data
+    }
+
+    /// POST リクエストのボディ（両 API 共通の 3 項目。nil の context は JSON から落ちる）。
+    private struct PostBody: Encodable {
+        let word: String
+        let targetLanguage: String
+        let context: String?
+    }
+
+    static func makeNormalizeRequest(secret: String, word: String, context: String?) -> URLRequest {
+        makePostRequest(path: "/api/word-normalize", secret: secret, word: word, context: context)
+    }
+
+    static func makeRegisterRequest(secret: String, word: String, context: String?) -> URLRequest {
+        makePostRequest(path: "/api/word-info", secret: secret, word: word, context: context)
+    }
+
+    private static func makePostRequest(
+        path: String, secret: String, word: String, context: String?
+    ) -> URLRequest {
+        var request = URLRequest(url: baseURL.appending(path: path))
+        request.httpMethod = "POST"
+        request.setValue(secret, forHTTPHeaderField: "X-API-Secret")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONEncoder().encode(
+            PostBody(word: word, targetLanguage: targetLanguage, context: context))
+        return request
+    }
+
+    /// 正規化レスポンスをモデルへ変換する。未知の status は `unknown` に畳む
+    /// （サーバ側の分類が増えても提案なし扱いで壊れない）。
+    static func parseNormalization(_ data: Data) throws -> WordNormalization {
+        guard let payload = try? JSONDecoder().decode(NormalizePayload.self, from: data) else {
+            throw WordBookError.decodingFailed
+        }
+        return WordNormalization(
+            input: payload.input,
+            lemma: payload.lemma,
+            status: WordNormalization.Status(rawValue: payload.status) ?? .unknown,
+            reason: payload.reason ?? "",
+            cached: payload.cached)
+    }
+
+    private struct NormalizePayload: Decodable {
+        let input: String
+        let lemma: String
+        let status: String
+        let reason: String?
+        let cached: Bool
+    }
+
+    /// 登録レスポンスをモデルへ変換する。`wordInfo` は結果表示に使う第 1 義だけ拾い、
+    /// 構造の細部（senses の他項目など）が変わっても壊れないよう緩く読む。
+    static func parseRegistration(_ data: Data) throws -> WordRegistrationResult {
+        guard let payload = try? JSONDecoder().decode(RegisterPayload.self, from: data) else {
+            throw WordBookError.decodingFailed
+        }
+        return WordRegistrationResult(
+            cached: payload.cached ?? false,
+            firstMeaning: payload.wordInfo?.senses?.first?.meaning)
+    }
+
+    private struct RegisterPayload: Decodable {
+        let cached: Bool?
+        let wordInfo: InfoPayload?
+
+        struct InfoPayload: Decodable {
+            let senses: [SensePayload]?
+
+            struct SensePayload: Decodable {
+                let meaning: String?
+            }
         }
     }
 }

@@ -83,6 +83,17 @@ enum DebugLaunchArguments {
         return PracticeMode(storedValue: args[index + 1])
     }
 
+    /// 起動直後に単語登録シートを指定テキストで開く（登録フローの E2E 用。
+    /// docs/plans/tap-word-registration.md）。
+    /// 例: -word-register-text "I finally got around to it."
+    static var wordRegisterText: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-word-register-text"), index + 1 < args.count else {
+            return nil
+        }
+        return args[index + 1]
+    }
+
     /// TTS プロバイダ指定。例: -tts-provider gemini / -tts-provider openai
     static var ttsProviderOverride: TTSProvider? {
         let args = ProcessInfo.processInfo.arguments

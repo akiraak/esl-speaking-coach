@@ -2,10 +2,7 @@
 
 - [ ] Qwen TTS instruct 変種（`qwen3-tts-instruct-flash-realtime`）の単価を Model Studio コンソールか初回請求で確認し、`AIPricing` / `docs/specs/ai-cost-map.md` の暫定値（base と同額 $0.13/1 万字）を確定する
 
-- [ ] 会話の文面をタップで単語や熟語登録 [plan](docs/plans/tap-word-registration.md)
-  - [ ] Phase 1: backend 契約の確認 + WordBookClient に normalize / register を追加
-  - [ ] Phase 2: 吹き出し長押しメニュー + 登録シート（チップ選択・正規化提案・登録）
-  - [ ] Phase 3: ローカル backend E2E → 実機確認 → CLAUDE.md / ai-cost-map 更新
+- [ ] 本番単語帳の誤登録「makes sense」を admin（esl.chobi.me/admin）から削除（手動。単語登録機能の実機確認時に入ったもの。削除済みならこの項目を消すだけでよい）
 - [ ] ファイルを保存して容量を圧迫していないかチェック [plan](docs/plans/chat-storage-audit.md)
   - [ ] Phase 1: 管理画面にストレージ内訳を表示して実測（1 セッションあたりの増分を見積もる）
   - [ ] Phase 2: 実測に基づく判断とエクスポート残骸の掃除

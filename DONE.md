@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-08-01 会話の文面から長押しで単語・熟語を単語帳（esl.chobi.me）へ登録できるようにした [plan](docs/plans/archive/tap-word-registration.md)
+  - 吹き出し（AI・ユーザー）長押し →「単語・熟語を登録」→ 登録シート。発話全文を単語チップで表示し、複数選択（離れた語も可）→ 正規化 API（`POST /api/word-normalize`・文脈 240 字付き）の提案を編集可能な候補へ反映 →「登録」で `POST /api/word-info`（context = 発話全文。サーバ側で語義を AI 生成して保存）。重複は cached 返却で「すでに単語帳にあります」。サーバは esl-learning-assistant の既存 API のまま改修なし・認証も既存 X-API-Secret。コピーも同メニューに追加（タップは再読み上げ用に温存）
+  - 基本形での登録を保証（Phase 4）: 提案の適用を status ではなく **lemma の差**で判定（サーバが「makes sense」を phrase のまま lemma だけ直して返すケースに対応）。register 時は実行中の正規化を待ち、未正規化なら登録前に 1 回だけ実行してから送る。手動編集した候補はそのまま登録（変化形をあえて登録する逃げ道）。「makes sense」→「make sense」になることを実機で確認
+  - 登録語は本アプリの母集団（ピッカー・集計・ランダム・クイズ）へ即反映。esl-learning-assistant iOS アプリの端末内一覧には出ない（同期経路なし。必要になったら同期 API を別タスクで）。CLAUDE.md（単語帳への書き込み + 発話本文を文脈として送る旨）と ai-cost-map（サーバ側課金・本アプリの usage 記録対象外）を更新
+  - 単体テスト 34 件追加・全 352 件パス。ローカル backend E2E（正規化 3.7 秒 / context 付き登録 11.8 秒 / `GET /api/words` への反映）と実機確認済み。E2E 用の起動引数 `-word-register-text` を追加
+
 - 2026-08-01 チャット欄を 1 番下までスクロールさせる機能を入れた [plan](docs/plans/archive/scroll-to-bottom-on-idle-bar-tap.md)
   - セッション未開始時に入力バーへ出る案内（「トピックカードから話題を選んでスタート」「カードから練習する単語を入力してスタート」）をタップ可能にし、タップで最下部（カードの位置）までスクロール + 自動追従を再開する
   - `ChatRoomView` の `ScrollViewReader` を body 全体へ持ち上げて入力バーからも proxy を使えるようにし、`ChatInputBar` に `onIdleTap` を追加・`idleBar` を Button 化
