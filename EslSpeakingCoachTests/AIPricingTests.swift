@@ -97,35 +97,36 @@ final class AIPricingTests: XCTestCase {
         XCTAssertEqual(AIPricing.estimatedCostUSD(for: event), 0.03, accuracy: 0.000001)
     }
 
-    /// 単価表（管理画面表示用）の sonnet-5 行は、導入価格期間中は $2/$10 + 補足あり、
+    /// 種別内訳表示用の sonnet-5 単価は、導入価格期間中は $2/$10 + 補足あり、
     /// 終了後は $3/$15 + 補足なしに変わる。
-    func testRateTableReflectsSonnetIntroPricing() {
+    func testCurrentRateReflectsSonnetIntroPricing() {
         let intro = ISO8601DateFormatter().date(from: "2026-07-25T00:00:00Z")!
         let after = ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")!
 
-        let introRow = AIPricing.rateTable(at: intro).first { $0.model == "claude-sonnet-5" }!
-        XCTAssertEqual(introRow.price, "入力 $2 / 出力 $10（1M トークン）")
-        XCTAssertNotNil(introRow.note)
+        let introRate = AIPricing.currentRate(for: .conversationTurn, at: intro)
+        XCTAssertEqual(introRate.price, "入力 $2 / 出力 $10（1M トークン）")
+        XCTAssertNotNil(introRate.note)
 
-        let afterRow = AIPricing.rateTable(at: after).first { $0.model == "claude-sonnet-5" }!
-        XCTAssertEqual(afterRow.price, "入力 $3 / 出力 $15（1M トークン）")
-        XCTAssertNil(afterRow.note)
+        let afterRate = AIPricing.currentRate(for: .conversationTurn, at: after)
+        XCTAssertEqual(afterRate.price, "入力 $3 / 出力 $15（1M トークン）")
+        XCTAssertNil(afterRate.note)
     }
 
-    /// 単価表は現在使っている全モデル（Claude 2 種 + キャッシュ + STT 3 種 + TTS 3 種）を含む。
-    /// opus-5 は 2026-07-31 にフィードバック生成を sonnet-5 へ切り替えたため表には出さない。
-    /// TTS の既定は 2026-08-01 から Qwen instruct 変種（docs/plans/archive/alibaba-voice-models.md）。
-    func testRateTableListsAllModels() {
-        let models = AIPricing.rateTable().map(\.model)
+    /// 全種別が現在の既定モデルに対応づく（切替用の旧経路は出さない）。
+    /// フィードバック生成は 2026-07-31 に opus-5 → sonnet-5、TTS の既定は 2026-08-01 から
+    /// Qwen instruct 変種（docs/plans/archive/alibaba-voice-models.md）。
+    func testCurrentRateMapsAllKindsToDefaultModels() {
+        let models = AIUsageEvent.Kind.allCases.map { AIPricing.currentRate(for: $0).model }
         XCTAssertEqual(
             models,
             [
-                "claude-sonnet-5", "claude-haiku-4-5",
-                "Claude プロンプトキャッシュ",
-                "gpt-live-transcribe", "gpt-4o-transcribe",
+                "gpt-live-transcribe",
+                "claude-sonnet-5",
                 "qwen3-tts-instruct-flash-realtime",
-                "gemini-3.1-flash-tts-preview", "gpt-4o-mini-tts",
-                "qwen3-asr-flash-realtime",
+                "claude-sonnet-5",
+                "claude-sonnet-5",
+                "claude-sonnet-5",
+                "claude-haiku-4-5",
             ])
     }
 }

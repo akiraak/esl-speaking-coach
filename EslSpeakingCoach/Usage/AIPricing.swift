@@ -152,64 +152,46 @@ enum AIPricing {
         return (event.audioSeconds ?? 0) * qwenTTSFallbackUSDPerMinute / 60
     }
 
-    // MARK: - 単価表の表示（管理画面「料金」タブ）
+    // MARK: - 種別ごとの現在単価（管理画面「料金」タブの種別内訳に表示）
 
-    /// 管理画面に出す単価表の 1 行。price / note は表示用に整形済み。
-    struct RateRow: Identifiable {
+    /// 種別で現在使っている既定モデルと単価。price / note は表示用に整形済み。
+    struct KindRate {
         let model: String
-        let usage: String
         let price: String
         let note: String?
-        var id: String { model }
     }
 
-    /// 現在適用中の単価表。推定額の計算に使っている定数から組み立てるので、単価改定で
-    /// このファイルを更新すれば表示も追従する。at は sonnet-5 導入価格の判定に使う。
-    static func rateTable(at date: Date = Date()) -> [RateRow] {
-        let sonnet = claudeRates(model: "claude-sonnet-5", at: date)
-        let haiku = claudeRates(model: "claude-haiku-4-5", at: date)
-        let sonnetRegular = claudeRates(
-            model: "claude-sonnet-5", at: sonnet5IntroPriceEndsAfter.addingTimeInterval(1))
-        let geminiPerMinute =
-            geminiTTSTokensPerSecond * 60 / 1_000_000 * geminiTTSAudioOutputRate
-        return [
-            RateRow(
-                model: "claude-sonnet-5", usage: "会話 / トピック / フィードバック / 記憶",
+    /// 種別 → 現在適用中の既定モデルと単価。切替用の旧経路（gpt-4o-transcribe / Gemini TTS 等）は
+    /// 出さない。推定額の計算に使っている定数から組み立てるので、単価改定でこのファイルを
+    /// 更新すれば表示も追従する。at は sonnet-5 導入価格の判定に使う。
+    static func currentRate(for kind: AIUsageEvent.Kind, at date: Date = Date()) -> KindRate {
+        switch kind {
+        case .conversationTurn, .topicSuggestion, .sessionFeedback, .memoryUpdate:
+            let sonnet = claudeRates(model: "claude-sonnet-5", at: date)
+            let regular = claudeRates(
+                model: "claude-sonnet-5", at: sonnet5IntroPriceEndsAfter.addingTimeInterval(1))
+            return KindRate(
+                model: "claude-sonnet-5",
                 price: tokenPrice(input: sonnet.input, output: sonnet.output),
                 note: date <= sonnet5IntroPriceEndsAfter
-                    ? "〜2026-08-31 は導入価格。以降は \(tokenPrice(input: sonnetRegular.input, output: sonnetRegular.output))"
-                    : nil),
-            RateRow(
-                model: "claude-haiku-4-5", usage: "会話の翻訳",
-                price: tokenPrice(input: haiku.input, output: haiku.output), note: nil),
-            RateRow(
-                model: "Claude プロンプトキャッシュ", usage: "system prompt（全 Claude 呼び出し）",
-                price: "読込 \(trimmed(cacheReadMultiplier)) 倍 / 書込 \(trimmed(cacheWriteMultiplier)) 倍",
-                note: "入力単価に対する倍率。書込は 5 分 TTL"),
-            RateRow(
-                model: "gpt-live-transcribe", usage: "STT（既定）",
+                    ? "〜2026-08-31 は導入価格。以降は \(tokenPrice(input: regular.input, output: regular.output))"
+                    : nil)
+        case .translation:
+            let haiku = claudeRates(model: "claude-haiku-4-5", at: date)
+            return KindRate(
+                model: "claude-haiku-4-5",
+                price: tokenPrice(input: haiku.input, output: haiku.output), note: nil)
+        case .speechToText:
+            return KindRate(
+                model: "gpt-live-transcribe",
                 price: "音声 \(usd(liveTranscribeUSDPerMinute)) / 分",
-                note: "発話セグメント分のみ・秒単位切り上げ"),
-            RateRow(
-                model: "gpt-4o-transcribe", usage: "STT（切替用の旧既定）",
-                price: "音声入力 \(usd(transcribe4oAudioInputRate)) / テキスト \(usd(transcribe4oTextInputRate)) / 出力 \(usd(transcribe4oOutputRate))（1M トークン）",
-                note: "usage が無いときは音声 \(usd(transcribe4oFallbackUSDPerMinute)) / 分で概算"),
-            RateRow(
-                model: "qwen3-tts-instruct-flash-realtime", usage: "TTS（既定）",
+                note: "発話セグメント分のみ・秒単位切り上げ")
+        case .textToSpeech:
+            return KindRate(
+                model: "qwen3-tts-instruct-flash-realtime",
                 price: "\(usd(qwenTTSUSDPer10kCharacters)) / 1 万文字",
-                note: "生成音声 1 分 ≈ \(usd(qwenTTSFallbackUSDPerMinute))。instruct の単価は未公表のため base の確認値を暫定計上"),
-            RateRow(
-                model: "gemini-3.1-flash-tts-preview", usage: "TTS（切替用の旧既定）",
-                price: "入力 \(usd(geminiTTSTextInputRate)) / 音声出力 \(usd(geminiTTSAudioOutputRate))（1M トークン）",
-                note: "生成音声 1 分 ≈ \(usd(geminiPerMinute))（\(trimmed(geminiTTSTokensPerSecond)) トークン / 秒）"),
-            RateRow(
-                model: "gpt-4o-mini-tts", usage: "TTS（聞き比べ用）",
-                price: "音声 ≈ \(usd(openAIMiniTTSUSDPerMinute)) / 分", note: nil),
-            RateRow(
-                model: "qwen3-asr-flash-realtime", usage: "STT（切替用。検証の結果見送り）",
-                price: "音声 \(usd(qwenASRUSDPerSecond * 60)) / 分",
-                note: "発話セグメント分のみ"),
-        ]
+                note: "生成音声 1 分 ≈ \(usd(qwenTTSFallbackUSDPerMinute))。instruct の単価は未公表のため base の確認値を暫定計上")
+        }
     }
 
     private static func tokenPrice(input: Double, output: Double) -> String {

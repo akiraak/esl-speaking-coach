@@ -32,18 +32,32 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertLessThan(totals.thisMonthUSD, perRecord * 3)
     }
 
-    func testKindTotalsSortedByCost() throws {
+    /// 種別内訳は今月分のみを金額降順で返す（先月以前の記録は含めない）。
+    /// 今月利用のない種別も $0 で全種別が並ぶ（同額は Kind.allCases の定義順）。
+    func testKindTotalsSortedByCostWithinMonthListingAllKinds() throws {
         let store = try makeStore()
-        let now = Date()
+        let now = ISO8601DateFormatter().date(from: "2026-07-25T12:00:00Z")!
         store.record(turnEvent(outputTokens: 100), sessionID: nil, at: now)
         store.record(
             AIUsageEvent(
                 provider: .gemini, model: "gemini-3.1-flash-tts-preview", kind: .textToSpeech,
                 inputTokens: 30, outputTokens: 100_000),
             sessionID: nil, at: now)
+        store.record(
+            AIUsageEvent(
+                provider: .anthropic, model: "claude-sonnet-5", kind: .sessionFeedback,
+                inputTokens: 5_000, outputTokens: 3_000),
+            sessionID: nil, at: Calendar.current.date(byAdding: .month, value: -2, to: now)!)
 
-        let kinds = store.kindTotals()
-        XCTAssertEqual(kinds.map(\.kind), [.textToSpeech, .conversationTurn])
+        let kinds = store.kindTotals(monthOf: now)
+        XCTAssertEqual(
+            kinds.map(\.kind),
+            [
+                .textToSpeech, .conversationTurn,
+                .speechToText, .topicSuggestion, .sessionFeedback, .memoryUpdate, .translation,
+            ])
+        // 先月以前しか記録のないフィードバック生成は $0 になる
+        XCTAssertEqual(kinds.first { $0.kind == .sessionFeedback }?.costUSD, 0)
     }
 
     func testSessionCostAndDeletion() throws {

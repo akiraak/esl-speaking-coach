@@ -100,15 +100,23 @@ final class UsageStore {
         return totals
     }
 
-    /// 種別ごとの累計（金額の大きい順）。
-    func kindTotals() -> [KindTotal] {
+    /// 種別ごとの今月分の合計（金額の大きい順）。今月利用のない種別も $0 で全種別を返す
+    /// （同額は課金経路の定義順 = `Kind.allCases` 順）。
+    func kindTotals(monthOf now: Date = Date()) -> [KindTotal] {
+        let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now))
+            ?? calendar.startOfDay(for: now)
         var sums: [AIUsageEvent.Kind: Double] = [:]
-        for record in fetchAll() {
+        for record in fetchAll() where record.timestamp >= monthStart {
             guard let kind = record.kind else { continue }
             sums[kind, default: 0] += record.estimatedCostUSD
         }
-        return sums.map { KindTotal(kind: $0.key, costUSD: $0.value) }
-            .sorted { $0.costUSD > $1.costUSD }
+        return AIUsageEvent.Kind.allCases.enumerated()
+            .map { (index: $0.offset, total: KindTotal(kind: $0.element, costUSD: sums[$0.element] ?? 0)) }
+            .sorted {
+                if $0.total.costUSD != $1.total.costUSD { return $0.total.costUSD > $1.total.costUSD }
+                return $0.index < $1.index
+            }
+            .map(\.total)
     }
 
     /// 直近 days 日の日別合計（新しい日が先頭。利用のなかった日は含まない）。

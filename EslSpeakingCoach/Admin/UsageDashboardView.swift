@@ -1,16 +1,14 @@
 import SwiftUI
 
-/// 管理画面「料金」タブ: 推定額のサマリ（今日 / 今月 / 累計）、種別内訳、日別一覧、単価表。
+/// 管理画面「料金」タブ: 推定額のサマリ（今日 / 今月 / 累計）、種別内訳（今月）、日別一覧。
 /// 表示は記録済みの推定額（記録時の単価表で計算）の合算のみで、再計算はしない。
-/// 単価表は現在適用中のもの（`AIPricing.rateTable()`）を表示する。
+/// 種別内訳には現在適用中の既定モデルと単価（`AIPricing.currentRate(for:)`）を併記する。
 struct UsageDashboardView: View {
     let usageStore: UsageStore
 
     @State private var totals = UsageStore.Totals()
     @State private var kindTotals: [UsageStore.KindTotal] = []
     @State private var dailyTotals: [UsageStore.DailyTotal] = []
-
-    private let rateRows = AIPricing.rateTable()
 
     var body: some View {
         List {
@@ -29,13 +27,17 @@ struct UsageDashboardView: View {
                     """)
             }
 
-            if !kindTotals.isEmpty {
-                Section("種別内訳（累計）") {
-                    ForEach(kindTotals) { total in
-                        LabeledContent(total.kind.label, value: formattedUSD(total.costUSD))
-                            .monospacedDigit()
-                    }
+            Section {
+                ForEach(kindTotals) { total in
+                    kindRowView(total)
                 }
+            } header: {
+                Text("種別内訳（今月）")
+            } footer: {
+                Text("""
+                    モデルと単価は現在適用中のもの。推定額は記録時の単価で計算・保存されるため、\
+                    単価改定後は表示中の単価と過去の記録が一致しないことがあります。
+                    """)
             }
 
             if !dailyTotals.isEmpty {
@@ -49,15 +51,6 @@ struct UsageDashboardView: View {
                 }
             }
 
-            Section {
-                ForEach(rateRows) { row in
-                    rateRowView(row)
-                }
-            } header: {
-                Text("単価表（現在適用中）")
-            } footer: {
-                Text("推定額は記録時の単価で計算・保存されるため、単価改定後はこの表と過去の記録が一致しないことがあります。")
-            }
         }
         .listStyle(.insetGrouped)
         .onAppear(perform: reload)
@@ -79,26 +72,39 @@ struct UsageDashboardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private func rateRowView(_ row: AIPricing.RateRow) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(row.model)
+    private func kindRowView(_ total: UsageStore.KindTotal) -> some View {
+        let rate = AIPricing.currentRate(for: total.kind)
+        return HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(total.kind.label)
                     .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(row.usage)
+                Text("\(rate.model)・\(rate.price)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let note = rate.note {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Text(row.price)
-                .font(.callout)
-                .monospacedDigit()
-            if let note = row.note {
-                Text(note)
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formattedUSD(total.costUSD))
+                    .font(.callout)
+                    .monospacedDigit()
+                Text(percentOfThisMonth(total.costUSD))
                     .font(.caption)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// 今月合計に対する割合。合計 0（記録なし・全件 $0）のときは 0% 扱い。
+    private func percentOfThisMonth(_ cost: Double) -> String {
+        guard totals.thisMonthUSD > 0 else { return "0%" }
+        return String(format: "%.1f%%", cost / totals.thisMonthUSD * 100)
     }
 
     private func reload() {

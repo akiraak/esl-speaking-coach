@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-08-01 管理画面「料金」タブの種別内訳を今月ベースにし、使用モデル・単価の併記と今月合計比の % 表示に変えた（単価表セクションは削除） [plan](docs/plans/archive/usage-dashboard-kind-rates.md)
+  - `AIPricing.rateTable()` を、種別 → 現在の既定モデル・単価を返す `currentRate(for:)` に置き換え（sonnet-5 の導入価格切替・TTS 暫定計上の note は引き継ぎ。切替用の旧経路は表示しない）。`UsageStore.kindTotals(monthOf:)` で今月分のみを合算し、**今月利用のない種別（月初の翻訳・STT 等）も $0 で全 7 種別を常時表示**（金額降順・同額は課金経路の定義順）
+  - 各行は「種別ラベル + モデル・単価（+note）／右側に金額と今月合計比 %」。単価表 footer の「推定額は記録時の単価で計算・保存」の注意書きは種別内訳の footer へ移動し、`ai-cost-map.md` の `rateTable()` への言及も `currentRate(for:)` に更新
+  - rateTable のテスト 2 件を currentRate に置換し kindTotals の月フィルタを検証、対象 16 テストパス。シミュレータの料金タブ（`-open-admin 料金`）で表示確認
+
 - 2026-08-01 Alibaba 音声モデル（Qwen3-TTS / Qwen3-ASR）を実機検証し、TTS を Qwen instruct へ既定切替・STT は見送りとした [plan](docs/plans/archive/alibaba-voice-models.md)
   - Phase 1〜3: Mac 実測（文単位 TTFB 390ms / ASR 確定 399ms と現行より速い）→ 切替可能な実装を追加（既定は不変）→ 実機検証（ASR 問題なし / TTS は voice のキャラ合わせが必要と判明）
   - Phase 3.5: 実聴 3 ラウンドで **Chobi=Serena×casual / Naruko=Vivian×bright（instruct 変種）** に確定。Jennifer / Katerina は instruct 正式非対応と判明。文ごとの合成先を診断ログ化し、キャラ別に正しい voice / 指示で生成されることを実測確認
