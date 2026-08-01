@@ -26,7 +26,7 @@ final class CloudSentenceSpeaker {
     /// TTS 1 リクエスト（1 文）分の利用量（料金記録用）。
     var onUsage: ((TTSUsage) -> Void)?
     /// 取得した音声チャンクの発話単位のローカル保存（再読み上げ用。未注入なら保存しない。
-    /// docs/plans/utterance-replay.md）
+    /// docs/plans/archive/utterance-replay.md）
     var recorder: UtteranceAudioRecorder?
 
     private let client: any SentenceTTSClient

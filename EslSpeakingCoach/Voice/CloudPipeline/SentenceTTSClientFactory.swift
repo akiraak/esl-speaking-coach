@@ -1,6 +1,6 @@
 import Foundation
 
-/// プロバイダ選択 → SentenceTTSClient 生成の一元化（docs/plans/utterance-replay.md）。
+/// プロバイダ選択 → SentenceTTSClient 生成の一元化（docs/plans/archive/utterance-replay.md）。
 /// セッション（TurnBasedVoiceSession）と再読み上げ（UtteranceReplayer）が
 /// **同じ既定（Qwen instruct）・同じ voice 写像**を使うため、既定はこの Configuration の
 /// 1 箇所だけが持つ。DEBUG の起動引数は override があるときだけ上書きする

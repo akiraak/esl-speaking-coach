@@ -1,7 +1,7 @@
 import AVFAudio
 import Foundation
 
-/// チャット欄の AI 吹き出しタップによる再読み上げ（docs/plans/utterance-replay.md）。
+/// チャット欄の AI 吹き出しタップによる再読み上げ（docs/plans/archive/utterance-replay.md）。
 /// セッション外でのみ使う（セッション中は TurnBasedVoiceSession が AVAudioSession と
 /// AVAudioEngine を占有している）。
 ///

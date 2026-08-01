@@ -1,8 +1,14 @@
 # DONE
 
+- 2026-08-01 チャット欄の AI 吹き出しタップで再読み上げできるようにした（直前 1 セッションは保存音声・無ければ再生成） [plan](docs/plans/archive/utterance-replay.md)
+  - Phase 1: TTS クライアント生成を `SentenceTTSClientFactory` へ切り出し、セッションと再読み上げで既定（Qwen instruct）・voice 写像を共有。DEBUG の TTS 既定バグ修正と同時対応
+  - Phase 2: セッション中の読み上げ音声を `Caches/UtteranceAudio/<sessionID>/<utteranceID>.wav`（PCM16/24kHz WAV）へ保存（書き込み中 `.part` → 全文取得完了で rename・中断は `.part` のまま）。削除は新セッション開始時（使う sessionID 以外を全削除）と起動時（最新セッション以外 + 全 `.part`）の 2 トリガで「完結ファイルは直前 1 セッション分だけ」を維持
+  - Phase 3: タップで保存音声を即再生 / 無ければ `SentenceChunker` + `CloudSentenceSpeaker` で TTS 再生成して使い捨て（usage は再生成時のみ記録）。再タップ停止・別吹き出し切り替え・🔊 表示・失敗は一時アラート。AVAudioSession はセッションと別の `.playback` プロファイルで完了時に解放。E2E 用の起動引数 `-replay-latest` を追加
+  - 単体テスト 12 件追加（全 364 件パス）。シミュレータ E2E（保存 → 通信なしのファイル再生 / キャッシュ削除 → 再生成 / 新セッション開始で前セッション分の削除）と実機確認済み
+
 - 2026-08-01 DEBUG ビルドの TTS 既定が Gemini のままだった不具合を修正した
   - `ChatRoomStore.launchSession` の `ttsProviderOverride ?? .gemini` が Qwen 切替（7c95fdb）後も残り、`-tts-provider` 未指定の実機・シミュレータ（= 普段の使い方）では Configuration 既定の qwen が gemini に上書きされていた
-  - 再読み上げの TTS ファクトリ化（docs/plans/utterance-replay.md Phase 1）と同時に対応: TTS 構成の組み立てを `ChatRoomStore.currentTTSConfiguration()` に一元化し、既定は `SentenceTTSClientFactory.Configuration` の 1 箇所が持ち、DEBUG は override があるときだけ上書きする形に正した。シミュレータで `-tts-provider` 未指定のセッションが `qwen3-tts-instruct-flash-realtime` で合成されることを確認
+  - 再読み上げの TTS ファクトリ化（docs/plans/archive/utterance-replay.md Phase 1）と同時に対応: TTS 構成の組み立てを `ChatRoomStore.currentTTSConfiguration()` に一元化し、既定は `SentenceTTSClientFactory.Configuration` の 1 箇所が持ち、DEBUG は override があるときだけ上書きする形に正した。シミュレータで `-tts-provider` 未指定のセッションが `qwen3-tts-instruct-flash-realtime` で合成されることを確認
 
 - 2026-08-01 会話の文面から長押しで単語・熟語を単語帳（esl.chobi.me）へ登録できるようにした [plan](docs/plans/archive/tap-word-registration.md)
   - 吹き出し（AI・ユーザー）長押し →「単語・熟語を登録」→ 登録シート。発話全文を単語チップで表示し、複数選択（離れた語も可）→ 正規化 API（`POST /api/word-normalize`・文脈 240 字付き）の提案を編集可能な候補へ反映 →「登録」で `POST /api/word-info`（context = 発話全文。サーバ側で語義を AI 生成して保存）。重複は cached 返却で「すでに単語帳にあります」。サーバは esl-learning-assistant の既存 API のまま改修なし・認証も既存 X-API-Secret。コピーも同メニューに追加（タップは再読み上げ用に温存）

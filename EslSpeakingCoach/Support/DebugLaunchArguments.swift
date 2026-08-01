@@ -155,7 +155,7 @@ enum DebugLaunchArguments {
     }
 
     /// 起動直後に復元済みタイムラインの最後の AI 吹き出しをタップした扱いで再読み上げする
-    /// （再読み上げの E2E 用。docs/plans/utterance-replay.md。
+    /// （再読み上げの E2E 用。docs/plans/archive/utterance-replay.md。
     /// 音声キャッシュがあればファイル再生、無ければ TTS 再生成になる）。
     static var shouldReplayLatest: Bool {
         ProcessInfo.processInfo.arguments.contains("-replay-latest")

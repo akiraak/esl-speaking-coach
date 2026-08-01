@@ -146,7 +146,7 @@ final class ChatRoomStore {
     private(set) var micLevel: Float = 0
     /// 読み上げ中の発話（🔊 表示用）
     private(set) var speakingUtteranceID: UUID?
-    /// 再読み上げ中の発話（🔊 表示用。セッション外のみ。docs/plans/utterance-replay.md）
+    /// 再読み上げ中の発話（🔊 表示用。セッション外のみ。docs/plans/archive/utterance-replay.md）
     private(set) var replayingUtteranceID: UUID?
     /// 再読み上げの失敗（キー未設定・再生成の取得失敗）。タイムラインは汚さず一時アラートで出す
     private(set) var replayErrorText: String?
@@ -617,7 +617,7 @@ final class ChatRoomStore {
         guard session == nil, !trimmed.isEmpty else { return }
         canResumeAfterFailure = false
         // 再読み上げ中に始めたら止める。音声キャッシュはこれから使う sessionID 以外を消す
-        // （「直前の 1 セッション分だけ残す」不変条件。docs/plans/utterance-replay.md）
+        // （「直前の 1 セッション分だけ残す」不変条件。docs/plans/archive/utterance-replay.md）
         stopReplay()
         // 生成候補から選んだときだけジャンルが分かる（自作トピック・固定候補は nil）
         let genre = cardID
@@ -1071,7 +1071,7 @@ final class ChatRoomStore {
         session?.setVoiceInputEnabled(!isVoicePaused)
     }
 
-    // MARK: - 再読み上げ（docs/plans/utterance-replay.md）
+    // MARK: - 再読み上げ（docs/plans/archive/utterance-replay.md）
 
     /// AI 吹き出しのタップ。同じ吹き出し再タップ = 停止 / 別の吹き出し = 切り替え。
     /// セッション中は無視する（TurnBasedVoiceSession がオーディオを占有しているため）。

@@ -60,7 +60,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         /// SentenceTTSClientFactory に一元化し、再読み上げ（UtteranceReplayer）と共有する
         var tts = SentenceTTSClientFactory.Configuration()
         /// AI 発話音声のローカル保存（再読み上げ用。nil なら保存しない。
-        /// docs/plans/utterance-replay.md）
+        /// docs/plans/archive/utterance-replay.md）
         var utteranceRecorder: UtteranceAudioRecorder?
         /// ready 後の始まり方（既定は再開 = 開始ターンを起こさない）
         var opening: Opening = .resume

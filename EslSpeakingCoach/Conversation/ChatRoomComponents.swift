@@ -11,7 +11,7 @@ struct AIMessageRow: View {
     let translation: ChatRoomStore.TranslationDisplay
     /// 長押しメニュー「単語・熟語を登録」（登録シートを開く。docs/plans/tap-word-registration.md）
     var onRegisterWords: () -> Void = {}
-    /// 吹き出しタップの再読み上げ（docs/plans/utterance-replay.md。セッション中は store 側で無視）
+    /// 吹き出しタップの再読み上げ（docs/plans/archive/utterance-replay.md。セッション中は store 側で無視）
     var onReplay: () -> Void = {}
 
     var body: some View {
@@ -85,7 +85,7 @@ struct UserMessageRow: View {
 }
 
 /// 吹き出し長押しのコンテキストメニュー（AI・ユーザー共通）。
-/// タップは将来の再読み上げ（docs/plans/utterance-replay.md）に空けてあるため、
+/// タップは再読み上げ（docs/plans/archive/utterance-replay.md。AI 吹き出しのみ）に使っているため、
 /// 登録・コピーの導線は長押しに置く（SystemPillRow の長押しコピーと同型）。
 struct MessageBubbleMenu: View {
     let text: String

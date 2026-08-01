@@ -9,7 +9,7 @@
 ## 関連プランとの整合（共通決定）
 
 3 つのプラン（[tap-word-registration](archive/tap-word-registration.md)（実装済み） /
-[utterance-replay](utterance-replay.md) / 本プラン）で保存ポリシーを共有する。
+[utterance-replay](archive/utterance-replay.md) / 本プラン）で保存ポリシーを共有する。
 **変更するときは 3 プラン同時に見直すこと。**
 
 1. **音声ファイルは「直前の 1 セッション」だけローカル保存する**（Caches 配下・
@@ -32,7 +32,7 @@
 | Application Support/`default.store`（SwiftData。`AppModelContainer.swift:17`） | セッション・発話（訳込み）・調査ログ・AI 利用量・記憶ノート | セッションごと。**無期限に蓄積** | なし |
 | Application Support/`Diagnostics/app.log`（`DiagnosticsLog.swift:110`） | 診断ログ | 追記 | **256KB で切り詰め**（`DiagnosticsLog.swift:15`）→ 問題なし |
 | tmp/`esl-sessions-*.json`（`SessionExporter.swift:55`） | 全セッションの JSON エクスポート（DEBUG 管理画面のみ） | 書き出すたび 1 ファイル。**削除していない**（OS の tmp 掃除任せ） | なし |
-| Caches/`UtteranceAudio/<sessionID>/`（**utterance-replay で追加予定**） | AI 発話の TTS 音声（WAV・約 2.9MB/分） | セッション中に追記 | **常に最新 1 セッション分**（次セッション開始時 + 起動時に前のを削除。OS の Caches 掃除も許容） |
+| Caches/`UtteranceAudio/<sessionID>/`（**utterance-replay で実装済み**） | AI 発話の TTS 音声（WAV・約 2.9MB/分） | セッション中に追記 | **常に最新 1 セッション分**（次セッション開始時 + 起動時に前のを削除。OS の Caches 掃除も許容） |
 | UserDefaults / Keychain | モード・トグル・API キー | 定数個 | 問題なし |
 
 - 上記以外に音声ファイルは書いていない（STT はマイク → WebSocket、TTS はストリーミング再生、
@@ -56,8 +56,7 @@
 
 - 管理画面（`AdminView`）に「ストレージ」行を追加: SwiftData ストア一式
   （default.store + `-wal` / `-shm`）・Diagnostics ログ・tmp のエクスポート残骸・
-  音声キャッシュ（`UtteranceAudio/`。utterance-replay Phase 2 の実装後に値が付く。
-  未実装の間は 0 表示でよい）の各サイズと合計を表示
+  音声キャッシュ（`UtteranceAudio/`。utterance-replay Phase 2 で実装済み）の各サイズと合計を表示
   （サイズ集計は URL 列挙の純関数にしてテスト）
 - 実機で実測し、レコード件数（セッション / 発話 / ログ / usage 行）と突き合わせて
   **1 セッションあたりの増分**を概算 → 年間増加量を見積もる

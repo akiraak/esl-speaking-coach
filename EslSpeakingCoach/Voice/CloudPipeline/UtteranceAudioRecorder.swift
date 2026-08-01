@@ -1,6 +1,6 @@
 import Foundation
 
-/// AI 発話音声のローカルキャッシュの置き場（docs/plans/utterance-replay.md）。
+/// AI 発話音声のローカルキャッシュの置き場（docs/plans/archive/utterance-replay.md）。
 /// `Caches/UtteranceAudio/<sessionID>/<utteranceID>.wav` に WAV（PCM16 / 24kHz / mono）で保存し、
 /// 再読み上げのファイル優先再生と「直前の 1 セッションだけ残す」掃除を担う。
 /// Caches 配下なので OS の容量逼迫時に消えることは許容する（消えたら再生成にフォールバック）。
@@ -122,7 +122,7 @@ struct UtteranceAudioCache: Sendable {
 }
 
 /// セッション中に TTS の音声チャンクを発話（吹き出し）単位の WAV へ追記保存する
-/// （docs/plans/utterance-replay.md）。CloudSentenceSpeaker の取得ループから注入されて呼ばれる。
+/// （docs/plans/archive/utterance-replay.md）。CloudSentenceSpeaker の取得ループから注入されて呼ばれる。
 ///
 /// - 書き込み中は `<utteranceID>.part`、その発話の全文の取得が完了した時点で `.wav` へ rename
 ///   （完了の合図 = 次の発話の先頭チャンク到着 / endStream 後のキュー読み切り）

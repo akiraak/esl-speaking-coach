@@ -94,7 +94,7 @@ struct ChatRoomView: View {
             Text("会話をまとめてフィードバックを作ります")
         }
         // 再読み上げの失敗（キー未設定・再生成の取得失敗）。タイムラインは汚さず一時アラート
-        // （docs/plans/utterance-replay.md）
+        // （docs/plans/archive/utterance-replay.md）
         .alert(
             "再生できませんでした",
             isPresented: Binding(
