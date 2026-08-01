@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-07-31 安い中国系 AI モデルを調査し、LLM 置き換えは全経路で見送りと結論した [plan](docs/plans/archive/cheap-chinese-ai-models.md)
+  - Phase 1-4: 7 系統の机上調査 → Qwen / GLM / DeepSeek に絞って実測（レイテンシは qwen が sonnet-5 より速い・Anthropic 互換でクライアントほぼ流用可を確認）→ コスト再計算（会話 + フィードバック置換で月 約 $7 の節約見込みだった）
+  - Phase 5: DEBUG 限定のセッションエクスポート導線（管理画面 → JSON → 共有シート）を実装し、実機の実セッション 62 本を fixture 化して厳密評価（単発 225 生成 + マルチターン再生 75 生成 + フィードバック 36 生成、opus-5 ブラインド A/B 102 ペア）。会話は機械チェック・judge 勝率・再生とも基準未達（qwen は自己出力の履歴で 3 発話癖が自己強化して崩壊、開幕で制御行を捏造）、フィードバックも品質で明確負け（勝率 17-25%）→ **会話・フィードバックとも置き換えない。合成データだった Phase 3 とフィードバックの結論が逆転しており、実データ駆動に切り替えた価値が出た**
+  - 評価ハーネスは `tools/model-eval/` に保存（新モデルが出たら同じ方法で再評価できる）。TTS / STT の Alibaba 音声モデル検証（約 1/3 単価・本命の節約）は別タスクとして TODO に残っている
+
 - 2026-07-31 フィードバック生成のモデルを claude-opus-5 → claude-sonnet-5 に変更した [plan](docs/plans/archive/feedback-model-sonnet5.md)
   - opus-5 の唯一の使用箇所だったセッション後フィードバック生成（`SessionFeedbackClient`）を sonnet-5 へ切替（$5/$25 → $3/$15。概算例のフィードバック 1 回 $0.10 → $0.06、1 セッション 約 $0.55 → $0.52）。effort high / max_tokens 16000 / ストリーミング + structured outputs の呼び方は不変。モデルは `SessionFeedbackClient.model` に 1 箇所化し、ここだけで戻せる
   - `AIPricing` の計算は不変（opus 単価は過去記録の再計算用に残す）。管理画面の単価表からは opus 行を外し、sonnet-5 行の用途に「フィードバック」を追加

@@ -1,4 +1,7 @@
 import SwiftUI
+#if DEBUG
+import UIKit
+#endif
 
 /// 管理画面（ヘッダメニューから開く）。会話内容の閲覧・キャラの記憶・AI 利用料金の確認。
 /// 標準コンポーネント中心の簡素な作り。トーク画面に合わせてライト固定。
@@ -17,6 +20,15 @@ struct AdminView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var tab: Tab
+    #if DEBUG
+    @State private var exportFile: ExportFile?
+
+    /// 共有シートへ渡す書き出し済みファイル（`.sheet(item:)` 用に Identifiable にする）。
+    private struct ExportFile: Identifiable {
+        let url: URL
+        var id: String { url.path }
+    }
+    #endif
 
     init(
         historyStore: ChatHistoryStore, usageStore: UsageStore,
@@ -57,12 +69,43 @@ struct AdminView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("閉じる") { dismiss() }
                 }
+                #if DEBUG
+                // モデル評価の fixture 用にセッションを JSON で書き出す（AirDrop で Mac へ渡す）。
+                // docs/plans/cheap-chinese-ai-models.md の Phase 5 Step 0
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        exportFile = (try? SessionExporter.writeJSON(
+                            historyStore: historyStore, memoryStore: memoryStore))
+                            .map(ExportFile.init)
+                    } label: {
+                        Label("セッション書き出し", systemImage: "square.and.arrow.up")
+                    }
+                }
+                #endif
             }
+            #if DEBUG
+            .sheet(item: $exportFile) { file in
+                ActivityShareSheet(items: [file.url])
+            }
+            #endif
         }
         .preferredColorScheme(.light)
         .tint(ChatTheme.accent)
     }
 }
+
+#if DEBUG
+/// UIActivityViewController の SwiftUI ラッパ（DEBUG のセッション書き出し専用）。
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+#endif
 
 /// 推定額の表示（$0.01 未満も潰れないよう桁を切り替える）。
 func formattedUSD(_ value: Double) -> String {
