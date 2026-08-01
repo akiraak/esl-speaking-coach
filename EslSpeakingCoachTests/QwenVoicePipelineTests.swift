@@ -92,16 +92,32 @@ final class QwenVoicePipelineTests: XCTestCase {
     // MARK: - Qwen TTS
 
     /// SpeechStyle.voice（Gemini の voice 名）→ Qwen voice 名の写像。
-    /// 未知の voice は defaultVoice に倒す
+    /// 既定は実聴選定の Chobi=Serena / Naruko=Vivian。未知の voice は defaultVoice に倒す
     func testQwenTTSVoiceMapping() {
         let configuration = QwenTTSConfiguration()
         XCTAssertEqual(
-            configuration.voice(for: ChatCharacter.chobi.speechStyle), "Cherry")
+            configuration.voice(for: ChatCharacter.chobi.speechStyle), "Serena")
         XCTAssertEqual(
-            configuration.voice(for: ChatCharacter.naruko.speechStyle), "Serena")
+            configuration.voice(for: ChatCharacter.naruko.speechStyle), "Vivian")
         XCTAssertEqual(
             configuration.voice(for: SpeechStyle(voice: "Unknown", styleInstruction: "")),
             configuration.defaultVoice)
+    }
+
+    /// スタイル指示は instruct 変種のときだけ返る（base モデルは非対応なので必ず nil）。
+    /// 指示はキャラごと（Gemini voice 名キー）に持ち、未知の voice は指示なし
+    func testQwenTTSInstructions() {
+        var configuration = QwenTTSConfiguration()
+        XCTAssertNil(configuration.instructions(for: ChatCharacter.chobi.speechStyle))
+
+        configuration.model = QwenTTSConfiguration.instructModel
+        let chobi = configuration.instructions(for: ChatCharacter.chobi.speechStyle)
+        let naruko = configuration.instructions(for: ChatCharacter.naruko.speechStyle)
+        XCTAssertTrue(chobi?.contains("casual") == true)
+        XCTAssertTrue(naruko?.contains("enthusiastic student") == true)
+        XCTAssertNotEqual(chobi, naruko)
+        XCTAssertNil(
+            configuration.instructions(for: SpeechStyle(voice: "Unknown", styleInstruction: "")))
     }
 
     // MARK: - 料金（alibaba プロバイダ）

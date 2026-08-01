@@ -4,11 +4,29 @@ import Foundation
 /// 検証用の切替経路（docs/plans/alibaba-voice-models.md）。既定の TTS は Gemini のまま。
 struct QwenTTSConfiguration: Sendable {
     var model = "qwen3-tts-flash-realtime"
+    /// スタイル指示対応の変種（-qwen-tts-instruct で切替。単価は base と別の可能性があり未確認。
+    /// 対応 voice は base より少ない: Jennifer / Katerina は非対応（公式 voice list 外。
+    /// realtime だと無応答、HTTP だと "Voice not supported" になる）
+    static let instructModel = "qwen3-tts-instruct-flash-realtime"
     /// SpeechStyle.voice は Gemini の voice 名（Leda / Aoede）で届くため、ここで
     /// Qwen の voice 名へ写像する（OpenAITTSClient が固定 coral で読むのと同じ扱い）。
-    /// 割り当ては実聴で調整する（Chobi=Leda / Naruko=Aoede）
-    var voiceMap: [String: String] = ["Leda": "Cherry", "Aoede": "Serena"]
-    var defaultVoice = "Cherry"
+    /// 実聴選定（2026-08-01 ラウンド 2）: Chobi=Serena / Naruko=Vivian
+    var voiceMap: [String: String] = ["Leda": "Serena", "Aoede": "Vivian"]
+    var defaultVoice = "Serena"
+    /// instruct 変種のときだけ session.update に載せるスタイル指示（キーは Gemini voice 名）。
+    /// SpeechStyle.styleInstruction は Gemini 用の「本文への前置文」で形が違うため流用しない。
+    /// 実聴選定（2026-08-01 確定）: Chobi = casual / Naruko = bright-energetic
+    var instructionMap: [String: String] = [
+        "Leda": """
+            Speak in a relaxed, casual, friendly tone, like chatting with a good \
+            friend over coffee. Natural conversational pace, light and warm, \
+            not formal at all.
+            """,
+        "Aoede": """
+            Speak in a bright, energetic voice, full of curiosity, like an \
+            enthusiastic student chatting with friends.
+            """,
+    ]
 
     var websocketURL: URL {
         URL(string: "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime?model=\(model)")!
@@ -16,6 +34,12 @@ struct QwenTTSConfiguration: Sendable {
 
     func voice(for style: SpeechStyle) -> String {
         voiceMap[style.voice] ?? defaultVoice
+    }
+
+    /// base モデルは instructions 非対応なので必ず nil。
+    func instructions(for style: SpeechStyle) -> String? {
+        guard model == Self.instructModel else { return nil }
+        return instructionMap[style.voice]
     }
 }
 
@@ -61,27 +85,36 @@ final class QwenTTSClient: SentenceTTSClient {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 let voice = configuration.voice(for: style)
+                let instructions = configuration.instructions(for: style)
+                // キャラごとに正しい voice / 指示で合成されているかを実機の診断ログで確認できるようにする
+                DiagnosticsLog.record(
+                    "Qwen TTS: voice=\(voice)\(instructions == nil ? "" : "+instruct")"
+                    + " 「\(text.prefix(24))\(text.count > 24 ? "…" : "")」")
                 do {
                     do {
-                        try await pool.synthesize(voice: voice, apiKey: apiKey, text: text) {
+                        try await pool.synthesize(
+                            voice: voice, instructions: instructions, apiKey: apiKey, text: text
+                        ) {
                             continuation.yield($0)
                         }
                     } catch let error as QwenTTSError {
                         // アイドル切断・タイムアウトは接続を捨てて 1 回だけ張り直す
                         guard !Task.isCancelled else { throw CancellationError() }
-                        await pool.discard(voice: voice)
+                        await pool.discard(voice: voice, instructions: instructions)
                         if case .serverError = error { throw error }
-                        try await pool.synthesize(voice: voice, apiKey: apiKey, text: text) {
+                        try await pool.synthesize(
+                            voice: voice, instructions: instructions, apiKey: apiKey, text: text
+                        ) {
                             continuation.yield($0)
                         }
                     }
                     continuation.finish()
                 } catch is CancellationError {
                     // barge-in。取得途中の接続は応答が残留しているので捨てる
-                    await pool.discard(voice: voice)
+                    await pool.discard(voice: voice, instructions: instructions)
                     continuation.finish(throwing: CancellationError())
                 } catch {
-                    await pool.discard(voice: voice)
+                    await pool.discard(voice: voice, instructions: instructions)
                     continuation.finish(throwing: error)
                 }
             }
@@ -101,24 +134,33 @@ private actor QwenTTSConnectionPool {
     }
 
     func synthesize(
-        voice: String, apiKey: String, text: String,
+        voice: String, instructions: String?, apiKey: String, text: String,
         onChunk: @escaping @Sendable (TTSStreamChunk) -> Void
     ) async throws {
+        let key = Self.key(voice: voice, instructions: instructions)
         let connection: QwenTTSConnection
-        if let existing = connections[voice] {
+        if let existing = connections[key] {
             connection = existing
         } else {
+            DiagnosticsLog.record("Qwen TTS: 接続作成 voice=\(voice) model=\(configuration.model)")
             connection = QwenTTSConnection(
-                url: configuration.websocketURL, apiKey: apiKey, voice: voice)
-            connections[voice] = connection
+                url: configuration.websocketURL, apiKey: apiKey, voice: voice,
+                instructions: instructions)
+            connections[key] = connection
             try await connection.prepare()
         }
         try await connection.synthesize(text: text, onChunk: onChunk)
     }
 
-    func discard(voice: String) async {
-        guard let connection = connections.removeValue(forKey: voice) else { return }
+    func discard(voice: String, instructions: String?) async {
+        let key = Self.key(voice: voice, instructions: instructions)
+        guard let connection = connections.removeValue(forKey: key) else { return }
         await connection.close()
+    }
+
+    /// 聞き比べで同じ voice を両キャラに割り当てても（指示だけ違う）接続が混ざらないようにする。
+    private static func key(voice: String, instructions: String?) -> String {
+        voice + "\u{1}" + (instructions ?? "")
     }
 }
 
@@ -127,31 +169,35 @@ private actor QwenTTSConnectionPool {
 private actor QwenTTSConnection {
     private let webSocket: URLSessionWebSocketTask
     private let voice: String
+    private let instructions: String?
     private var isReady = false
 
     private static let urlSession = URLSession(configuration: .default)
 
-    init(url: URL, apiKey: String, voice: String) {
+    init(url: URL, apiKey: String, voice: String, instructions: String?) {
         var request = URLRequest(url: url)
         request.setValue("bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         self.webSocket = Self.urlSession.webSocketTask(with: request)
         self.voice = voice
+        self.instructions = instructions
         webSocket.resume()
     }
 
     /// session.created を待って voice / 出力形式を設定し、session.updated まで確認する。
     func prepare() async throws {
         try await waitForEvent(ofType: "session.created", timeoutSeconds: 10, phase: "接続")
-        try await send([
-            "type": "session.update",
-            "session": [
-                "voice": voice,
-                "mode": "commit",
-                "response_format": "pcm",
-                "sample_rate": 24000,
-                "language_type": "English",
-            ],
-        ])
+        var session: [String: Any] = [
+            "voice": voice,
+            "mode": "commit",
+            "response_format": "pcm",
+            "sample_rate": 24000,
+            "language_type": "English",
+        ]
+        // instruct 変種のみ（base モデルは instructions 非対応。configuration 側で nil になる）
+        if let instructions {
+            session["instructions"] = instructions
+        }
+        try await send(["type": "session.update", "session": session])
         try await waitForEvent(ofType: "session.updated", timeoutSeconds: 10, phase: "セッション設定")
         isReady = true
     }

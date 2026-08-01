@@ -122,6 +122,27 @@ enum DebugLaunchArguments {
         return args[index + 1]
     }
 
+    /// Qwen TTS を instruct 変種（スタイル指示対応）へ切り替える。
+    /// 例: -tts-provider qwen -qwen-tts-instruct
+    /// 注意: Jennifer / Katerina は instruct 変種だと音声が返らない（相性問題。実測 2026-08-01）
+    static var qwenTTSInstructEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("-qwen-tts-instruct")
+    }
+
+    /// instruct 変種のスタイル指示をリビルドせずに差し替える（聞き比べ用）。
+    /// 例: -qwen-tts-instruct -qwen-instruct-chobi "Speak like a calm teacher."
+    static var qwenInstructChobiOverride: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-qwen-instruct-chobi"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
+    static var qwenInstructNarukoOverride: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-qwen-instruct-naruko"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
     /// 診断ログのクラッシュ記録が生きているかを確かめるためのわざと落とす起動引数。
     /// 例: -crash-test exception（Objective-C 例外）/ -crash-test fatal（Swift の実行時エラー）
     /// 起動 3 秒後に落とす（ログの初期化と画面表示を跨いだ状態を模す）。

@@ -150,7 +150,10 @@ scratchpad `phase1/` の node スクリプトで実施（`qwen-tts.mjs` / `gemin
 | --- | --- |
 | [qwen-Cherry-instruct-chobi.wav](assets/alibaba-voice-models/qwen-Cherry-instruct-chobi.wav) | Cherry + Chobi 指示 |
 | [qwen-Cherry-instruct-naruko.wav](assets/alibaba-voice-models/qwen-Cherry-instruct-naruko.wav) | Cherry + Naruko 指示 |
+| [qwen-Serena-instruct-chobi.wav](assets/alibaba-voice-models/qwen-Serena-instruct-chobi.wav) | Serena + Chobi 指示（Phase 3.5 で追加） |
 | [qwen-Serena-instruct-naruko.wav](assets/alibaba-voice-models/qwen-Serena-instruct-naruko.wav) | Serena + Naruko 指示 |
+| [qwen-Chelsie-instruct-chobi.wav](assets/alibaba-voice-models/qwen-Chelsie-instruct-chobi.wav) | Chelsie + Chobi 指示（Phase 3.5 で追加） |
+| [qwen-Chelsie-instruct-naruko.wav](assets/alibaba-voice-models/qwen-Chelsie-instruct-naruko.wav) | Chelsie + Naruko 指示（Phase 3.5 で追加） |
 
 - Chobi 指示: `Speak in a warm, lively, gently cheerful voice, like a friendly teacher chatting with a student. Speak at a brisk, natural conversational pace, without dragging out words.`（本番 styleInstruction と同旨）
 - Naruko 指示: `Speak in a bright, energetic voice, full of curiosity, like an enthusiastic student chatting with friends.`
@@ -183,6 +186,49 @@ scratchpad `phase1/` の node スクリプトで実施（`qwen-tts.mjs` / `gemin
   - 両方: `./run-install-iphone.sh -tts-provider qwen -stt-model qwen3-asr-flash-realtime`
 - テスト: `QwenVoicePipelineTests`（モデル選択フラグ / session.update 形 / partial の text+stash 連結 / usage パース / エラー分類 / voice 写像 / alibaba 料金）を追加。**全テストスイート成功・ビルド成功**
 - シミュレータ E2E（`./run-simulator.sh -tts-provider qwen -stt-model qwen3-asr-flash-realtime -start-conversation -send-text ... -send-text "Goodbye..."`）: 会話 2 ターン → [end] → フィードバック生成 → 次トピック提示まで完走。SwiftData の使用量レコードに **provider=alibaba / qwen3-tts-flash-realtime の TTS 7 件（課金 416 文字・音声 16.3 秒・推定 $0.0054）** が記録され、単価計算（$0.13/1 万字）とも一致。STT はシミュレータにマイクが無いため接続までで、音声パスは Phase 3 の実機で確認する
+
+## Phase 3 実施記録（2026-08-01）: 実機検証 → **ASR 通過 / TTS は voice のキャラ合わせが必要**
+
+`./run-install-iphone.sh -tts-provider qwen -stt-model qwen3-asr-flash-realtime` で実機に切替インストールし、実セッションで確認した（ユーザー実施）。
+
+- **ASR（qwen3-asr-flash-realtime）: 問題なし**。実マイクでの認識精度・ターン制フロー（ジングル / 終端検知）とも現行運用に耐える → **採用候補として通過**
+- **TTS（qwen3-tts-flash-realtime）: 動作は問題ないが、暫定 voice（Chobi=Cherry / Naruko=Serena）がキャラクターに合っておらず調整が必要**。base モデルはスタイル指示不可のため、調整手段は (a) 他の base voice への差し替え（`-qwen-voice-chobi` / `-qwen-voice-naruko`、実装済み）、(b) instruct 変種 `qwen3-tts-instruct-flash-realtime` + `instructions` でのスタイル指示（現行 Gemini の styleInstruction と同型。アプリ側は未実装、TTFB +90ms 程度、Jennifer は生成不可の相性問題あり）
+- instruct 変種の単価は 2026-08-01 に公開ドキュメント（model-pricing / tts-model / realtime-tts-user-guide）を再確認したが**記載が見つからず未確認のまま**（Model Studio コンソールでの確認が必要）。採用判断に効くので instruct 案を進める場合は先に確認する
+
+### 残作業（Phase 3.5: TTS voice のキャラ合わせ）
+
+方針（2026-08-01 ユーザー決定): **base voice 差し替えと instruct 変種の両方をサンプル生成し、実聴で選ぶ**。
+
+- [x] instruct 変種のサンプルを女声 voice 全種へ拡充（Serena-chobi / Chelsie-chobi / Chelsie-naruko を追加生成。**Katerina は instruct 変種だと無応答で生成不可** — Jennifer と同じ相性問題。instruct 可の女声は Cherry / Serena / Chelsie の 3 種）
+- [x] アプリに instruct 変種サポートを追加（`-qwen-tts-instruct` で `qwen3-tts-instruct-flash-realtime` へ切替。スタイル指示は `QwenTTSConfiguration.instructionMap`（Phase 1 と同文）を既定に、`-qwen-instruct-chobi` / `-qwen-instruct-naruko` でリビルドなしに差し替え可。接続プールのキーは voice + 指示にして、同一 voice を両キャラで聞き比べても接続が混ざらないようにした。instruct 変種の単価は未確認のため `AIPricing` は暫定で base と同額扱い）
+- [x] シミュレータ E2E（`-tts-provider qwen -qwen-tts-instruct` で会話 2 ターン → フィードバックまで完走。使用量レコードに `qwen3-tts-instruct-flash-realtime` の TTS 6 件・課金 387 文字・音声 11.4 秒を確認）。全テストスイート成功
+- [x] 実聴ラウンド 1（2026-08-01）: **Chobi = Serena 系で喋り方のバリエーションを出して選ぶ / Naruko = Jennifer 希望**
+  - Serena × Chobi 指示のバリエーション 3 種を追加生成（calm / upbeat / casual。既定の warm-brisk と合わせ 4 択）
+  - **Jennifer は instruct モデル系で正式非対応と確定**（realtime は無応答、HTTP 版は "Voice 'Jennifer' is not supported"、公式 voice list の instruct 対応欄にも無い）→ Jennifer を使うなら base 素のまま（スタイル指示不可）
+  - instruct 対応で未実聴の女声（Momo / Bella / Vivian。公式説明が Naruko 系の「明るい・元気」寄り）の base + Naruko 指示サンプルを追加生成し、Jennifer base との比較候補にする
+- [x] 実聴ラウンド 2（2026-08-01）: **Chobi = Serena × casual 指示で確定**。Naruko は Jennifer を諦め **Vivian に決定**（喋り方は選定中）
+  - アプリの既定値を反映済み: `voiceMap` = Leda→Serena / Aoede→Vivian、Chobi の指示 = casual（テストも更新、成功）
+  - Vivian × Naruko 指示のバリエーション 3 種を追加生成（playful / confident / soft。既定の bright-energetic と合わせ 4 択）
+- [x] 実聴ラウンド 3（2026-08-01）: **Naruko = Vivian × bright（既定の bright-energetic 指示）で確定**。アプリ既定は反映済みだったため注記のみ更新
+- [x] 決めた組み合わせ（**Chobi = Serena × casual / Naruko = Vivian × bright、instruct 変種**）での実機再確認（2026-08-01 完了）
+  - 実機セッションで「2 キャラの声の違いを感じにくい」との指摘 → シミュレータ実セッション + 診断ログ（`Qwen TTS: voice=...` を文ごとに記録するログを追加）で **キャラごとに正しい voice / 指示で合成されていることを実測確認**（Naruko 文=Vivian+instruct / Chobi 文=Serena+instruct、接続も 2 本別々）。配線のバグではなく声質が近いだけと判明
+  - 同組み合わせの掛け合い音声（duet-serena-casual-vivian-bright.wav、scratchpad 生成）をユーザー実聴 → **問題なしと判断、この組み合わせで確定**
+
+**Phase 3.5 完了。** 残りは Phase 4（採否判断とまとめ。instruct 変種の単価をコンソールで確認 → `AIPricing` 暫定値の正誤確認を含む）。
+
+**ラウンド 2 の生成サンプル**（[assets/alibaba-voice-models/](assets/alibaba-voice-models/) に追加。テキストは Phase 1 と同一の 2 文）:
+
+| ファイル | 内容 |
+| --- | --- |
+| qwen-Serena-instruct-chobi-calm.wav | Serena + Chobi 指示 calm（穏やか・急かさない） |
+| qwen-Serena-instruct-chobi-upbeat.wav | Serena + Chobi 指示 upbeat（明るく励ます・速め） |
+| qwen-Serena-instruct-chobi-casual.wav | Serena + Chobi 指示 casual（くだけた雑談調） |
+| qwen-Momo.wav / qwen-Momo-instruct-naruko.wav | Momo（公式: playful and mischievous）素 / Naruko 指示 |
+| qwen-Bella.wav / qwen-Bella-instruct-naruko.wav | Bella（公式: playful, bubbly, mischievous）素 / Naruko 指示 |
+| qwen-Vivian.wav / qwen-Vivian-instruct-naruko.wav | Vivian（公式: confident, cute, slightly feisty）素 / Naruko 指示 |
+| qwen-Vivian-instruct-naruko-playful.wav | Vivian + Naruko 指示 playful（はしゃぎ気味・弾む）（ラウンド 3） |
+| qwen-Vivian-instruct-naruko-confident.wav | Vivian + Naruko 指示 confident（生意気・元気）（ラウンド 3） |
+| qwen-Vivian-instruct-naruko-soft.wav | Vivian + Naruko 指示 soft（やわらか・おっとり）（ラウンド 3） |
 
 ## 影響範囲
 

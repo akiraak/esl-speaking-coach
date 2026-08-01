@@ -133,6 +133,8 @@ enum AIPricing {
     private static let qwenASRUSDPerSecond = 0.000090
     /// qwen3-tts-flash-realtime: $0.13 / 1 万文字。課金単位の文字数は response.done の
     /// usage.characters で届き、QwenTTSClient が TTSUsage.inputTokens に入れて運ぶ。
+    /// instruct 変種（qwen3-tts-instruct-flash-realtime）の単価は公式ページに記載が無く未確認。
+    /// 暫定で base と同額として扱う（採用判断時にコンソールで要確認）。
     private static let qwenTTSUSDPer10kCharacters = 0.13
     /// 文字数が取れないときの概算: 生成音声 1 分 ≈ $0.0098（実測の話速からの換算）。
     private static let qwenTTSFallbackUSDPerMinute = 0.0098

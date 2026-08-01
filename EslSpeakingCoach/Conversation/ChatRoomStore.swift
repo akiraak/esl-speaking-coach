@@ -694,6 +694,16 @@ final class ChatRoomStore {
         if let narukoVoice = DebugLaunchArguments.qwenVoiceNarukoOverride {
             configuration.qwenTTS.voiceMap[ChatCharacter.naruko.speechStyle.voice] = narukoVoice
         }
+        // instruct 変種（スタイル指示対応）への切替と指示文の差し替えも同様に起動引数で
+        if DebugLaunchArguments.qwenTTSInstructEnabled {
+            configuration.qwenTTS.model = QwenTTSConfiguration.instructModel
+        }
+        if let chobiInstruction = DebugLaunchArguments.qwenInstructChobiOverride {
+            configuration.qwenTTS.instructionMap[ChatCharacter.chobi.speechStyle.voice] = chobiInstruction
+        }
+        if let narukoInstruction = DebugLaunchArguments.qwenInstructNarukoOverride {
+            configuration.qwenTTS.instructionMap[ChatCharacter.naruko.speechStyle.voice] = narukoInstruction
+        }
         // AI から始まるセッションでは、開始ターンの最初の発話が出るまで -send-text を止める
         if case .assistantFirst = opening { awaitsOpeningTurn = true }
         #endif
