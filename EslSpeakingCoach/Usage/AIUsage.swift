@@ -8,6 +8,8 @@ struct AIUsageEvent: Sendable, Equatable {
         case anthropic
         case openai
         case gemini
+        /// Alibaba Model Studio（Qwen 音声モデルの検証用。docs/plans/alibaba-voice-models.md）
+        case alibaba
     }
 
     /// 課金 7 経路（docs/specs/ai-cost-map.md の #1〜#7）。

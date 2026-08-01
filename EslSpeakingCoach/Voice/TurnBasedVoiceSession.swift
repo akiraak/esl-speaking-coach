@@ -56,10 +56,12 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     struct Configuration: Sendable {
         var transcription = OpenAITranscriptionConfiguration()
-        /// 採用構成は Gemini TTS（2026-07-25 決定）。OpenAI TTS へは聞き比べ用に切替可
+        /// 採用構成は Gemini TTS（2026-07-25 決定）。OpenAI TTS へは聞き比べ用、
+        /// Qwen TTS へは Alibaba 音声モデルの検証用に切替可
         var ttsProvider: TTSProvider = .gemini
         var openAITTS = OpenAITTSConfiguration()
         var geminiTTS = GeminiTTSConfiguration()
+        var qwenTTS = QwenTTSConfiguration()
         /// ready 後の始まり方（既定は再開 = 開始ターンを起こさない）
         var opening: Opening = .resume
         /// セッションの種別（会話 / 単語 / クイズ）。system prompt・開始の制御メッセージ・
@@ -81,8 +83,9 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     let events: AsyncStream<VoiceSessionEvent>
 
-    private static let micFormat = AVAudioFormat(
-        commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: true)!
+    /// マイクから STT へ送る PCM フォーマット。サンプルレートは STT モデルの要求に合わせる
+    /// （OpenAI 系 24kHz / Qwen3-ASR 16kHz。リサンプルは AudioTapRouter.convert が担う）
+    private let micFormat: AVAudioFormat
 
     private let eventContinuation: AsyncStream<VoiceSessionEvent>.Continuation
     private let configuration: Configuration
@@ -90,6 +93,7 @@ final class TurnBasedVoiceSession: VoiceSession {
     private let claudeKeyProvider: @Sendable () -> String?
     private let openAIKeyProvider: @Sendable () -> String?
     private let geminiKeyProvider: @Sendable () -> String?
+    private let dashScopeKeyProvider: @Sendable () -> String?
     private let microphone = MicrophoneCapture()
     private let speaker: CloudSentenceSpeaker
 
@@ -106,7 +110,7 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 開き、AI のターン中は入力を止める（docs/plans/archive/turn-gated-voice-input.md。
     /// 帰結として音声での barge-in は行わない。割り込みは一時停止ボタンとテキスト送信のみ）。
     private func syncVoiceInputGate() {
-        guard configuration.transcription.isLiveTranscribe else { return }
+        guard configuration.transcription.usesClientEndpointing else { return }
         let discarded = microphone.router.setSpeechGateOpen(
             state == .listening && isVoiceInputEnabled)
         if discarded {
@@ -165,12 +169,18 @@ final class TurnBasedVoiceSession: VoiceSession {
         configuration: Configuration = Configuration(),
         claudeKeyProvider: @escaping @Sendable () -> String?,
         openAIKeyProvider: @escaping @Sendable () -> String?,
-        geminiKeyProvider: @escaping @Sendable () -> String? = { nil }
+        geminiKeyProvider: @escaping @Sendable () -> String? = { nil },
+        dashScopeKeyProvider: @escaping @Sendable () -> String? = { nil }
     ) {
         self.configuration = configuration
         self.claudeKeyProvider = claudeKeyProvider
         self.openAIKeyProvider = openAIKeyProvider
         self.geminiKeyProvider = geminiKeyProvider
+        self.dashScopeKeyProvider = dashScopeKeyProvider
+        self.micFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: configuration.transcription.micSampleRate,
+            channels: 1, interleaved: true)!
         self.pendingOpening = configuration.opening
         self.isVoiceInputEnabled = configuration.voiceInputEnabled
         self.history = configuration.initialHistory
@@ -183,6 +193,10 @@ final class TurnBasedVoiceSession: VoiceSession {
             speaker = CloudSentenceSpeaker(
                 client: GeminiTTSClient(configuration: configuration.geminiTTS),
                 apiKeyProvider: geminiKeyProvider)
+        case .qwen:
+            speaker = CloudSentenceSpeaker(
+                client: QwenTTSClient(configuration: configuration.qwenTTS),
+                apiKeyProvider: dashScopeKeyProvider)
         }
         (events, eventContinuation) = AsyncStream.makeStream(
             of: VoiceSessionEvent.self, bufferingPolicy: .unbounded)
@@ -191,8 +205,12 @@ final class TurnBasedVoiceSession: VoiceSession {
         speaker.onTurnFinished = { [weak self] in self?.handleTurnFinished() }
         speaker.onUtteranceAudioStarted = { [weak self] id in self?.handleUtteranceAudioStarted(id) }
         speaker.onError = { [weak self] message in self?.eventContinuation.yield(.info(message)) }
-        let ttsProvider: AIUsageEvent.Provider =
-            configuration.ttsProvider == .gemini ? .gemini : .openai
+        let ttsProvider: AIUsageEvent.Provider
+        switch configuration.ttsProvider {
+        case .openAI: ttsProvider = .openai
+        case .gemini: ttsProvider = .gemini
+        case .qwen: ttsProvider = .alibaba
+        }
         let ttsModel = speaker.modelDescription
         speaker.onUsage = { [weak self] usage in
             self?.eventContinuation.yield(.apiUsage(AIUsageEvent(
@@ -213,14 +231,27 @@ final class TurnBasedVoiceSession: VoiceSession {
         state = .preparing
 
         if configuration.voiceInputEnabled {
-            guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
-                fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
-                return
+            if configuration.transcription.isQwenASR {
+                guard let dashScopeKey = dashScopeKeyProvider(), !dashScopeKey.isEmpty else {
+                    fail("DashScope API キーが未設定です。.secrets/dashscope-api-key を用意して再インストールしてください。")
+                    return
+                }
+            } else {
+                guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
+                    fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
+                    return
+                }
             }
         }
         if configuration.ttsProvider == .gemini {
             guard let geminiKey = geminiKeyProvider(), !geminiKey.isEmpty else {
                 fail("Gemini API キーが未設定です。.secrets/gemini-api-key を用意して再インストールしてください。")
+                return
+            }
+        }
+        if configuration.ttsProvider == .qwen {
+            guard let dashScopeKey = dashScopeKeyProvider(), !dashScopeKey.isEmpty else {
+                fail("DashScope API キーが未設定です。.secrets/dashscope-api-key を用意して再インストールしてください。")
                 return
             }
         }
@@ -372,14 +403,26 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     private func connectSTT() {
         guard !isStopped, isVoiceInputEnabled else { return }
-        guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
-            fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
-            return
+        let stt: any StreamingSpeechTranscriber
+        if configuration.transcription.isQwenASR {
+            guard let dashScopeKey = dashScopeKeyProvider(), !dashScopeKey.isEmpty else {
+                fail("DashScope API キーが未設定です。.secrets/dashscope-api-key を用意して再インストールしてください。")
+                return
+            }
+            stt = QwenTranscriptionStream(
+                configuration: QwenTranscriptionConfiguration(
+                    model: configuration.transcription.model),
+                apiKey: dashScopeKey)
+        } else {
+            guard let openAIKey = openAIKeyProvider(), !openAIKey.isEmpty else {
+                fail("OpenAI API キーが未設定です。.secrets/openai-api-key を用意して再インストールしてください。")
+                return
+            }
+            stt = OpenAITranscriptionStream(
+                configuration: configuration.transcription, apiKey: openAIKey)
         }
-        let stt = OpenAITranscriptionStream(
-            configuration: configuration.transcription, apiKey: openAIKey)
         transcriber = stt
-        sttEventTask = Task { [weak self] in
+        sttEventTask = Task { [weak self, stt] in
             for await event in stt.events {
                 guard let self, !self.isStopped else { return }
                 self.handleSTT(event)
@@ -504,7 +547,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
         case .segmentUsage(let usage):
             eventContinuation.yield(.apiUsage(AIUsageEvent(
-                provider: .openai,
+                provider: configuration.transcription.isQwenASR ? .alibaba : .openai,
                 model: configuration.transcription.model,
                 kind: .speechToText,
                 inputTokens: usage.textInputTokens,
@@ -985,14 +1028,15 @@ final class TurnBasedVoiceSession: VoiceSession {
         isMicStreaming = true
         eventContinuation.yield(.info("マイク起動: \(microphone.inputFormatDescription)"))
 
-        if configuration.transcription.isLiveTranscribe {
-            // live はサーバ VAD が無い。送信ゲートが発話区間 + 遡りだけを流し（無音・AI 発話中は
-            // append しない = 課金しない）、同じストリームで届く発話境界を STT へ中継する。
-            // 音声と境界が 1 本のストリームなので「append がすべて済んでから commit」が保たれる
+        if configuration.transcription.usesClientEndpointing {
+            // live / Qwen3-ASR はサーバ VAD を使わない。送信ゲートが発話区間 + 遡りだけを流し
+            // （無音・AI 発話中は append しない = 課金しない）、同じストリームで届く発話境界を
+            // STT へ中継する。音声と境界が 1 本のストリームなので「append がすべて済んでから
+            // commit」が保たれる
             let (stream, continuation) = AsyncStream.makeStream(
                 of: GatedMicEvent.self, bufferingPolicy: .unbounded)
             microphone.router.attachGatedPCM16(
-                format: Self.micFormat,
+                format: micFormat,
                 thresholds: configuration.clientEndpointer,
                 continuation: continuation)
             micStreamTask = Task { [weak self] in
@@ -1017,7 +1061,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         } else {
             let (stream, continuation) = AsyncStream.makeStream(
                 of: Data.self, bufferingPolicy: .unbounded)
-            microphone.router.attachRawPCM16(format: Self.micFormat, continuation: continuation)
+            microphone.router.attachRawPCM16(format: micFormat, continuation: continuation)
 
             micStreamTask = Task { [weak self] in
                 for await chunk in stream {

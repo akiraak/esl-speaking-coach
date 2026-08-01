@@ -686,6 +686,14 @@ final class ChatRoomStore {
         if let sttDelay = DebugLaunchArguments.sttDelayOverride {
             configuration.transcription.delay = sttDelay
         }
+        // Qwen TTS の voice はリビルドせずに聞き比べられるよう起動引数で差し替え可
+        // （SpeechStyle.voice は Gemini の voice 名で届くため、そのキーで写像を上書きする）
+        if let chobiVoice = DebugLaunchArguments.qwenVoiceChobiOverride {
+            configuration.qwenTTS.voiceMap[ChatCharacter.chobi.speechStyle.voice] = chobiVoice
+        }
+        if let narukoVoice = DebugLaunchArguments.qwenVoiceNarukoOverride {
+            configuration.qwenTTS.voiceMap[ChatCharacter.naruko.speechStyle.voice] = narukoVoice
+        }
         // AI から始まるセッションでは、開始ターンの最初の発話が出るまで -send-text を止める
         if case .assistantFirst = opening { awaitsOpeningTurn = true }
         #endif
@@ -705,6 +713,9 @@ final class ChatRoomStore {
             },
             geminiKeyProvider: {
                 (try? KeychainStore().read(account: KeychainStore.geminiAPIKeyAccount)) ?? nil
+            },
+            dashScopeKeyProvider: {
+                (try? KeychainStore().read(account: KeychainStore.dashScopeAPIKeyAccount)) ?? nil
             })
         DiagnosticsLog.record(
             "session: 開始 topic=\(activeTopicTitle ?? "-") opening=\(opening) "

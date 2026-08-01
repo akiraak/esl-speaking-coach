@@ -37,6 +37,19 @@ struct OpenAITranscriptionConfiguration: Sendable {
     /// gpt-live-transcribe 系か（transcription 設定のフィールド体系が旧モデルと異なる）
     var isLiveTranscribe: Bool { model.hasPrefix("gpt-live-transcribe") }
 
+    /// Alibaba Qwen3-ASR（検証用の切替経路。docs/plans/alibaba-voice-models.md）か。
+    /// -stt-model qwen3-asr-flash-realtime で選択され、接続クライアントごと
+    /// QwenTranscriptionStream に切り替わる（このファイルの OpenAI 用設定は使われない）
+    var isQwenASR: Bool { model.hasPrefix("qwen3-asr") }
+
+    /// クライアント VAD + 手動 commit（サーバ VAD なし）で動くモデルか。
+    /// 送信ゲート・入力の窓の制御はこのフラグで分岐する
+    var usesClientEndpointing: Bool { isLiveTranscribe || isQwenASR }
+
+    /// マイクから STT へ送る PCM のサンプルレート。Qwen3-ASR は公式ドキュメント上
+    /// pcm 8/16kHz のみのため 16kHz へ落とす（リサンプルは AudioTapRouter.convert が担う）
+    var micSampleRate: Double { isQwenASR ? 16000 : 24000 }
+
     var websocketURL: URL {
         URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
     }

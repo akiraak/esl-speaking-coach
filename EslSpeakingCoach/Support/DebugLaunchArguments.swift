@@ -8,6 +8,7 @@ enum DebugLaunchArguments {
         ("-seed-anthropic-key", "-delete-anthropic-key", KeychainStore.anthropicAPIKeyAccount),
         ("-seed-openai-key", "-delete-openai-key", KeychainStore.openAIAPIKeyAccount),
         ("-seed-gemini-key", "-delete-gemini-key", KeychainStore.geminiAPIKeyAccount),
+        ("-seed-dashscope-key", "-delete-dashscope-key", KeychainStore.dashScopeAPIKeyAccount),
         ("-seed-wordbook-key", "-delete-wordbook-key", KeychainStore.wordBookAPISecretAccount),
     ]
 
@@ -104,6 +105,20 @@ enum DebugLaunchArguments {
     static var sttDelayOverride: String? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-stt-delay"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
+    /// Qwen TTS の voice 指定（実機での聞き比べ用。リビルドせずに差し替えられるように）。
+    /// 例: -tts-provider qwen -qwen-voice-chobi Cherry -qwen-voice-naruko Serena
+    static var qwenVoiceChobiOverride: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-qwen-voice-chobi"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
+    static var qwenVoiceNarukoOverride: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-qwen-voice-naruko"), index + 1 < args.count else { return nil }
         return args[index + 1]
     }
 

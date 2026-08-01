@@ -38,6 +38,13 @@ enum AIPricing {
             }
         case .gemini:
             return geminiTTSCost(event: event)
+        case .alibaba:
+            switch event.kind {
+            case .speechToText:
+                return qwenASRCost(event: event)
+            default:
+                return qwenTTSCost(event: event)
+            }
         }
     }
 
@@ -119,6 +126,29 @@ enum AIPricing {
         Double(tokens ?? 0) / 1_000_000 * rate
     }
 
+    // MARK: - Alibaba Qwen 音声モデル（検証用の切替経路。docs/plans/alibaba-voice-models.md）
+
+    /// qwen3-asr-flash-realtime: 音声 $0.000090 / 秒（2026-07-31 に国際版公式料金ページで確認。
+    /// usage は duration 型・秒単位で届く）。
+    private static let qwenASRUSDPerSecond = 0.000090
+    /// qwen3-tts-flash-realtime: $0.13 / 1 万文字。課金単位の文字数は response.done の
+    /// usage.characters で届き、QwenTTSClient が TTSUsage.inputTokens に入れて運ぶ。
+    private static let qwenTTSUSDPer10kCharacters = 0.13
+    /// 文字数が取れないときの概算: 生成音声 1 分 ≈ $0.0098（実測の話速からの換算）。
+    private static let qwenTTSFallbackUSDPerMinute = 0.0098
+
+    private static func qwenASRCost(event: AIUsageEvent) -> Double {
+        (event.audioSeconds ?? 0) * qwenASRUSDPerSecond
+    }
+
+    private static func qwenTTSCost(event: AIUsageEvent) -> Double {
+        // inputTokens には課金文字数（usage.characters）が入っている
+        if let characters = event.inputTokens {
+            return Double(characters) / 10_000 * qwenTTSUSDPer10kCharacters
+        }
+        return (event.audioSeconds ?? 0) * qwenTTSFallbackUSDPerMinute / 60
+    }
+
     // MARK: - 単価表の表示（管理画面「料金」タブ）
 
     /// 管理画面に出す単価表の 1 行。price / note は表示用に整形済み。
@@ -168,6 +198,14 @@ enum AIPricing {
             RateRow(
                 model: "gpt-4o-mini-tts", usage: "TTS（聞き比べ用）",
                 price: "音声 ≈ \(usd(openAIMiniTTSUSDPerMinute)) / 分", note: nil),
+            RateRow(
+                model: "qwen3-tts-flash-realtime", usage: "TTS（Alibaba 検証用）",
+                price: "\(usd(qwenTTSUSDPer10kCharacters)) / 1 万文字",
+                note: "生成音声 1 分 ≈ \(usd(qwenTTSFallbackUSDPerMinute))。現行比 約 1/3"),
+            RateRow(
+                model: "qwen3-asr-flash-realtime", usage: "STT（Alibaba 検証用）",
+                price: "音声 \(usd(qwenASRUSDPerSecond * 60)) / 分",
+                note: "発話セグメント分のみ。現行比 約 1/3"),
         ]
     }
 

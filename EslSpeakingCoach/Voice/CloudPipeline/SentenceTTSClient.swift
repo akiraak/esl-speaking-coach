@@ -36,10 +36,12 @@ protocol SentenceTTSClient: Sendable {
     func streamAudio(apiKey: String, text: String, style: SpeechStyle) -> AsyncThrowingStream<TTSStreamChunk, Error>
 }
 
-/// 選択できる TTS プロバイダ（採用は Gemini。OpenAI は聞き比べ用）。
+/// 選択できる TTS プロバイダ（採用は Gemini。OpenAI は聞き比べ用、
+/// Qwen は Alibaba 音声モデルの検証用。docs/plans/alibaba-voice-models.md）。
 enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
     case openAI = "openai"
     case gemini = "gemini"
+    case qwen = "qwen"
 
     var id: String { rawValue }
 
@@ -47,6 +49,7 @@ enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .openAI: return "OpenAI TTS"
         case .gemini: return "Gemini TTS"
+        case .qwen: return "Qwen TTS"
         }
     }
 }
