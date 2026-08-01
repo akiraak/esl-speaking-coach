@@ -54,6 +54,11 @@ Phase 1 で残った 2〜3 モデルに絞り、API を実際に叩いて比較�
 - 経路ごと（会話 / フィードバック / トピック / 記憶ノート / 翻訳）に「置き換える / 置き換えない / 保留」を決め、結論と根拠をこのプランに記録する
 - 採用する場合は**実装タスクを別途 `TODO.md` に起こす**（このタスクは調査で完結）
 
+### Phase 5: 生成品質の厳密チェック（Phase 4 の後に実施）
+
+- Phase 3 の品質評価はケース 4 件 × 各 1 生成・判定 1 ペアずつのスモークテスト規模だった。Phase 4 の採否判断で残った候補に対し、より厳密な評価を行う
+- 方向性（詳細は着手時に具体化）: 会話ケース数と生成回数を増やす（同一ケース複数生成でばらつきも見る）、フィードバックは transcript を複数用意する、opus-5 判定の試行数を増やして信頼度を上げる。判定方法自体は Phase 3 と同じ（機械チェック + ブラインド A/B・順序入替）
+
 ## 影響範囲
 
 - 調査のみ。アプリのコード・既定モデルは変更しない
@@ -200,3 +205,74 @@ Phase 1 の想定から更新した事実:
 - Qwen / GLM の structured outputs（json_schema 相当）がフィードバック生成の出力形式を安定して満たすか
 - 英語固定（2 キャラ台本 system prompt）で中国語・ピンイン混入が起きないか
 - GLM / DeepSeek（OpenRouter 経由）で reasoning を抑制した場合の品質・レイテンシ・コスト（既定 ON のままでは会話ターンに不向き。Phase 2 実施記録参照）
+
+## Phase 3 実施記録（2026-07-31）
+
+scratchpad の node スクリプトで実施（コードはアプリに入れていない）。**Phase 3 完了**（東京リージョンのレイテンシ実測のみ任意の積み残し。下記）。
+
+### 実施方法とプランからの逸脱
+
+- 本番と同一の system prompt（`CoachSystemPrompt` 7,918 字 / `SessionFeedbackClient.systemPrompt` 2,046 字を Swift で評価して抽出）・同一のリクエスト形（会話: effort low / max_tokens 1024 / stream / cache_control、フィードバック: effort high / max_tokens 16000 / json_schema）を全モデルに使用
+- **逸脱**: 実機の実セッションは Mac から取得できず、シミュレータには開発テストの短いセッションしか無かった。会話は実セッション #12（ラーメン雑談）を土台に、カバレッジ用の合成ケース（日本語切替・[Memory]+[New topic] 開幕）を明示して追加。フィードバックの品質比較は実セッション文体に合わせた合成 transcript（学習者 8 ターン・典型的な日本人学習者の誤りを含む）を使用し、形式安定性は実セッション #12 でも確認した
+- ケースは 4 つ: `continue`（通常ターン）/ `goodbye`（別れの挨拶 → [end]）/ `japanese`（学習者が日本語に切替）/ `newtopic`（記憶ノート付き開幕ターン）
+- 判定はプランどおり: 機械チェック（タグ形式・発話数・最終行の質問・[end]・CJK/ピンイン混入）はスクリプト、主観品質は **claude-opus-5 の LLM-as-judge**（モデル名を伏せた A/B、提示順入替 2 回、勝敗が割れたら引き分け）で sonnet-5 と比較
+
+### レイテンシ実測（会話ターン・日本から・4 回の中央値）
+
+| モデル / 経路 | TTFT | 1 文確定 | 備考 |
+| --- | --- | --- | --- |
+| sonnet-5（基準） | 1,052ms | 1,353ms | cache read 2,453 tok |
+| **qwen3.7-plus**（DashScope Anthropic 互換・SG・thinking 無効） | **852ms** | **1,164ms** | cache read 1,722 tok。**基準より速い** |
+| qwen3.7-flash（同上） | 737ms | 901ms | 最速クラス |
+| glm-4.7（OpenRouter → Z.AI 固定・reasoning 無効） | 2,151ms | 2,155ms | **実質ストリーミングせず全文一括着**（TTFT≈全体） |
+| glm-5.2（同上） | 1,795ms | 1,795ms | 同上 |
+| deepseek-v4-flash（OpenRouter → DeepInfra/Fireworks 固定・reasoning 無効） | 655ms | 1,468ms | TTFT 最速だが分散大（450〜1,255ms） |
+
+- **Qwen は Anthropic 互換エンドポイントだと thinking が既定 ON で TTFT 20〜35 秒**になる。`thinking: {type: "disabled"}` を送ると上表のとおり 1 秒前後に解決（採用時はこのパラメータが必須。Claude と違い thinking 無効化の副作用は観測されなかった）
+- SG リージョンで既に sonnet-5 より速いため、東京リージョン実測（日本リージョンのワークスペース + 専用キー作成が必要）は**任意**とした。実施する場合はアカウント作業がユーザー側に必要
+
+### 会話品質
+
+機械チェック（4 ケース中クリーンだった数と主な違反）:
+
+| モデル | クリーン | 主な違反 |
+| --- | --- | --- |
+| sonnet-5（基準） | 2/4 | japanese で 3 発話、newtopic で**最終行の質問がタグ無し + 空行**（本番でも起きる癖と判明） |
+| qwen3.7-plus | 2/4 | continue で 3 発話。**goodbye で [end] を出さず学習者を引き留めた**（明確な規約違反） |
+| **qwen3.7-flash** | **4/4** | なし |
+| glm-4.7 | 2/4 | **最終行の質問がタグ無しになる癖**（2/4 ケースで発生。台本パーサを壊すため実害最大） |
+| glm-5.2 | 2/4 | continue で 3 発話、goodbye で空行 |
+| deepseek-v4-flash | 1/4 | ほぼ毎ターン 3 発話（冗長癖） |
+
+- **中国語・ピンイン・日本語の混入は全モデル・全ケースでゼロ**（懸念は解消）
+- opus-5 判定（対 sonnet-5。順序入替 2 回一致のみ勝敗、不一致は tie）:
+
+| 候補 | continue | goodbye | japanese | newtopic | 通算 |
+| --- | --- | --- | --- | --- | --- |
+| qwen3.7-plus | ✗ | ✗ | ○ | ○ | 2 勝 2 敗 |
+| qwen3.7-flash | ✗ | ✗ | ○ | ○ | 2 勝 2 敗 |
+| glm-4.7 | ✗ | ✗ | − | − | 0 勝 2 敗 2 分 |
+| glm-5.2 | ✗ | ✗ | ○ | ○ | 2 勝 2 敗 |
+| deepseek-v4-flash | ✗ | ✗ | ○ | ○ | 2 勝 2 敗 |
+
+- 判定理由を読むと構図は明瞭: **自然な雑談の流れ（continue / goodbye）では全候補が sonnet-5 に一貫して負ける**（判定は sonnet の反応の温かさ・キャラらしさ・オープンな質問を繰り返し評価）。候補が勝った japanese / newtopic は **sonnet-5 側の出力がたまたま崩れたケース**（不自然な言い回し + 3 発話、タグ無し最終行）で、相対的に勝った側面が強い
+- 各候補とも「英語で言い直してみて」の促し（日本語入力時の仕様）を省く傾向。qwen3.7-plus は goodbye 対応も外しており、**プロンプト追従の細部で sonnet-5 に一段劣る**。glm-4.7 はタグ無し癖 + 引き分け止まりで最下位評価
+
+### フィードバック品質（structured outputs の安定性 + 内容）
+
+| モデル / 方式 | スキーマ適合 | 生成時間 | opus-5 判定（対 sonnet-5） |
+| --- | --- | --- | --- |
+| sonnet-5（本番同一） | 3/3 | 11〜19 秒 | 基準 |
+| **qwen3.7-plus**（**Anthropic 互換 + `output_config.format` json_schema がそのまま通った**） | 3/3 | 3〜9 秒 | 惜敗（7-8 / 7-7 tie。summary の具体性で劣る） |
+| glm-4.7（OpenRouter **DeepInfra 固定**。Z.AI 経由は json_schema 非対応で 404） | 2/2 | 11〜27 秒 | 辛勝（angry with me 等コロケーション指摘を評価） |
+| deepseek-v4-flash（OpenRouter 米系固定 json_schema） | 3/3 | 5〜8 秒 | **明確に勝ち**（9-7 / 7-9。summary の具体性・worth waiting 等の指摘を評価） |
+
+- 4 モデルとも指摘は実際の学習者の誤りのみで、捏造・誤った文法解説は判定でも指摘されず。**フィードバック経路は品質面では置き換え可能**が実測の結論（判定が拾った sonnet-5 の弱点は summary 冒頭の「週末の週末」という重複タイポ）
+- ただしサンプルは transcript 1 件 + 判定 1 ペアずつであり、差は小さい。採否の重み付けは Phase 4 で行う
+
+### Phase 2 積み残し確認項目の結果
+
+1. **Qwen Anthropic 互換エンドポイント**: 既存リクエスト形（system cache_control / streaming / max_tokens / effort / structured outputs の json_schema）を**全て受容**。cache_control は実際にヒット（cache_read_input_tokens が返る）。唯一の差分は thinking 既定 ON → `thinking: {type: "disabled"}` の追加が必要。**`ClaudeMessagesClient` / `SessionFeedbackClient` はエンドポイント・キー・モデル名 + thinking 1 行の差でほぼ流用可能**
+2. **structured outputs の安定性**: Qwen（Anthropic 互換）・GLM（DeepInfra ホスト）・DeepSeek（米系ホスト）とも全回スキーマ適合。**GLM は Z.AI 本家経由だと OpenRouter 上で json_schema 非対応**な点だけ注意（z.ai 直叩きの仕様は未確認）
+3. **中国語・ピンイン混入**: 全モデル・全ケースでゼロ
+4. **reasoning 抑制（GLM / DeepSeek）**: OpenRouter の `reasoning: {enabled: false}` で reasoning_tokens=0 を確認。レイテンシ・コストとも会話ターンに使える水準（上表）。品質は抑制状態で計測した値がそのまま比較結果
