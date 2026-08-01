@@ -123,8 +123,8 @@ enum DebugLaunchArguments {
     }
 
     /// Qwen TTS を instruct 変種（スタイル指示対応）へ切り替える。
-    /// 例: -tts-provider qwen -qwen-tts-instruct
-    /// 注意: Jennifer / Katerina は instruct 変種だと音声が返らない（相性問題。実測 2026-08-01）
+    /// 2026-08-01 から instruct が既定になったため通常は不要（互換のため残置）。
+    /// 注意: Jennifer / Katerina は instruct 変種だと音声が返らない（正式非対応。実測 2026-08-01）
     static var qwenTTSInstructEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains("-qwen-tts-instruct")
     }

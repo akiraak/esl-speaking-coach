@@ -1,7 +1,7 @@
 import Foundation
 
 /// Alibaba Model Studio の Qwen3-ASR リアルタイム認識（WebSocket）の設定。
-/// 検証用の切替経路（docs/plans/alibaba-voice-models.md）。既定の STT は gpt-live-transcribe のまま。
+/// 検証用の切替経路（docs/plans/archive/alibaba-voice-models.md）。既定の STT は gpt-live-transcribe のまま。
 struct QwenTranscriptionConfiguration: Sendable {
     /// -stt-model qwen3-asr-flash-realtime で選択される
     var model = "qwen3-asr-flash-realtime"

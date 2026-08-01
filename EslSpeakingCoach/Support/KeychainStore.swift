@@ -12,7 +12,7 @@ struct KeychainStore {
     static let anthropicAPIKeyAccount = "anthropic-api-key"
     static let openAIAPIKeyAccount = "openai-api-key"
     static let geminiAPIKeyAccount = "gemini-api-key"
-    /// Alibaba Model Studio（Qwen 音声モデルの検証用。docs/plans/alibaba-voice-models.md）
+    /// Alibaba Model Studio（Qwen 音声モデルの検証用。docs/plans/archive/alibaba-voice-models.md）
     static let dashScopeAPIKeyAccount = "dashscope-api-key"
     /// 単語帳（esl.chobi.me）の X-API-Secret（docs/plans/wordbook-word-picker.md）
     static let wordBookAPISecretAccount = "wordbook-api-secret"

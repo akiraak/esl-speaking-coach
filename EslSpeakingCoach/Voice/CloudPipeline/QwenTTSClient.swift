@@ -1,10 +1,12 @@
 import Foundation
 
 /// Alibaba Model Studio の Qwen3-TTS リアルタイム合成（WebSocket）の設定。
-/// 検証用の切替経路（docs/plans/alibaba-voice-models.md）。既定の TTS は Gemini のまま。
+/// 2026-08-01 に既定 TTS として採用（docs/plans/archive/alibaba-voice-models.md）。
+/// 既定は instruct 変種（キャラ別スタイル指示）。base へはこの 1 箇所で戻せる。
 struct QwenTTSConfiguration: Sendable {
-    var model = "qwen3-tts-flash-realtime"
-    /// スタイル指示対応の変種（-qwen-tts-instruct で切替。単価は base と別の可能性があり未確認。
+    var model = Self.instructModel
+    static let baseModel = "qwen3-tts-flash-realtime"
+    /// スタイル指示対応の変種。単価は未公表のため base と同額の暫定計上（AIPricing 参照）。
     /// 対応 voice は base より少ない: Jennifer / Katerina は非対応（公式 voice list 外。
     /// realtime だと無応答、HTTP だと "Voice not supported" になる）
     static let instructModel = "qwen3-tts-instruct-flash-realtime"

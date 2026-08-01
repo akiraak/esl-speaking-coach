@@ -114,7 +114,7 @@ final class AIPricingTests: XCTestCase {
 
     /// 単価表は現在使っている全モデル（Claude 2 種 + キャッシュ + STT 3 種 + TTS 3 種）を含む。
     /// opus-5 は 2026-07-31 にフィードバック生成を sonnet-5 へ切り替えたため表には出さない。
-    /// qwen 2 種は Alibaba 音声モデルの検証用切替（docs/plans/alibaba-voice-models.md）。
+    /// TTS の既定は 2026-08-01 から Qwen instruct 変種（docs/plans/archive/alibaba-voice-models.md）。
     func testRateTableListsAllModels() {
         let models = AIPricing.rateTable().map(\.model)
         XCTAssertEqual(
@@ -123,8 +123,9 @@ final class AIPricingTests: XCTestCase {
                 "claude-sonnet-5", "claude-haiku-4-5",
                 "Claude プロンプトキャッシュ",
                 "gpt-live-transcribe", "gpt-4o-transcribe",
+                "qwen3-tts-instruct-flash-realtime",
                 "gemini-3.1-flash-tts-preview", "gpt-4o-mini-tts",
-                "qwen3-tts-flash-realtime", "qwen3-asr-flash-realtime",
+                "qwen3-asr-flash-realtime",
             ])
     }
 }

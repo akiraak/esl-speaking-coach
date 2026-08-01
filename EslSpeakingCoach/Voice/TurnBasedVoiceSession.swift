@@ -58,7 +58,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         var transcription = OpenAITranscriptionConfiguration()
         /// 採用構成は Gemini TTS（2026-07-25 決定）。OpenAI TTS へは聞き比べ用、
         /// Qwen TTS へは Alibaba 音声モデルの検証用に切替可
-        var ttsProvider: TTSProvider = .gemini
+        /// 2026-08-01 に Gemini から Qwen（instruct 変種）へ切替（docs/plans/archive/alibaba-voice-models.md）。
+        /// 旧既定へは -tts-provider gemini で戻せる
+        var ttsProvider: TTSProvider = .qwen
         var openAITTS = OpenAITTSConfiguration()
         var geminiTTS = GeminiTTSConfiguration()
         var qwenTTS = QwenTTSConfiguration()

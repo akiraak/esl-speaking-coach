@@ -76,9 +76,19 @@ Phase 1 通過後。既存のプロトコル境界に差し替え実装を追加
 
 ### Phase 4: 判断とまとめ
 
+- **最終比較は 4 案で並べる**（2026-08-01 ユーザー指示）: 現行 / **STT のみ Qwen** / **TTS のみ Qwen** / 両方 Qwen。それぞれ 1 セッション・月額（毎日 1 セッション想定）を [ai-cost-map.md](../specs/ai-cost-map.md) の概算例ベースで出す（TTS / STT は独立に採否を決められるため）
+- instruct 変種（採用構成）の単価を Model Studio コンソールで確認し、`AIPricing` の暫定値（base と同額）の正誤を確定する
 - 採用 / 見送りを経路ごと（TTS / STT）に決め、結論と根拠をこのプランに記録する
 - 採用する場合の後続作業（別タスク or このタスク内で完了）: 既定切替、`Usage/AIPricing.swift` 単価表・`docs/specs/ai-cost-map.md` 更新、旧経路の扱い決め
 - 見送りの場合: 追加した切替実装を残すか消すか決める
+
+### Phase 5: アプリ内の料金表・料金計算の検証（2026-08-01 追加）
+
+採用構成での課金の見え方が正しいことを確認してから締める。
+
+- 管理画面「料金」タブの単価表（`AIPricing.rateTable()` 生成）に alibaba（Qwen TTS / ASR）の行が正しく表示されるか、単価が Phase 4 の確認値と一致するか
+- 使用量レコードの推定額計算（`qwenTTSCost` / `qwenASRCost`。instruct 変種のモデル名でも正しく計算されるか）を、実セッションのレコードと手計算の突き合わせで検証する
+- 会話画面のセッション料金表示など、料金を表示する他の画面があれば同様に確認する
 
 ## Phase 1 実施記録（2026-08-01）: Mac 上の疎通・レイテンシ検証 → **両モデルとも通過（残: ユーザー実聴）**
 
@@ -229,6 +239,37 @@ scratchpad `phase1/` の node スクリプトで実施（`qwen-tts.mjs` / `gemin
 | qwen-Vivian-instruct-naruko-playful.wav | Vivian + Naruko 指示 playful（はしゃぎ気味・弾む）（ラウンド 3） |
 | qwen-Vivian-instruct-naruko-confident.wav | Vivian + Naruko 指示 confident（生意気・元気）（ラウンド 3） |
 | qwen-Vivian-instruct-naruko-soft.wav | Vivian + Naruko 指示 soft（やわらか・おっとり）（ラウンド 3） |
+
+## Phase 4 実施記録（2026-08-01 着手）: 最終比較
+
+### 4 案のコスト比較（1 セッション / 月額）
+
+前提は [ai-cost-map.md](../specs/ai-cost-map.md) の概算例と同一（15 分 / 30 ターン / ユーザー発話 5 分 / AI 生成音声 5 分、毎日 1 セッション = 月 30 回）。「その他」= 会話 LLM + フィードバック + トピック生成 = $0.28/セッション（切替の影響なし）。
+
+| 構成 | STT | TTS | その他 | 合計 / セッション | 月額 | 現行比の節約 / 月 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 現行（gpt-live + Gemini TTS） | $0.085 | $0.150 | $0.28 | **$0.52** | 約 $15.5 | — |
+| **STT のみ Qwen** | $0.027 | $0.150 | $0.28 | **$0.46** | 約 $13.7 | **約 $1.7** |
+| **TTS のみ Qwen** | $0.085 | $0.049 | $0.28 | **$0.41** | 約 $12.4 | **約 $3.0** |
+| 両方 Qwen | $0.027 | $0.049 | $0.28 | **$0.36** | 約 $10.7 | **約 $4.8** |
+
+- 単価: STT は gpt-live $0.017/分 → Qwen $0.0054/分（$0.000090/秒）で約 1/3。TTS は Gemini ≈ $0.03/分 → Qwen ≈ $0.0098/分（$0.13/1 万字を実測話速で換算）で約 1/3
+- ⚠️ **TTS の Qwen 単価は base モデルの確認値**。採用構成は instruct 変種（Chobi=Serena×casual / Naruko=Vivian×bright）のため、**instruct の単価がコンソールで base と同額と確認できることがこの表の前提**。異なればここと `AIPricing` を更新して再計算する
+- 品質・レイテンシ面は Phase 1〜3.5 で確認済み: ASR は精度・フロー問題なし（確定レイテンシは実測で現行より速い）、TTS は voice 選定済みで文単位 TTFB も現行 Gemini より速い（instruct でも +90ms 程度）
+
+### 採否決定
+
+- **STT: 見送り（2026-08-01 ユーザー決定）**。既定の gpt-live-transcribe を維持する（もともと既定は変えていないので、実機の起動引数から `-stt-model qwen3-asr-flash-realtime` を外すだけ）。Qwen ASR の切替実装は gpt-4o-transcribe 旧経路と同様に**残す**（起動引数でのみ有効・既定に影響なし。掃除するなら別タスク）
+- **TTS: 採用（2026-08-01）**。「TTS のみ Qwen」案（月 約 $3.0 節約）で確定し、既定を切り替えた:
+  - `TurnBasedVoiceSession.Configuration.ttsProvider` の既定を `.gemini` → `.qwen` に、`QwenTTSConfiguration.model` の既定を instruct 変種に変更（旧既定へは `-tts-provider gemini` か既定値 1 箇所で戻せる。`-qwen-tts-instruct` は不要になったが互換のため残置）
+  - `AIPricing.rateTable()` を更新（Qwen instruct を TTS 既定行に、Gemini を切替用へ、Qwen ASR は「切替用・見送り」表記）。`CLAUDE.md`（技術スタック / 音声レイヤ表 / セキュリティ）と `docs/specs/ai-cost-map.md`（サマリ・単価表・TTS 詳細・概算例 約 $0.52 → **約 $0.42**、月 $16 → **$12.5 前後**・記録取得元・注意 1 番）も採用構成へ更新
+  - ⚠️ **instruct 変種の単価は未公表のため base と同額（$0.13/1 万字）の暫定計上**。国際版の公開ドキュメント（model-pricing / models / TTS 各ページ・中国語版含む）を再確認したが記載なし。コンソールか初回請求で確認し、違ったら `AIPricing` / コスト表を更新する（TODO に残す）
+
+## Phase 5 実施記録（2026-08-01）: アプリ内の料金表・料金計算の検証 → **問題なし**
+
+- **単価表**（管理画面「料金」タブ、`AIPricing.rateTable()` 生成）: 行構成と表記をユニットテストで固定（`qwen3-tts-instruct-flash-realtime` が「TTS（既定）」、Gemini は「切替用の旧既定」、`qwen3-asr-flash-realtime` は「切替用。検証の結果見送り」）。料金タブの表示もシミュレータで確認（累計・種別内訳・日別に反映）
+- **推定額計算**: 切替フラグなしの既定起動でシミュレータ実セッションを流し、`qwen3-tts-instruct-flash-realtime` のレコードが増えることを確認（= 既定切替が有効）。instruct 累計 12 件・課金 860 文字の推定額 **$0.01118 = 手計算（860 / 10,000 × $0.13）と完全一致**。base 分（416 文字 → $0.005408）も一致
+- 全テストスイート成功。instruct 変種の単価だけ暫定（base と同額）のため、確定は TODO の別項目で追跡する
 
 ## 影響範囲
 

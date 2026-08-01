@@ -1,7 +1,7 @@
 import XCTest
 @testable import EslSpeakingCoach
 
-/// Alibaba Qwen 音声モデル（検証用切替経路。docs/plans/alibaba-voice-models.md）の
+/// Alibaba Qwen 音声モデル（検証用切替経路。docs/plans/archive/alibaba-voice-models.md）の
 /// プロトコル層のテスト。イベント JSON の形は 2026-08-01 の実測（scratchpad phase1）で固定。
 final class QwenVoicePipelineTests: XCTestCase {
     // MARK: - STT モデル選択
@@ -104,13 +104,11 @@ final class QwenVoicePipelineTests: XCTestCase {
             configuration.defaultVoice)
     }
 
-    /// スタイル指示は instruct 変種のときだけ返る（base モデルは非対応なので必ず nil）。
-    /// 指示はキャラごと（Gemini voice 名キー）に持ち、未知の voice は指示なし
+    /// 既定は instruct 変種（2026-08-01 採用）で、キャラごと（Gemini voice 名キー）の
+    /// スタイル指示が付く。base モデルへ落とすと指示は必ず nil、未知の voice も指示なし
     func testQwenTTSInstructions() {
         var configuration = QwenTTSConfiguration()
-        XCTAssertNil(configuration.instructions(for: ChatCharacter.chobi.speechStyle))
-
-        configuration.model = QwenTTSConfiguration.instructModel
+        XCTAssertEqual(configuration.model, QwenTTSConfiguration.instructModel)
         let chobi = configuration.instructions(for: ChatCharacter.chobi.speechStyle)
         let naruko = configuration.instructions(for: ChatCharacter.naruko.speechStyle)
         XCTAssertTrue(chobi?.contains("casual") == true)
@@ -118,6 +116,9 @@ final class QwenVoicePipelineTests: XCTestCase {
         XCTAssertNotEqual(chobi, naruko)
         XCTAssertNil(
             configuration.instructions(for: SpeechStyle(voice: "Unknown", styleInstruction: "")))
+
+        configuration.model = QwenTTSConfiguration.baseModel
+        XCTAssertNil(configuration.instructions(for: ChatCharacter.chobi.speechStyle))
     }
 
     // MARK: - 料金（alibaba プロバイダ）
@@ -131,12 +132,17 @@ final class QwenVoicePipelineTests: XCTestCase {
     }
 
     /// TTS は $0.13 / 1 万文字（inputTokens に課金文字数が入る）。
-    /// 文字数が無いときは音声秒数からの概算に落ちる
+    /// 既定の instruct 変種も同額の暫定計上。文字数が無いときは音声秒数からの概算に落ちる
     func testQwenTTSPricing() {
         let byCharacters = AIUsageEvent(
             provider: .alibaba, model: "qwen3-tts-flash-realtime", kind: .textToSpeech,
             inputTokens: 10_000, audioSeconds: 60)
         XCTAssertEqual(AIPricing.estimatedCostUSD(for: byCharacters), 0.13, accuracy: 1e-9)
+
+        let instruct = AIUsageEvent(
+            provider: .alibaba, model: "qwen3-tts-instruct-flash-realtime", kind: .textToSpeech,
+            inputTokens: 10_000, audioSeconds: 60)
+        XCTAssertEqual(AIPricing.estimatedCostUSD(for: instruct), 0.13, accuracy: 1e-9)
 
         let bySeconds = AIUsageEvent(
             provider: .alibaba, model: "qwen3-tts-flash-realtime", kind: .textToSpeech,

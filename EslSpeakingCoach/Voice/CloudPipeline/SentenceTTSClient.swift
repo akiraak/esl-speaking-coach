@@ -37,7 +37,7 @@ protocol SentenceTTSClient: Sendable {
 }
 
 /// 選択できる TTS プロバイダ（採用は Gemini。OpenAI は聞き比べ用、
-/// Qwen は Alibaba 音声モデルの検証用。docs/plans/alibaba-voice-models.md）。
+/// Qwen は Alibaba 音声モデルの検証用。docs/plans/archive/alibaba-voice-models.md）。
 enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
     case openAI = "openai"
     case gemini = "gemini"

@@ -8,7 +8,7 @@ struct AIUsageEvent: Sendable, Equatable {
         case anthropic
         case openai
         case gemini
-        /// Alibaba Model Studio（Qwen 音声モデルの検証用。docs/plans/alibaba-voice-models.md）
+        /// Alibaba Model Studio（Qwen 音声モデルの検証用。docs/plans/archive/alibaba-voice-models.md）
         case alibaba
     }
 

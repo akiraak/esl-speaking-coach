@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-08-01 Alibaba 音声モデル（Qwen3-TTS / Qwen3-ASR）を実機検証し、TTS を Qwen instruct へ既定切替・STT は見送りとした [plan](docs/plans/archive/alibaba-voice-models.md)
+  - Phase 1〜3: Mac 実測（文単位 TTFB 390ms / ASR 確定 399ms と現行より速い）→ 切替可能な実装を追加（既定は不変）→ 実機検証（ASR 問題なし / TTS は voice のキャラ合わせが必要と判明）
+  - Phase 3.5: 実聴 3 ラウンドで **Chobi=Serena×casual / Naruko=Vivian×bright（instruct 変種）** に確定。Jennifer / Katerina は instruct 正式非対応と判明。文ごとの合成先を診断ログ化し、キャラ別に正しい voice / 指示で生成されることを実測確認
+  - Phase 4: 4 案比較（現行 $0.52 → TTS のみ Qwen 約 $0.42/セッション、**月 約 $3.0 節約**）。STT は見送り（gpt-live-transcribe 維持・切替実装は残置）、**TTS は採用して既定を `qwen3-tts-instruct-flash-realtime` へ切替**。`CLAUDE.md` / `ai-cost-map.md` / `AIPricing` を更新（instruct 単価は未公表のため base 同額の暫定計上 → 確定は TODO で追跡）
+  - Phase 5: 料金タブの単価表と推定額計算を検証（実セッション 860 文字 → $0.01118 が手計算と完全一致）。全テストスイート成功
+
 - 2026-07-31 安い中国系 AI モデルを調査し、LLM 置き換えは全経路で見送りと結論した [plan](docs/plans/archive/cheap-chinese-ai-models.md)
   - Phase 1-4: 7 系統の机上調査 → Qwen / GLM / DeepSeek に絞って実測（レイテンシは qwen が sonnet-5 より速い・Anthropic 互換でクライアントほぼ流用可を確認）→ コスト再計算（会話 + フィードバック置換で月 約 $7 の節約見込みだった）
   - Phase 5: DEBUG 限定のセッションエクスポート導線（管理画面 → JSON → 共有シート）を実装し、実機の実セッション 62 本を fixture 化して厳密評価（単発 225 生成 + マルチターン再生 75 生成 + フィードバック 36 生成、opus-5 ブラインド A/B 102 ペア）。会話は機械チェック・judge 勝率・再生とも基準未達（qwen は自己出力の履歴で 3 発話癖が自己強化して崩壊、開幕で制御行を捏造）、フィードバックも品質で明確負け（勝率 17-25%）→ **会話・フィードバックとも置き換えない。合成データだった Phase 3 とフィードバックの結論が逆転しており、実データ駆動に切り替えた価値が出た**
