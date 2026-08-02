@@ -2,9 +2,6 @@
 
 - [ ] Qwen TTS instruct 変種（`qwen3-tts-instruct-flash-realtime`）の単価を Model Studio コンソールか初回請求で確認し、`AIPricing` / `docs/specs/ai-cost-map.md` の暫定値（base と同額 $0.13/1 万字）を確定する
 
-- [ ] ファイルを保存して容量を圧迫していないかチェック [plan](docs/plans/chat-storage-audit.md)
-  - [ ] Phase 1: 管理画面にストレージ内訳を表示して実測（1 セッションあたりの増分を見積もる）
-  - [ ] Phase 2: 実測に基づく判断とエクスポート残骸の掃除
 - [ ] トピック生成をhaiku4.5に変更
 
 ## 不具合

@@ -15,6 +15,7 @@ struct AdminView: View {
         case memory = "記憶"
         case usage = "料金"
         case diagnostics = "診断"
+        case storage = "容量"
         var id: String { rawValue }
     }
 
@@ -61,6 +62,8 @@ struct AdminView: View {
                     UsageDashboardView(usageStore: usageStore)
                 case .diagnostics:
                     DiagnosticsLogView()
+                case .storage:
+                    StorageUsageView(historyStore: historyStore, usageStore: usageStore)
                 }
             }
             .navigationTitle("管理")
@@ -84,7 +87,9 @@ struct AdminView: View {
                 #endif
             }
             #if DEBUG
-            .sheet(item: $exportFile) { file in
+            // 共有シートを閉じたら書き出しファイルは用済み（tmp に残骸を溜めない。
+            // docs/plans/archive/chat-storage-audit.md Phase 2）
+            .sheet(item: $exportFile, onDismiss: { SessionExporter.cleanUpLeftovers() }) { file in
                 ActivityShareSheet(items: [file.url])
             }
             #endif

@@ -186,6 +186,21 @@ final class UtteranceReplayTests: XCTestCase {
         XCTAssertEqual(files(in: tempRoot), [keep.uuidString])
     }
 
+    /// 管理画面「容量」の全削除ボタン（docs/plans/archive/chat-storage-audit.md Phase 2）:
+    /// keepingSessionID = nil で全セッション分のディレクトリが消える。
+    func testPurgeWithoutKeepingSessionRemovesEverything() throws {
+        let cache = UtteranceAudioCache(rootDirectory: tempRoot)
+        for sessionID in [UUID(), UUID()] {
+            let directory = cache.sessionDirectory(for: sessionID)
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            try Data(repeating: 0, count: 10).write(
+                to: directory.appendingPathComponent(UUID().uuidString + ".wav"))
+        }
+        cache.purge(keepingSessionID: nil)
+        XCTAssertEqual(files(in: tempRoot), [])
+    }
+
     /// トリガ 2（起動時）: 最新セッション以外を消し、残したディレクトリ内の .part も消す。
     func testCleanUpAtLaunchRemovesPartsInKeptSession() throws {
         let cache = UtteranceAudioCache(rootDirectory: tempRoot)

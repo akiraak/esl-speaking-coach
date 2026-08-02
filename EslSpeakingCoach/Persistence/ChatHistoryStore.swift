@@ -230,6 +230,21 @@ final class ChatHistoryStore {
             }
     }
 
+    /// 管理画面「容量」用: 各テーブルの行数（1 セッションあたりのストア増分の概算に使う）。
+    struct RecordCounts: Sendable {
+        var sessions = 0
+        var messages = 0
+        var logs = 0
+    }
+
+    func recordCounts() -> RecordCounts {
+        var counts = RecordCounts()
+        counts.sessions = (try? context.fetchCount(FetchDescriptor<ChatSessionRecord>())) ?? 0
+        counts.messages = (try? context.fetchCount(FetchDescriptor<ChatMessageRecord>())) ?? 0
+        counts.logs = (try? context.fetchCount(FetchDescriptor<ChatSessionLogRecord>())) ?? 0
+        return counts
+    }
+
     func feedback(sessionID: UUID) -> SessionFeedback? {
         guard let data = fetchSession(id: sessionID)?.feedbackJSON else { return nil }
         return try? JSONDecoder().decode(SessionFeedback.self, from: data)

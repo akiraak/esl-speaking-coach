@@ -132,6 +132,11 @@ final class UsageStore {
             .sorted { $0.day > $1.day }
     }
 
+    /// 管理画面「容量」用: usage 行の総数（全件フェッチせず数だけ取る）。
+    func recordCount() -> Int {
+        (try? context.fetchCount(FetchDescriptor<APIUsageRecord>())) ?? 0
+    }
+
     func sessionCostUSD(sessionID: UUID) -> Double {
         let descriptor = FetchDescriptor<APIUsageRecord>(
             predicate: #Predicate { $0.sessionID == sessionID })

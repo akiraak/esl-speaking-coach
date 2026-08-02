@@ -16,7 +16,7 @@ AI の発話は読み上げが一度流れたら聞き直せない。聞き逃�
 ## 関連プランとの整合（共通決定）
 
 3 つのプラン（[tap-word-registration](tap-word-registration.md)（実装済み） / 本プラン /
-[chat-storage-audit](../chat-storage-audit.md)）で吹き出しへの操作と保存ポリシーを共有する。
+[chat-storage-audit](chat-storage-audit.md)）で吹き出しへの操作と保存ポリシーを共有する。
 **変更するときは 3 プラン同時に見直すこと。**
 
 1. **吹き出しのジェスチャ体系**

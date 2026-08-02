@@ -40,6 +40,24 @@ enum SessionExporter {
         let createdAt: Date
     }
 
+    /// tmp に書き出したファイルの名前か（掃除の対象選別。純関数）。
+    nonisolated static func isExportFileName(_ name: String) -> Bool {
+        name.hasPrefix("esl-sessions-") && name.hasSuffix(".json")
+    }
+
+    /// tmp のエクスポート残骸を削除する（docs/plans/archive/chat-storage-audit.md Phase 2）。
+    /// 書き出しは共有シートで渡し終えたら用済みなので、シートを閉じたときと起動時に呼ぶ。
+    nonisolated static func cleanUpLeftovers(
+        in directory: URL = FileManager.default.temporaryDirectory
+    ) {
+        let fileManager = FileManager.default
+        let urls = (try? fileManager.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil)) ?? []
+        for url in urls where isExportFileName(url.lastPathComponent) {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
     /// 全セッションを JSON にエンコードして一時ファイルへ書き出し、その URL を返す。
     static func writeJSON(
         historyStore: ChatHistoryStore, memoryStore: CharacterMemoryStore

@@ -170,6 +170,8 @@ final class ChatRoomStore {
     let usageStore: UsageStore
     /// キャラのセッション横断記憶（管理画面からも参照する）。
     let memoryStore: CharacterMemoryStore
+    /// 起動時の永続履歴の掃除に使う（テストでは in-memory コンテナが注入される）。
+    private let modelContainer: ModelContainer
 
     private static let logger = Logger(
         subsystem: "com.akiraak.EslSpeakingCoach", category: "ChatRoomStore")
@@ -216,6 +218,7 @@ final class ChatRoomStore {
     #endif
 
     init(container: ModelContainer = AppModelContainer.shared) {
+        modelContainer = container
         historyStore = ChatHistoryStore(container: container)
         usageStore = UsageStore(container: container)
         memoryStore = CharacterMemoryStore(container: container)
@@ -243,8 +246,13 @@ final class ChatRoomStore {
         // 音声キャッシュの起動時掃除: 最新セッション以外と、書きかけ（.part）を消す
         // （クラッシュ等でセッション開始時の掃除を通らなかったぶんの取りこぼし対策）
         let latestSessionID = historyStore.recentSessions(limit: 1).first?.id
+        let container = modelContainer
         Task.detached(priority: .utility) {
             UtteranceAudioCache.default.cleanUpAtLaunch(keepingSessionID: latestSessionID)
+            // tmp のセッション書き出し残骸と、使い道の無い SwiftData の永続履歴も掃除する
+            // （docs/plans/archive/chat-storage-audit.md Phase 2）
+            SessionExporter.cleanUpLeftovers()
+            PersistentHistoryCleaner.purgeOldHistory(container: container)
         }
         // 訳 ON のまま再起動した場合、復元した直前セッションの未翻訳分をここで埋める
         scheduleTranslationFlush()

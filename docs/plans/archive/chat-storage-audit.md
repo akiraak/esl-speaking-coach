@@ -8,8 +8,8 @@
 
 ## 関連プランとの整合（共通決定）
 
-3 つのプラン（[tap-word-registration](archive/tap-word-registration.md)（実装済み） /
-[utterance-replay](archive/utterance-replay.md) / 本プラン）で保存ポリシーを共有する。
+3 つのプラン（[tap-word-registration](tap-word-registration.md)（実装済み） /
+[utterance-replay](utterance-replay.md) / 本プラン）で保存ポリシーを共有する。
 **変更するときは 3 プラン同時に見直すこと。**
 
 1. **音声ファイルは「直前の 1 セッション」だけローカル保存する**（Caches 配下・
@@ -49,6 +49,50 @@
   TTS は文単位リクエストなので 1 セッションで数十行になり、発話より行数が多い可能性がある
 - 再読み上げ（utterance-replay）実装後は**再生成した再生 1 回ごと**に usage 行が増える点も織り込む
   （ファイル再生は usage 行を作らない）
+
+## 結論（2026-08-01・実測して確定）
+
+**保持ポリシーは設けない。会話履歴は全部残す。** 実測では 1 セッションあたり
+データベースが約 13KB しか増えず、毎日 1 セッション練習しても**年 5MB 程度**。
+10 年続けても 50MB で、掃除の必要がない。
+
+実測の内訳（シミュレータ・23 セッション時点。管理画面「容量」タブの値と
+`sqlite3` の `dbstat` で裏取り）:
+
+| 項目 | 実測 | 評価 |
+| --- | --- | --- |
+| データベース本体 | 296KB（23 セッション = 約 13KB/セッション） | 唯一の無期限増加。年 5MB なら放置でよい |
+| └ ジャーナル（-wal / -shm） | 1.6MB | **蓄積ではない**。書き込みの作業領域で、チェックポイントで本体へ畳まれる。ファイルは縮まないが高水位で頭打ち |
+| 診断ログ | 68KB | 256KB 上限どおり |
+| 音声キャッシュ | 356KB（2 ファイル） | 直前 1 セッション分のみ。WAV は 2.9MB/分なので長いセッションでも十数 MB で頭打ち |
+| エクスポート残骸 | 0B | 掃除を実装した（下記） |
+
+### 見立てと違ったこと: 永続履歴が実データより大きかった
+
+`dbstat` でテーブル別に見ると、**SwiftData が既定で記録する永続履歴**
+（`ATRANSACTION` / `ACHANGE` とそのインデックス）が 151KB あり、
+実データ 118KB より大きかった（ストア全体の 51%）。履歴は iCloud 同期や
+別プロセスが変更を追うための変更ログで、**このアプリにはどちらも無いので使い道が無い**。
+
+`ModelConfiguration` に無効化オプションは無い（iOS 26 SDK の
+`swiftinterface` を確認: `url` / `allowsSave` / `isStoredInMemoryOnly` /
+`groupContainer` / `cloudKitDatabase` のみ）。代わりに
+`ModelContext.deleteHistory(_:)` があるので、**起動時に 7 日より古い履歴を捨てる**
+（`PersistentHistoryCleaner`）。直近を残すのは、同一プロセス内の複数
+`ModelContext`（会話履歴 / 利用量 / 記憶）の変更マージに SwiftData 自身が
+使う可能性への保険。
+
+実測で効果を確認済み（`keepDays` を一時的に 0 にしてシミュレータで検証）:
+`ATRANSACTION` 604 → 1 行、`ACHANGE` 900 → 1 行、実データ（セッション 23 /
+発話 132 / usage 251）は無傷。ストアの使用ページは 299KB → 192KB になり、
+空いた 86KB は以後の書き込みで再利用される（SQLite はファイル自体は縮めない）。
+
+### やった掃除
+
+1. `SessionExporter.cleanUpLeftovers()`: tmp の `esl-sessions-*.json` を
+   **共有シートを閉じたとき**と**起動時**に削除
+2. `PersistentHistoryCleaner.purgeOldHistory()`: 7 日より古い永続履歴を起動時に削除
+3. 管理画面「容量」タブに内訳と「音声キャッシュを全削除」ボタン
 
 ## Phase 分割
 

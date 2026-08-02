@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-08-01 保存ファイルが容量を圧迫していないか調べ、**保持ポリシーは設けない**と結論した（会話履歴は全部残す） [plan](docs/plans/archive/chat-storage-audit.md)
+  - Phase 1: 管理画面に「容量」タブを追加（データベース本体 / ジャーナル / 診断ログ / 音声キャッシュ / エクスポート残骸の内訳とレコード件数）。実測は 1 セッションあたり約 13KB = **毎日 1 セッションでも年 5MB**。10 年で 50MB なので掃除は不要
+  - Phase 2 で見立てと違ったこと: `dbstat` で見ると **SwiftData の永続履歴（`ATRANSACTION` / `ACHANGE`）がストアの 51%（151KB）** を占め、実データ 118KB より大きかった。iCloud 同期も別プロセスも無いこのアプリには用途が無いが `ModelConfiguration` に無効化オプションが無いため、`ModelContext.deleteHistory` で 7 日より古い分を起動時に捨てる `PersistentHistoryCleaner` を追加（実測: 604 → 1 行 / 900 → 1 行、実データは無傷）
+  - 掃除: tmp の `esl-sessions-*.json` を共有シートを閉じたときと起動時に削除。「音声キャッシュを全削除」ボタンも追加（音声は再生成できるため）
+  - 単体テスト 13 件追加（全 375 件パス）。シミュレータで表示と履歴削除を実測確認（`-open-admin 容量`）。ボタンのタップ操作自体は未確認（座標クリックがシミュレータへ届かないため。導線は診断ログの「クリア」と同型）
+
 - 2026-08-01 チャット欄の AI 吹き出しタップで再読み上げできるようにした（直前 1 セッションは保存音声・無ければ再生成） [plan](docs/plans/archive/utterance-replay.md)
   - Phase 1: TTS クライアント生成を `SentenceTTSClientFactory` へ切り出し、セッションと再読み上げで既定（Qwen instruct）・voice 写像を共有。DEBUG の TTS 既定バグ修正と同時対応
   - Phase 2: セッション中の読み上げ音声を `Caches/UtteranceAudio/<sessionID>/<utteranceID>.wav`（PCM16/24kHz WAV）へ保存（書き込み中 `.part` → 全文取得完了で rename・中断は `.part` のまま）。削除は新セッション開始時（使う sessionID 以外を全削除）と起動時（最新セッション以外 + 全 `.part`）の 2 トリガで「完結ファイルは直前 1 セッション分だけ」を維持
