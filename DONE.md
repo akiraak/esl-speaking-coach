@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-08-01 AI 生成 4 経路を Sonnet5 / Haiku4.5 / Gemma4 で比較し、**4 経路とも claude-sonnet-5 を維持**と結論した [plan](docs/plans/archive/model-comparison-sonnet5-haiku45.md)
+  - 比較軸はクオリティと料金の 2 つ。実機データが用意できないので**合成 fixture**（`tools/model-eval/synthetic/`）を作った。実会話を含まないのでコミットでき、STT ノイズ・一語返答・日英混在・別れの挨拶と、日本人学習者に典型的な誤り 21 個を意図的に仕込んである
+  - **Gemma は会話ターンで失格**（35/35 致命的違反。台本タグを守れず markdown の箇条書きで「分析」を書く）。structured outputs 経路（トピック・フィードバック）では動くが、フェンス混入 20% と語の重複バグ、記憶ノートは要約が薄すぎて実用に耐えない
+  - **haiku は台本規約の遵守だけなら sonnet より上**（実害違反 35/36 対 31/36）。しかし単発 A/B は互角（14-12-4）でもマルチターン再生は 1-3 で負け、別れの締めと深い履歴の文脈引き継ぎで劣る。TTS 向きでないダッシュを 13 回使う。フィードバックでは**和製英語 mansion を 0/3 でしか拾えない**（sonnet は 3/3）
+  - **キャッシュ最小長の実測が効いた**: sonnet は cache_read 82,727 トークンなのに haiku は 0（system prompt 約 2,000 < 最小長 4,096）。会話ターンの節約は単価 1/3 に反して 26% どまり。4 経路すべて置き換えても**月 $3〜4** の節約にしかならない
+  - 副産物: Gemini API アダプタ（`geminiStream`）、Swift の複数行文字列から system prompt を直接パースする `extract_prompts.py`（swiftc は依存が芋づる式に増えて詰まるため）、仕込んだ誤りの検出率を測る `report_recall_synth.mjs`
+
 - 2026-08-01 保存ファイルが容量を圧迫していないか調べ、**保持ポリシーは設けない**と結論した（会話履歴は全部残す） [plan](docs/plans/archive/chat-storage-audit.md)
   - Phase 1: 管理画面に「容量」タブを追加（データベース本体 / ジャーナル / 診断ログ / 音声キャッシュ / エクスポート残骸の内訳とレコード件数）。実測は 1 セッションあたり約 13KB = **毎日 1 セッションでも年 5MB**。10 年で 50MB なので掃除は不要
   - Phase 2 で見立てと違ったこと: `dbstat` で見ると **SwiftData の永続履歴（`ATRANSACTION` / `ACHANGE`）がストアの 51%（151KB）** を占め、実データ 118KB より大きかった。iCloud 同期も別プロセスも無いこのアプリには用途が無いが `ModelConfiguration` に無効化オプションが無いため、`ModelContext.deleteHistory` で 7 日より古い分を起動時に捨てる `PersistentHistoryCleaner` を追加（実測: 604 → 1 行 / 900 → 1 行、実データは無傷）

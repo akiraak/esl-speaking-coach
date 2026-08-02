@@ -2,10 +2,19 @@
 import { readFileSync } from "node:fs";
 
 const SECRETS = "/Users/akiraak/Projects/esl-speaking-coach/.secrets";
+const readKey = (name) => {
+  try {
+    return readFileSync(`${SECRETS}/${name}`, "utf8").trim();
+  } catch {
+    return null; // 使わないプロバイダのキーが無くても他の比較は動かす
+  }
+};
+
 export const keys = {
-  anthropic: readFileSync(`${SECRETS}/anthropic-api-key`, "utf8").trim(),
-  dashscope: readFileSync(`${SECRETS}/dashscope-api-key`, "utf8").trim(),
-  openrouter: readFileSync(`${SECRETS}/openrouter-api-key`, "utf8").trim(),
+  anthropic: readKey("anthropic-api-key"),
+  dashscope: readKey("dashscope-api-key"),
+  openrouter: readKey("openrouter-api-key"),
+  gemini: readKey("gemini-api-key"),
 };
 
 // 文末判定: 蓄積テキストに文終端 ([.!?] + 空白/改行/末尾) が現れた最初の時刻を first-sentence とする
@@ -164,6 +173,79 @@ export async function openaiStream({
     if (choice.finish_reason) finishReason = choice.finish_reason;
   }
   return { text, reasoning, ttft, ttfr, firstSentence, total: performance.now() - t0, finishReason, usage };
+}
+
+// Gemini API（Gemma 4 の評価用。Anthropic / OpenAI いずれとも形が違うので専用アダプタ）。
+// - system prompt は systemInstruction、structured outputs は
+//   generationConfig.responseMimeType + responseJsonSchema
+// - streamGenerateContent?alt=sse で SSE が返る（返却形は anthropicStream と揃える）
+// - Gemma には effort / thinking / プロンプトキャッシュの概念が無いので引数も持たない
+export async function geminiStream({
+  apiKey = keys.gemini,
+  model,
+  system,
+  messages, // Anthropic 形式 [{role:"user"|"assistant", content}] を contents へ変換する
+  maxTokens = 1024,
+  schema = null,
+}) {
+  const body = {
+    contents: messages.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: typeof m.content === "string" ? m.content : String(m.content) }],
+    })),
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      ...(schema
+        ? { responseMimeType: "application/json", responseJsonSchema: schema }
+        : {}),
+    },
+  };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
+  const t0 = performance.now();
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+  }
+  let text = "";
+  let ttft = null;
+  let firstSentence = null;
+  let finishReason = null;
+  let usage = {};
+  for await (const line of sseLines(res)) {
+    if (!line.startsWith("data:")) continue;
+    const json = line.slice(5).trim();
+    if (!json) continue;
+    let p;
+    try { p = JSON.parse(json); } catch { continue; }
+    if (p.error) throw new Error(`API error: ${JSON.stringify(p.error)}`);
+    const candidate = p.candidates?.[0];
+    for (const part of candidate?.content?.parts ?? []) {
+      if (typeof part.text !== "string" || !part.text) continue;
+      if (ttft === null) ttft = performance.now() - t0;
+      text += part.text;
+      if (firstSentence === null && hasSentenceEnd(text)) firstSentence = performance.now() - t0;
+    }
+    if (candidate?.finishReason) finishReason = candidate.finishReason;
+    if (p.usageMetadata) usage = p.usageMetadata;
+  }
+  // usage のキー名を Anthropic 側と揃えて集計しやすくする（課金は無料枠だがトークン数は見る）
+  const normalized = {
+    input_tokens: usage.promptTokenCount ?? null,
+    output_tokens: usage.candidatesTokenCount ?? null,
+    total_tokens: usage.totalTokenCount ?? null,
+  };
+  return {
+    text, ttft, firstSentence, total: performance.now() - t0,
+    stopReason: finishReason, usage: normalized,
+  };
 }
 
 // Anthropic 非ストリーミング（opus-5 判定用。structured outputs で JSON を受ける）
