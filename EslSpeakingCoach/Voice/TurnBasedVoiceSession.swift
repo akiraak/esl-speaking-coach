@@ -14,7 +14,9 @@ import UIKit
 /// live の音声入力は**自分が話すターン（listening）のときだけ**動く
 /// （syncVoiceInputGate。docs/plans/archive/turn-gated-voice-input.md）。AI のターン中は入力ごと
 /// 止まるため音声での barge-in は無く、割り込みは一時停止ボタンとテキスト送信のみ。
-/// 入力の窓は開始 / 終了のジングルで知らせる。4o 経路は従来どおり常時入力 + 音声 barge-in。
+/// 入力の窓は開始 / 終了のジングルで知らせる。ただし終了ジングルは確定テキストが空でないと
+/// 分かってから鳴らすので、ノイズだけで VAD が発火したターンは無音で通り過ぎる
+/// （docs/plans/empty-segment-no-cue.md）。4o 経路は従来どおり常時入力 + 音声 barge-in。
 ///
 /// 状態遷移:
 ///   listening --(VAD: speech_stopped / テキスト送信)--> thinking
@@ -167,6 +169,10 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 確定テキスト待ちセグメントの音量統計（speech_stopped で積み、確定 / 失敗で取り出す）。
     /// 計測できなかったセグメントは nil で積んで採用側へ倒す
     private var pendingSegmentLevels: [SpeechSegmentLevels?] = []
+    /// 発話終端で入力の窓が閉じたが、終了ジングルはまだ鳴らしていない。
+    /// 確定テキストが空（ノイズだけで VAD が発火した）なら鳴らさずに取り消す
+    /// （docs/plans/empty-segment-no-cue.md）
+    private var pendingInputEndCue = false
 
     init(
         configuration: Configuration = Configuration(),
@@ -439,6 +445,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         pendingSegments = 0
         pendingSegmentLevels.removeAll()
         pendingTurnText = ""
+        pendingInputEndCue = false
     }
 
     /// STT 切断。セッションを殺さず backoff 付きで再接続する（Wi-Fi ⇔ LTE 切替やサーバ側打ち切り対策）。
@@ -448,6 +455,8 @@ final class TurnBasedVoiceSession: VoiceSession {
         isUserSpeaking = false
         pendingSegments = 0
         pendingSegmentLevels.removeAll()
+        // 認識途中のセグメントは失われる。そのセグメント向けの終了ジングルも取り消す
+        pendingInputEndCue = false
         sttEventTask?.cancel()
         sttEventTask = nil
         transcriber?.stop()
@@ -508,8 +517,9 @@ final class TurnBasedVoiceSession: VoiceSession {
             isUserSpeaking = false
             pendingSegments += 1
             pendingSegmentLevels.append(microphone.router.endLevelSegment())
-            // 入力の窓が閉じたことを知らせる（テキスト送信ターンでは鳴らない）
-            speaker.playInputEndCue()
+            // 入力の窓が閉じたことを知らせるジングルは、確定テキストが空でないと分かってから鳴らす
+            // （ノイズ誤検知のターンを無音で通すため。テキスト送信ターンでは元々鳴らない）
+            pendingInputEndCue = true
             metrics = TurnMetricsBuilder()
             let now = Date()
             metrics.utteranceEndedAt = now
@@ -588,14 +598,17 @@ final class TurnBasedVoiceSession: VoiceSession {
         let text = pendingTurnText
         pendingTurnText = ""
         guard !text.isEmpty else {
-            // ノイズ等で VAD だけ発火して空だった。聞き取りへ戻し、入力の再開を知らせる
-            if state == .thinking {
-                state = .listening
-                playListeningCueIfListening()
-            }
+            // ノイズ等で VAD だけ発火して空だった。窓が閉じたことは知らせていないので、
+            // 開始ジングルも鳴らさずに黙って聞き取りへ戻す（一連が完全に無音で通り過ぎる）
+            pendingInputEndCue = false
+            if state == .thinking { state = .listening }
             return
         }
         if state != .thinking { state = .thinking }
+        if pendingInputEndCue {
+            pendingInputEndCue = false
+            speaker.playInputEndCue()
+        }
         commitText(text)
     }
 
