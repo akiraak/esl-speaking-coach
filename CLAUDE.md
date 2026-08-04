@@ -14,7 +14,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | 領域 | 選択 | 備考 |
 | --- | --- | --- |
 | プラットフォーム | iOS ネイティブ / Swift + SwiftUI | Android は対象外 |
-| 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-live-transcribe`、TTS: Alibaba Qwen3 TTS（instruct）。下記「音声レイヤの方針」参照 |
+| 音声レイヤ | クラウド STT / TTS + Claude のターン制（**決定**） | STT: OpenAI `gpt-live-transcribe`、TTS: Gemini 3.1 Flash TTS。下記「音声レイヤの方針」参照 |
 | 会話・評価の LLM | Claude API（会話・トピック生成・評価とも `claude-sonnet-5`） | アプリから直接呼ぶ |
 | データ保存 | 端末内（SwiftData） | サーバーなし。iCloud 同期もしない |
 | バックエンド | **なし** | 自分専用前提でアプリから API を直叩きする |
@@ -28,12 +28,13 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | STT | OpenAI `gpt-live-transcribe`（Realtime API の transcription セッション / WebSocket。2026-07-31 採用） | `languages: [en]` + prompt ヒントで英語固定（短い発話の言語誤判定対策）。`delay: low` を明示固定。分数課金 $0.017/分（発話セグメント分のみ）。旧既定 `gpt-4o-transcribe` へは `-stt-model` か既定値 1 箇所で戻せる |
 | 発話終端・入力の窓 | クライアント VAD（`ClientSpeechEndpointer` + `AudioTapRouter` の送信ゲート）+ 手動 commit。**音声入力は自分が話すターン（listening）のときだけ動く** | live はサーバ VAD 非対応。無音 800ms で終端・遡り 0.5 秒・60 秒で強制終端。AI のターン中は入力ごと停止するため**音声での barge-in は無い**（割り込みは一時停止ボタン / テキスト送信のみ）。入力の窓の開始 / 終了はジングル 2 種で提示（`docs/plans/archive/turn-gated-voice-input.md`）。発話区間だけ append するので無音・AI 発話中は課金されない。4o 経路では従来どおり常時入力 + サーバ VAD + 音声 barge-in |
 | 会話 LLM | `claude-sonnet-5`（下記規約どおりストリーミング + 文単位 TTS） | 2026-07-25 に opus-5 / sonnet-5 / haiku-4-5 を比較して決定（記録: `docs/plans/archive/spike-conversation/`） |
-| TTS | Alibaba Qwen3 TTS instruct（`qwen3-tts-instruct-flash-realtime`。WebSocket realtime・commit モード、24kHz PCM16 LE。**2026-08-01 採用**） | voice は実聴選定で Chobi=Serena / Naruko=Vivian + キャラ別スタイル指示（`QwenTTSConfiguration`）。単価 $0.13/1 万字 ≈ $0.0098/分（現行 Gemini 比 約 1/3。instruct の単価は未公表のため base 同額の暫定計上）。旧既定 Gemini Flash TTS へは `-tts-provider gemini` か既定値 1 箇所で戻せる |
+| TTS | Gemini 3.1 Flash TTS（`gemini-3.1-flash-tts-preview`。SSE ストリーミング、24kHz PCM16 LE。**2026-08-03 に Qwen instruct から戻した**） | voice とスタイル前置文は `ChatCharacter.speechStyle` が正（Chobi=Leda / Naruko=Aoede）。Gemini は独立した instructions フィールドを持たないため、本文先頭に自然文で前置する。音声出力従量 ≈ $0.03/分。Qwen instruct へは `-tts-provider qwen` か既定値 1 箇所で切り替えられる |
 
 - Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。この構成は Anthropic 公式の Claude アプリ音声モードと同型
 - 不採用にしたもの: iPhone 純正音声系（STT のモデル DL・シミュレータ検証不可・TTS 品質）、OpenAI Realtime / Gemini Live の speech-to-speech（会話相手が Claude でなくなる）。検証記録は `docs/plans/archive/voice-layer-spike.md`
 - STT は当初 `gpt-4o-transcribe` + サーバ VAD で採用し、`gpt-live-transcribe`（2026-07-28 発表）は**サーバ VAD 非対応**のため一度見送った（`docs/plans/archive/gpt-live-transcribe-verification.md`）。その後クライアント側の発話終端検知 + 手動 commit を実装し、実機検証を経て **2026-07-31 に live を既定へ切替**（`docs/plans/archive/gpt-live-transcribe-adoption.md`）。旧経路（4o + サーバ VAD）は削除せず維持している（live で長期安定したら掃除タスクを別途起こす）
-- TTS は当初 Gemini Flash TTS を採用し、実機検証・実聴選定を経て **2026-08-01 に Alibaba Qwen3 TTS（instruct 変種）へ既定を切替**（単価 約 1/3・文単位 TTFB も速い。検証記録: `docs/plans/archive/alibaba-voice-models.md`）。Qwen3 ASR も検証したが **STT は見送り**（gpt-live-transcribe 維持）。旧経路（Gemini / OpenAI TTS、Qwen ASR 切替）は削除せず維持している
+- TTS は当初 Gemini Flash TTS を採用し、実聴選定を経て 2026-08-01 に Alibaba Qwen3 TTS（instruct 変種）へ切り替えたが、**2026-08-03 に Gemini へ戻した**（作者判断）。単価は Gemini のほうが約 3 倍（$0.03/分 対 $0.0098/分）だが、1 セッション 5 分の生成音声で月あたり $3 前後の差。検証記録は `docs/plans/archive/alibaba-voice-models.md`。Qwen3 ASR も検証したが **STT は見送り**（gpt-live-transcribe 維持）。切替経路（Qwen TTS / OpenAI TTS、Qwen ASR）は削除せず維持している
+- **キャラの voice / スタイル指示は `ChatCharacter.speechStyle` が単一の正**（Chobi=Leda / Naruko=Aoede、Gemini の prebuilt voice 名）。Qwen はこれを `voiceMap` / `instructionMap` で自分の voice 名へ写像し、OpenAI は固定 voice で読む。**プロバイダを変えてもキャラ定義は書き換えない**
 - ターン制のため会話中の音声レベルの発音指摘はしない（発音・表現のフィードバックはセッション後にテキストベースで行う）
 - **出力経路に `.defaultToSpeaker` を使わない**（2026-07-28 決定）。カテゴリは `.playAndRecord` / `mode: .voiceChat` / options は `AudioRoutePolicy.categoryOptions`（Bluetooth HFP・A2DP・AirPlay を許可）。スピーカーへは「出力が**本体内蔵（受話口 / スピーカー）だけのとき**」に `overrideOutputAudioPort(.speaker)` で寄せ、経路変更のたびに再評価する。**内蔵スピーカーを判定から外さない**（外すと自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復で AVAudioEngine が止まり無音になる。`docs/plans/archive/speaker-no-audio.md`）。`.defaultToSpeaker` を付けるとイヤフォン / Bluetooth があっても出力が内蔵スピーカーへ固定される（`AudioRoutePolicy` / `docs/plans/archive/earphone-audio-route.md`）
 
@@ -82,7 +83,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 - API キーは **Keychain** に保存する。`UserDefaults`・plist・ソースコードに書かない
 - **API キーをリポジトリにコミットしない。** `.gitignore` と、コミット前の確認を徹底する
 - ローカル開発では `.secrets/<provider>-api-key`（git 管理外、1 行のプレーンテキスト。現在は `anthropic-api-key` / `openai-api-key` / `gemini-api-key` / `dashscope-api-key` / `wordbook-api-secret`）にキーを置くと、`./run-install-iphone.sh` / `./run-simulator.sh` が起動引数 `-seed-<provider>-key` で Keychain へ流し込む（DEBUG ビルドのみ有効）。設定画面からの手入力は不要になる
-- 会話履歴は端末内のみ。外部に送信するのは音声・会話系 API（Claude / OpenAI STT / Alibaba Qwen TTS / 切替時の Gemini ほか）へのリクエストと、単語帳（esl.chobi.me）API への検索クエリ・単語登録リクエストだけ。単語登録（吹き出し長押し）では選択語の正規化と語義生成のため**対象発話の本文を文脈として単語帳サーバへ送る**（docs/plans/tap-word-registration.md）
+- 会話履歴は端末内のみ。外部に送信するのは音声・会話系 API（Claude / OpenAI STT / Gemini TTS / 切替時の Alibaba Qwen ほか）へのリクエストと、単語帳（esl.chobi.me）API への検索クエリ・単語登録リクエストだけ。単語登録（吹き出し長押し）では選択語の正規化と語義生成のため**対象発話の本文を文脈として単語帳サーバへ送る**（docs/plans/tap-word-registration.md）
 
 <!-- vibeboard:begin -->
 ## 開発管理画面 (vibeboard)

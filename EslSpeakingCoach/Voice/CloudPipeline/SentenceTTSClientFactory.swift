@@ -2,15 +2,18 @@ import Foundation
 
 /// プロバイダ選択 → SentenceTTSClient 生成の一元化（docs/plans/archive/utterance-replay.md）。
 /// セッション（TurnBasedVoiceSession）と再読み上げ（UtteranceReplayer）が
-/// **同じ既定（Qwen instruct）・同じ voice 写像**を使うため、既定はこの Configuration の
+/// **同じ既定（Gemini Flash TTS）・同じ voice 写像**を使うため、既定はこの Configuration の
 /// 1 箇所だけが持つ。DEBUG の起動引数は override があるときだけ上書きする
 /// （ChatRoomStore.currentTTSConfiguration）。
 enum SentenceTTSClientFactory {
     /// TTS のプロバイダ選択と各プロバイダの設定の束。
     struct Configuration: Sendable {
-        /// 採用構成は Qwen TTS instruct（2026-08-01 に Gemini から切替。
-        /// docs/plans/archive/alibaba-voice-models.md）。旧既定へは -tts-provider gemini で戻せる
-        var provider: TTSProvider = .qwen
+        /// 採用構成は Gemini Flash TTS（2026-08-03 に Qwen instruct から戻した）。
+        /// キャラの voice / スタイル前置文は `ChatCharacter.speechStyle` が正で、Gemini は
+        /// それをそのまま使う（Qwen は voiceMap / instructionMap で写像していた）。
+        /// Qwen へは -tts-provider qwen で切り替えられる
+        /// （検証記録: docs/plans/archive/alibaba-voice-models.md）
+        var provider: TTSProvider = .gemini
         var openAI = OpenAITTSConfiguration()
         var gemini = GeminiTTSConfiguration()
         var qwen = QwenTTSConfiguration()

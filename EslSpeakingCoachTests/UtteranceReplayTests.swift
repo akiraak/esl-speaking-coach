@@ -18,12 +18,25 @@ final class UtteranceReplayTests: XCTestCase {
 
     // MARK: - ファクトリのプロバイダ分岐
 
-    /// セッションと再読み上げが共有する生成分岐。既定は Qwen（instruct 変種）。
-    func testFactoryDefaultsToQwenInstruct() {
+    /// セッションと再読み上げが共有する生成分岐。既定は Gemini Flash TTS
+    /// （2026-08-03 に Qwen instruct から戻した）。
+    func testFactoryDefaultsToGemini() {
         let configuration = SentenceTTSClientFactory.Configuration()
-        XCTAssertEqual(configuration.provider, .qwen)
+        XCTAssertEqual(configuration.provider, .gemini)
         let client = SentenceTTSClientFactory.make(configuration)
-        XCTAssertEqual(client.modelDescription, QwenTTSConfiguration.instructModel)
+        XCTAssertEqual(client.modelDescription, GeminiTTSConfiguration().model)
+    }
+
+    /// Gemini は ChatCharacter.speechStyle の voice / スタイル前置文をそのまま使う
+    /// （Qwen だけが voiceMap / instructionMap で写像していた）。
+    func testGeminiUsesCharacterSpeechStyleDirectly() {
+        XCTAssertEqual(ChatCharacter.chobi.speechStyle.voice, "Leda")
+        XCTAssertEqual(ChatCharacter.naruko.speechStyle.voice, "Aoede")
+        for character in ChatCharacter.allCases {
+            XCTAssertFalse(
+                character.speechStyle.styleInstruction.isEmpty,
+                "\(character.displayName) のスタイル前置文が空")
+        }
     }
 
     func testFactoryProviderBranches() {

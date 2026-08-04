@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-08-03 TTS の既定を Gemini 3.1 Flash TTS に戻した（作者判断）
+  - `SentenceTTSClientFactory.Configuration.provider` を `.qwen` → `.gemini`。2026-08-01 に Qwen instruct へ切り替えていたが 2 日で差し戻し
+  - **キャラの声の定義は書き換えなくて済んだ**。`ChatCharacter.speechStyle`（Chobi=Leda / Naruko=Aoede + スタイル前置文）が単一の正で、Qwen 側が `voiceMap` / `instructionMap` でそれを写像していただけだったため、既定を戻すと元の Gemini voice がそのまま使われる
+  - コストは上がる（生成音声 1 分 $0.0098 → $0.03。1 セッション $0.32 → $0.42、毎日 1 セッションで月 $9.5 → $16 前後）。詰めたくなったら `-tts-provider qwen` で戻せる
+  - CLAUDE.md / ai-cost-map.md を更新。テストは既定の検証を Gemini に合わせ、キャラ定義がプロバイダに依存しないことを確認するテストを 1 件追加（全 376 件パス）
+
 - 2026-08-01 AI 生成 4 経路を Sonnet5 / Haiku4.5 / Gemma4 で比較し、**4 経路とも claude-sonnet-5 を維持**と結論した [plan](docs/plans/archive/model-comparison-sonnet5-haiku45.md)
   - 比較軸はクオリティと料金の 2 つ。実機データが用意できないので**合成 fixture**（`tools/model-eval/synthetic/`）を作った。実会話を含まないのでコミットでき、STT ノイズ・一語返答・日英混在・別れの挨拶と、日本人学習者に典型的な誤り 21 個を意図的に仕込んである
   - **Gemma は会話ターンで失格**（35/35 致命的違反。台本タグを守れず markdown の箇条書きで「分析」を書く）。structured outputs 経路（トピック・フィードバック）では動くが、フェンス混入 20% と語の重複バグ、記憶ノートは要約が薄すぎて実用に耐えない
