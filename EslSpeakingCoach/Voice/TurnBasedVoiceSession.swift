@@ -160,6 +160,10 @@ final class TurnBasedVoiceSession: VoiceSession {
     private var isVoiceProcessingActive = true
     /// 直近に適用した出力オーバーライド。同じ値の再適用（＝余計な経路変更通知）を避けるために持つ
     private var currentOutputOverride: AVAudioSession.PortOverride = .none
+    /// システム音量（`outputVolume`）の監視。ハードのボリュームボタンで**値が動いているのに**
+    /// 読み上げ音量が変わらないのか、そもそも値が動いていないのかを実機で切り分けるためだけの
+    /// 診断（docs/plans/tts-volume-not-following.md Phase 0）。音声パスには影響しない
+    private var volumeObservation: NSKeyValueObservation?
     /// サーバ VAD が発話中と判定している間 true
     private var isUserSpeaking = false
     /// speech_stopped 済みで確定テキスト待ちのセグメント数
@@ -287,7 +291,12 @@ final class TurnBasedVoiceSession: VoiceSession {
             let audioSession = AVAudioSession.sharedInstance()
             // `.defaultToSpeaker` は使わない。イヤフォン / Bluetooth があっても出力が内蔵スピーカーへ
             // 引き寄せられるため（docs/plans/earphone-audio-route.md）。受話口しか無いときだけ
-            // applyOutputRoute() で明示的にスピーカーへ寄せる
+            // applyOutputRoute() で明示的にスピーカーへ寄せる。
+            // **`mode` は `.voiceChat` から変えない**。`.default` にすると通話音量チャンネルから
+            // 外れてボリュームを 0 まで下げられるようになるが、`.voiceChat` の AGC が外れて
+            // マイクの入力レベルが激減し、VAD のしきい値が丸ごと合わなくなる（実機で確認）。
+            // 音量の下限は出力側のゲイン（PlaybackVolumePolicy）で潰す
+            // （docs/plans/tts-volume-not-following.md）
             try audioSession.setCategory(
                 .playAndRecord, mode: .voiceChat, options: AudioRoutePolicy.categoryOptions)
             try audioSession.setActive(true)
@@ -333,6 +342,8 @@ final class TurnBasedVoiceSession: VoiceSession {
             NotificationCenter.default.removeObserver(token)
         }
         observerTokens.removeAll()
+        volumeObservation?.invalidate()
+        volumeObservation = nil
         claudeTask?.cancel()
         claudeTask = nil
         tearDownSTT()
@@ -858,6 +869,7 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// AVAudioSession の割り込み・経路変更と、アプリのバックグラウンド遷移を監視する。
     /// UI 層にオーディオの知識を漏らさないため、セッション自身が NotificationCenter を購読する。
     private func startSystemObservers() {
+        startVolumeObserver()
         let center = NotificationCenter.default
         observerTokens.append(center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
@@ -937,7 +949,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         let session = AVAudioSession.sharedInstance()
         let route = session.currentRoute
         let summary = AudioRoutePolicy.describe(route, sampleRate: session.sampleRate)
-        DiagnosticsLog.record("route: \(context) \(summary)")
+        // 音量も一緒に残す。出力経路ごとに音量の記憶が別で、スピーカーへ寄せた瞬間に
+        // 値が飛ぶ（実測: 受話口 0.90 → スピーカー 0.05）ため経路とセットで見たい
+        DiagnosticsLog.record("route: \(context) \(summary) \(Self.describeVolume(session))")
         eventContinuation.yield(.info("オーディオ経路: \(summary)"))
 
         let desired: AVAudioSession.PortOverride =
@@ -953,6 +967,35 @@ final class TurnBasedVoiceSession: VoiceSession {
         } catch {
             DiagnosticsLog.record("!! route: 出力の切り替えに失敗: \(error.localizedDescription)")
         }
+    }
+
+    /// ハードのボリュームボタン操作を拾い、読み上げのゲインへ反映する
+    /// （docs/plans/tts-volume-not-following.md）。
+    ///
+    /// `.voiceChat` では音量が通話音量チャンネル扱いで下限 0.05 の床があり、
+    /// ボタンを下げ切っても読み上げが消えない。PlaybackVolumePolicy でその下限ぶんを
+    /// ソフトウェアゲインとして潰す。
+    ///
+    /// KVO のコールバックは任意スレッドから来る。DiagnosticsLog はスレッドセーフなので
+    /// その場で書き、MainActor 隔離の読み上げ側へは Task で渡す。
+    private func startVolumeObserver() {
+        let session = AVAudioSession.sharedInstance()
+        volumeObservation = session.observe(
+            \.outputVolume, options: [.initial, .new]
+        ) { [weak self] session, _ in
+            let volume = session.outputVolume
+            let gain = PlaybackVolumePolicy.gain(systemVolume: volume)
+            DiagnosticsLog.record("volume: \(Self.describeVolume(session)) gain=\(gain)")
+            Task { @MainActor [weak self] in self?.speaker.setOutputGain(gain) }
+        }
+    }
+
+    /// 音量とカテゴリ / モードの 1 行要約。どの音量チャンネルを見ているかを判断するために
+    /// カテゴリとモードも一緒に出す。
+    private static func describeVolume(_ session: AVAudioSession) -> String {
+        let volume = String(format: "%.2f", session.outputVolume)
+        return "outputVolume=\(volume) category=\(session.category.rawValue) "
+            + "mode=\(session.mode.rawValue)"
     }
 
     /// 電話・Siri 等の割り込みやバックグラウンド遷移で全 I/O を止める。

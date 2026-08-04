@@ -29,6 +29,10 @@ final class StreamingAudioPlayer {
     private var markerQueue: [UUID?] = []
     private var streamEnded = false
     private var startedThisTurn = false
+    /// 読み上げに掛けるソフトウェアゲイン（既定は素通し）。
+    /// 会話セッションだけが PlaybackVolumePolicy に従って動かす。再読み上げ
+    /// （UtteranceReplayer）は `.playback` = メディア音量なので 1.0 のまま使う
+    private var outputGain: Float = 1
     /// stopNow 後に届く古いバッファの完了通知を無視するための世代カウンタ。
     private var turnID = 0
     private var isGraphBuilt = false
@@ -43,8 +47,21 @@ final class StreamingAudioPlayer {
             engine.connect(cuePlayer, to: engine.mainMixerNode, format: format)
             isGraphBuilt = true
         }
+        // エンジンを作り直したときもゲインを取り戻す（経路変更での再起動を含む）
+        engine.mainMixerNode.outputVolume = outputGain
         engine.prepare()
         try engine.start()
+    }
+
+    /// 読み上げ全体に掛けるゲイン（0.0〜1.0）。ジングルも同じミキサを通るので一緒に絞られる。
+    /// docs/plans/tts-volume-not-following.md
+    func setOutputGain(_ gain: Float) {
+        let clamped = min(max(gain, 0), 1)
+        guard clamped != outputGain else { return }
+        outputGain = clamped
+        // グラフ未構築（prepare 前）なら prepare() 側で反映される
+        guard isGraphBuilt else { return }
+        engine.mainMixerNode.outputVolume = clamped
     }
 
     func beginTurn() {

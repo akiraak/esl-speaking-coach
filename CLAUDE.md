@@ -37,6 +37,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 - **キャラの voice / スタイル指示は `ChatCharacter.speechStyle` が単一の正**（Chobi=Leda / Naruko=Aoede、Gemini の prebuilt voice 名）。Qwen はこれを `voiceMap` / `instructionMap` で自分の voice 名へ写像し、OpenAI は固定 voice で読む。**プロバイダを変えてもキャラ定義は書き換えない**
 - ターン制のため会話中の音声レベルの発音指摘はしない（発音・表現のフィードバックはセッション後にテキストベースで行う）
 - **出力経路に `.defaultToSpeaker` を使わない**（2026-07-28 決定）。カテゴリは `.playAndRecord` / `mode: .voiceChat` / options は `AudioRoutePolicy.categoryOptions`（Bluetooth HFP・A2DP・AirPlay を許可）。スピーカーへは「出力が**本体内蔵（受話口 / スピーカー）だけのとき**」に `overrideOutputAudioPort(.speaker)` で寄せ、経路変更のたびに再評価する。**内蔵スピーカーを判定から外さない**（外すと自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復で AVAudioEngine が止まり無音になる。`docs/plans/archive/speaker-no-audio.md`）。`.defaultToSpeaker` を付けるとイヤフォン / Bluetooth があっても出力が内蔵スピーカーへ固定される（`AudioRoutePolicy` / `docs/plans/archive/earphone-audio-route.md`）
+- **`mode: .voiceChat` を `.default` に変えない**（2026-08-04 決定）。`.voiceChat` だと音量が**通話音量チャンネル**扱いになり `outputVolume` が 0.05 で打ち止め＝ボリュームボタンで消音できないが、`.default` にすると AGC が外れて**マイクの入力レベルが激減し、調整済みの VAD しきい値が丸ごと合わなくなる**（実機で確認）。音量の下限は出力側のソフトウェアゲイン `PlaybackVolumePolicy`（0.05 以下は無音、0.05〜0.50 は dB 直線、0.50 以上は素通し）で潰す。`AVAudioSession.outputVolume` の KVO が唯一の駆動元（`docs/plans/archive/tts-volume-not-following.md`）
 
 **設計上の制約（引き続き有効）**: 音声入出力はプロトコル境界の裏に隠す。UI と会話ロジックが特定の音声 API に直接依存してはいけない。
 

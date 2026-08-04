@@ -64,6 +64,11 @@ final class CloudSentenceSpeaker {
         try player.prepare()
     }
 
+    /// 読み上げ全体へ掛けるゲイン（docs/plans/tts-volume-not-following.md）。
+    func setOutputGain(_ gain: Float) {
+        player.setOutputGain(gain)
+    }
+
     func beginTurn() {
         sentenceQueue.removeAll()
         streamEnded = false
