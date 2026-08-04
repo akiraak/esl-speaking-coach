@@ -12,6 +12,15 @@
   - [ ] 実機確認: モデルを切り替えて 1 セッション（haiku の effort 落とし・opus-5 の max_tokens・
         Qwen TTS / gpt-4o-transcribe の音声）+ モデル画面の下部（STT セクションと「すべて既定に戻す」）
 
+- [ ] 音声入力の音量・時間のしきい値を管理画面で調整可能にする [plan](docs/plans/voice-input-tuning-in-admin.md)
+  - 一式 7 項目（音量 3 / 時間 4）・反映は次のセッションから・直近セグメントの実測を並べる
+  - [x] Phase 1: `VoiceInputSettingsStore` と 7 項目の定義（範囲・刻み・既定は保存しない）
+  - [x] Phase 2: 管理画面「音声入力」の画面とルートへの追加
+  - [x] Phase 3: セッションへの反映（`clientEndpointer` / `levelGate`）と診断ログ
+  - [x] Phase 4: 直近セグメントの実測表示（`.segmentMeasured` イベント + リングバッファ）
+  - [x] Phase 5: 環境プリセット 3 種（静かな部屋 / 生活音のある部屋 / 外・カフェ）
+  - [ ] 実機確認: 閾値を上げて誤検知が減るか / 発話の頭切れが出ないか
+
 - [ ] iPhoneのボリュームを下げても読み上げ音量が下がらない
 
 ## 不具合

@@ -15,6 +15,6 @@ final class AdminViewTests: XCTestCase {
     func testTabRawValuesAreStableLaunchArgumentKeys() {
         XCTAssertEqual(
             AdminView.Tab.allCases.map(\.rawValue),
-            ["会話", "記憶", "料金", "診断", "容量", "モデル"])
+            ["会話", "記憶", "料金", "診断", "容量", "モデル", "音声入力"])
     }
 }

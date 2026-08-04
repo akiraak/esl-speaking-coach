@@ -59,11 +59,13 @@ struct ChatRoomView: View {
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,
                 memoryStore: store.memoryStore, modelSettings: store.modelSettings,
+                voiceInputSettings: store.voiceInputSettings,
                 initialTab: DebugLaunchArguments.adminInitialTab)
             #else
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,
-                memoryStore: store.memoryStore, modelSettings: store.modelSettings)
+                memoryStore: store.memoryStore, modelSettings: store.modelSettings,
+                voiceInputSettings: store.voiceInputSettings)
             #endif
         }
         // シートを閉じてからセッションを開始する（ピルタップと同じ経路）

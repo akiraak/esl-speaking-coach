@@ -35,6 +35,9 @@ enum VoiceSessionEvent: Sendable {
     case apiUsage(AIUsageEvent)
     /// 1 ターン分のレイテンシ実測値
     case turnMetrics(TurnMetrics)
+    /// STT セグメント 1 件の実測（音量統計 + 採否 + 認識結果）。会話ログの 1 行と、
+    /// 管理画面「音声入力」のしきい値調整に使う
+    case segmentMeasured(SpeechSegmentMeasurement)
     /// マイク入力の RMS レベル（音声モードの波形表示用）
     case micLevel(Float)
     case info(String)

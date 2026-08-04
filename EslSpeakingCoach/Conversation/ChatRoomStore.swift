@@ -172,6 +172,9 @@ final class ChatRoomStore {
     let memoryStore: CharacterMemoryStore
     /// 経路ごとのモデル選択（管理画面「モデル」で変える。リクエストのたびに読む）。
     let modelSettings: ModelSettingsStore
+    /// 音声入力のしきい値（管理画面「音声入力」で変える。セッション開始時に読む）と、
+    /// 調整の手がかりにするセグメント実測の記録先。
+    let voiceInputSettings: VoiceInputSettingsStore
     /// 起動時の永続履歴の掃除に使う（テストでは in-memory コンテナが注入される）。
     private let modelContainer: ModelContainer
 
@@ -223,10 +226,12 @@ final class ChatRoomStore {
 
     init(
         container: ModelContainer = AppModelContainer.shared,
-        modelSettings: ModelSettingsStore = .shared
+        modelSettings: ModelSettingsStore = .shared,
+        voiceInputSettings: VoiceInputSettingsStore = .shared
     ) {
         modelContainer = container
         self.modelSettings = modelSettings
+        self.voiceInputSettings = voiceInputSettings
         historyStore = ChatHistoryStore(container: container)
         usageStore = UsageStore(container: container)
         memoryStore = CharacterMemoryStore(container: container)
@@ -731,6 +736,9 @@ final class ChatRoomStore {
         configuration.turn = .init(model: modelSettings.model(for: .conversationTurn))
         configuration.tts = currentTTSConfiguration()
         configuration.transcription.model = modelSettings.sttModel.rawValue
+        // 音声入力のしきい値もここで固定される（管理画面で変えても次のセッションから）
+        configuration.clientEndpointer = voiceInputSettings.thresholds()
+        configuration.levelGate = voiceInputSettings.levelGateThresholds()
         #if DEBUG
         if let sttModel = DebugLaunchArguments.sttModelOverride {
             configuration.transcription.model = sttModel
@@ -769,6 +777,7 @@ final class ChatRoomStore {
             })
         // どの構成で回したセッションかを後から辿れるようにする（モデル比較の実機検証で効く）
         DiagnosticsLog.record("model: \(modelSettings.snapshot().diagnosticsSummary)")
+        DiagnosticsLog.record("voiceInput: \(voiceInputSettings.diagnosticsSummary)")
         DiagnosticsLog.record(
             "session: 開始 topic=\(activeTopicTitle ?? "-") opening=\(opening) "
             + "practice=\(activeSessionKind.rawValue) "
@@ -1379,6 +1388,10 @@ final class ChatRoomStore {
         case .turnMetrics(let metrics):
             // 会話練習の邪魔になるのでトーク画面には出さず、管理画面の会話ログにだけ残す
             historyStore.appendLog(kind: .metrics, text: metrics.summaryLine)
+        case .segmentMeasured(let measurement):
+            // 会話ログには従来どおり 1 行。あわせて管理画面「音声入力」の調整用に直近ぶんを残す
+            historyStore.appendLog(kind: .notice, text: measurement.logLine)
+            voiceInputSettings.record(measurement)
         case .micLevel(let level):
             micLevel = level
         case .info(let text):

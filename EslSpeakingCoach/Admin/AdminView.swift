@@ -12,6 +12,7 @@ struct AdminView: View {
     let usageStore: UsageStore
     let memoryStore: CharacterMemoryStore
     let modelSettings: ModelSettingsStore
+    let voiceInputSettings: VoiceInputSettingsStore
 
     /// 管理画面の項目。**rawValue（表示名）は `-open-admin <表示名>` の指定キーなので変えない。**
     enum Tab: String, CaseIterable, Identifiable, Hashable {
@@ -21,6 +22,7 @@ struct AdminView: View {
         case diagnostics = "診断"
         case storage = "容量"
         case models = "モデル"
+        case voiceInput = "音声入力"
         var id: String { rawValue }
 
         var systemImage: String {
@@ -31,6 +33,7 @@ struct AdminView: View {
             case .diagnostics: return "stethoscope"
             case .storage: return "internaldrive"
             case .models: return "cpu"
+            case .voiceInput: return "waveform"
             }
         }
     }
@@ -40,7 +43,7 @@ struct AdminView: View {
     static let sections: [(title: String, tabs: [Tab])] = [
         ("記録", [.sessions, .memory]),
         ("コスト", [.usage, .storage]),
-        ("設定", [.models]),
+        ("設定", [.models, .voiceInput]),
         ("開発", [.diagnostics]),
     ]
 
@@ -55,6 +58,9 @@ struct AdminView: View {
     @State private var storageBytes: Int64?
     /// 既定から変えている経路の数
     @State private var overriddenModelCount = 0
+    /// 既定から変えている音声入力のしきい値の数と、一致しているプリセット（あれば名前を出す）
+    @State private var overriddenVoiceInputCount = 0
+    @State private var voiceInputPreset: VoiceInputPreset?
     #if DEBUG
     @State private var exportFile: ExportFile?
 
@@ -68,12 +74,14 @@ struct AdminView: View {
     init(
         historyStore: ChatHistoryStore, usageStore: UsageStore,
         memoryStore: CharacterMemoryStore, modelSettings: ModelSettingsStore,
+        voiceInputSettings: VoiceInputSettingsStore,
         initialTab: Tab? = nil
     ) {
         self.historyStore = historyStore
         self.usageStore = usageStore
         self.memoryStore = memoryStore
         self.modelSettings = modelSettings
+        self.voiceInputSettings = voiceInputSettings
         _path = State(initialValue: initialTab.map { [$0] } ?? [])
     }
 
@@ -158,6 +166,9 @@ struct AdminView: View {
             return storageBytes.map(StorageAudit.formattedBytes) ?? "計測中…"
         case .models:
             return overriddenModelCount == 0 ? "既定" : "\(overriddenModelCount) 経路変更"
+        case .voiceInput:
+            if let voiceInputPreset { return voiceInputPreset.rawValue }
+            return overriddenVoiceInputCount == 0 ? "既定" : "\(overriddenVoiceInputCount) 項目変更"
         }
     }
 
@@ -179,6 +190,8 @@ struct AdminView: View {
                 StorageUsageView(historyStore: historyStore, usageStore: usageStore)
             case .models:
                 ModelSettingsView(store: modelSettings)
+            case .voiceInput:
+                VoiceInputSettingsView(store: voiceInputSettings)
             }
         }
         .navigationTitle(tab.rawValue)
@@ -196,6 +209,8 @@ struct AdminView: View {
         memoryUpdatedAt = memoryStore.snapshot()?.updatedAt
         diagnosticsUpdatedAt = Self.diagnosticsUpdatedAt()
         overriddenModelCount = modelSettings.overriddenCount
+        overriddenVoiceInputCount = voiceInputSettings.overriddenCount
+        voiceInputPreset = voiceInputSettings.matchingPreset
         // 容量だけはディレクトリ走査なので、表示を止めないよう別スレッドで測る（容量タブと同じ形）
         Task.detached(priority: .userInitiated) {
             let report = StorageAudit.measure()

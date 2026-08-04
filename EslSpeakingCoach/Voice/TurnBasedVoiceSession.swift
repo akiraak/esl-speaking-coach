@@ -535,9 +535,10 @@ final class TurnBasedVoiceSession: VoiceSession {
             let levels = dequeueSegmentLevels()
             let verdict = SpeechLevelGate.verdict(for: levels, thresholds: configuration.levelGate)
             let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            // 閾値を実機で追い込めるよう、採否と実測値は毎セグメント会話ログに残す（トーク画面には出さない）
-            eventContinuation.yield(.info(
-                "STT セグメント \(verdict.reason ?? "採用"): \(levels?.summaryLine ?? "レベル計測なし") 「\(trimmed)」"))
+            // 閾値を実機で追い込めるよう、採否と実測値は毎セグメント残す（トーク画面には出さない。
+            // 会話ログの 1 行と管理画面「音声入力」の一覧に使う）
+            eventContinuation.yield(.segmentMeasured(SpeechSegmentMeasurement(
+                levels: levels, verdict: verdict, transcript: trimmed, measuredAt: Date())))
             if !verdict.isAccepted {
                 // 部屋の暗騒音と大差ない音量だった。空セグメントと同じ扱いにする
             } else if STTHallucinationFilter.isPromptEcho(

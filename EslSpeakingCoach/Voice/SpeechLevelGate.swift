@@ -1,7 +1,9 @@
 import Foundation
 
 /// サーバ VAD が切り出したセグメント 1 件の音量統計（`SegmentLevelMeter` が作る）。
-struct SpeechSegmentLevels: Sendable, Equatable {
+/// Codable なのは管理画面「音声入力」が直近の実測を保存して見せるため
+/// （docs/plans/voice-input-tuning-in-admin.md）。
+struct SpeechSegmentLevels: Sendable, Equatable, Codable {
     /// セグメント区間の RMS 最大値（口元の声か遠くの音かを最もよく分ける）
     var peak: Float
     /// セグメント区間の RMS 平均
@@ -46,7 +48,7 @@ enum SpeechLevelGate {
         var minimumSampleCount = 3
     }
 
-    enum Verdict: Sendable, Equatable {
+    enum Verdict: String, Sendable, Equatable, Codable {
         case accepted
         /// ピークが暗騒音に対して十分大きくない（遠くの声・物音）
         case rejectedNearNoiseFloor
@@ -74,6 +76,24 @@ enum SpeechLevelGate {
         // フロアが取れていない（起動直後など）なら比を使えないので採用側へ倒す
         guard let snr = levels.snr else { return .accepted }
         return snr >= thresholds.snrRatio ? .accepted : .rejectedNearNoiseFloor
+    }
+}
+
+/// STT セグメント 1 件の実測（音量統計 + 採否 + 認識結果）。
+/// 管理画面の会話ログに 1 行残すのと、「音声入力」でしきい値を追い込むための直近一覧に使う
+/// （docs/plans/voice-input-tuning-in-admin.md）。
+struct SpeechSegmentMeasurement: Sendable, Equatable, Codable {
+    /// 計測できなかった場合は nil（判定は採用側へ倒している）
+    var levels: SpeechSegmentLevels?
+    var verdict: SpeechLevelGate.Verdict
+    /// 確定テキスト（前後の空白は除去済み。棄却されたセグメントの中身も残す）
+    var transcript: String
+    var measuredAt: Date
+
+    /// 会話ログに残す 1 行。**閾値を後から見直すために数値を残す**のが目的。
+    var logLine: String {
+        "STT セグメント \(verdict.reason ?? "採用"): "
+            + "\(levels?.summaryLine ?? "レベル計測なし") 「\(transcript)」"
     }
 }
 
