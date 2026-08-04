@@ -25,10 +25,10 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 | 役割 | 採用 | 備考 |
 | --- | --- | --- |
-| STT | OpenAI `gpt-live-transcribe`（Realtime API の transcription セッション / WebSocket。2026-07-31 採用） | `languages: [en]` + prompt ヒントで英語固定（短い発話の言語誤判定対策）。`delay: low` を明示固定。分数課金 $0.017/分（発話セグメント分のみ）。旧既定 `gpt-4o-transcribe` へは `-stt-model` か既定値 1 箇所で戻せる |
+| STT | OpenAI `gpt-live-transcribe`（Realtime API の transcription セッション / WebSocket。2026-07-31 採用） | `languages: [en]` + prompt ヒントで英語固定（短い発話の言語誤判定対策）。`delay: low` を明示固定。分数課金 $0.017/分（発話セグメント分のみ）。旧既定 `gpt-4o-transcribe`・Qwen3-ASR へは**管理画面「モデル」**か `-stt-model`、既定は `STTModel.default` の 1 箇所で戻せる |
 | 発話終端・入力の窓 | クライアント VAD（`ClientSpeechEndpointer` + `AudioTapRouter` の送信ゲート）+ 手動 commit。**音声入力は自分が話すターン（listening）のときだけ動く** | live はサーバ VAD 非対応。無音 800ms で終端・遡り 0.5 秒・60 秒で強制終端。AI のターン中は入力ごと停止するため**音声での barge-in は無い**（割り込みは一時停止ボタン / テキスト送信のみ）。入力の窓の開始 / 終了はジングル 2 種で提示（`docs/plans/archive/turn-gated-voice-input.md`）。発話区間だけ append するので無音・AI 発話中は課金されない。4o 経路では従来どおり常時入力 + サーバ VAD + 音声 barge-in |
 | 会話 LLM | `claude-sonnet-5`（下記規約どおりストリーミング + 文単位 TTS） | 2026-07-25 に opus-5 / sonnet-5 / haiku-4-5 を比較して決定（記録: `docs/plans/archive/spike-conversation/`） |
-| TTS | Gemini 3.1 Flash TTS（`gemini-3.1-flash-tts-preview`。SSE ストリーミング、24kHz PCM16 LE。**2026-08-03 に Qwen instruct から戻した**） | voice とスタイル前置文は `ChatCharacter.speechStyle` が正（Chobi=Leda / Naruko=Aoede）。Gemini は独立した instructions フィールドを持たないため、本文先頭に自然文で前置する。音声出力従量 ≈ $0.03/分。Qwen instruct へは `-tts-provider qwen` か既定値 1 箇所で切り替えられる |
+| TTS | Gemini 3.1 Flash TTS（`gemini-3.1-flash-tts-preview`。SSE ストリーミング、24kHz PCM16 LE。**2026-08-03 に Qwen instruct から戻した**） | voice とスタイル前置文は `ChatCharacter.speechStyle` が正（Chobi=Leda / Naruko=Aoede）。Gemini は独立した instructions フィールドを持たないため、本文先頭に自然文で前置する。音声出力従量 ≈ $0.03/分。Qwen instruct・OpenAI TTS へは**管理画面「モデル」**か `-tts-provider`、既定は `TTSProvider.default` の 1 箇所で切り替えられる |
 
 - Anthropic の API に**リアルタイム音声（speech-to-speech）のエンドポイントは存在しない**。この構成は Anthropic 公式の Claude アプリ音声モードと同型
 - 不採用にしたもの: iPhone 純正音声系（STT のモデル DL・シミュレータ検証不可・TTS 品質）、OpenAI Realtime / Gemini Live の speech-to-speech（会話相手が Claude でなくなる）。検証記録は `docs/plans/archive/voice-layer-spike.md`
@@ -49,7 +49,10 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 
 - エンドポイント: `POST https://api.anthropic.com/v1/messages`
 - 必須ヘッダ: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
-- モデルは会話ターン・トピック生成・会話後のフィードバック生成とも **`claude-sonnet-5`**（フィードバックは 2026-07-31 に `claude-opus-5` から変更。`SessionFeedbackClient.model` の 1 箇所で戻せる）。日付サフィックスは付けない
+- モデルは会話ターン・トピック生成・会話後のフィードバック生成・記憶更新とも **`claude-sonnet-5`**、翻訳のみ `claude-haiku-4-5`。日付サフィックスは付けない
+  - **既定は `ClaudeRoute`（`Claude/ClaudeModel.swift`）の 1 箇所が正**。経路ごとに**管理画面「モデル」から sonnet-5 / opus-5 / haiku-4-5 へ切り替えられる**（保存は UserDefaults。既定と同じ選択は保存しないので、既定を変えれば追従する。docs/plans/model-selection-in-admin.md）
+  - **`output_config.effort` はモデルによって受け付けない**（`claude-haiku-4-5` は 400）。判定は `ClaudeModel.supportsEffort` の 1 箇所で、非対応なら effort ごと送らない
+  - **プロンプトキャッシュの最小プレフィックスもモデルで違う**（opus-5 512 / sonnet-5 1,024 / haiku-4-5 4,096 トークン）。2 キャラ台本の system prompt は約 2,000 トークンなので、**会話ターンを haiku-4-5 にするとキャッシュが黙って効かなくなる**（エラーは出ない）
 - **`temperature` / `top_p` / `top_k` は送ってはいけない**（`claude-sonnet-5` / `claude-opus-5` とも 400 になる）
 - **assistant prefill（末尾に assistant ターンを置く手法）は使えない**（400）。出力形式を固定したいときは `output_config.format` の structured outputs を使う
 

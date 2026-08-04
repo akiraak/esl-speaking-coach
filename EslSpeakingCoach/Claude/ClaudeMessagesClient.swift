@@ -55,11 +55,25 @@ struct ClaudeMessagesClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     /// 会話ターン用の設定（ストリーミング必須・effort low・max_tokens は意図的に小さく）。
-    /// 会話ターンのモデルは claude-sonnet-5（2026-07-25 決定。記録: docs/plans/archive/spike-conversation/）。
+    /// 既定のモデルと effort は `ClaudeRoute.conversationTurn` が正
+    /// （2026-07-25 に sonnet-5 で決定。記録: docs/plans/archive/spike-conversation/。
+    /// 管理画面から切り替えられる: docs/plans/model-selection-in-admin.md）。
     struct TurnParameters: Sendable {
-        var model = "claude-sonnet-5"
-        var maxTokens = 1024
-        var effort = "low"
+        var model: ClaudeModel
+        var maxTokens: Int
+        /// nil なら `output_config` ごと送らない。モデルが effort 非対応なら送信時に落とす
+        var effort: String?
+
+        /// max_tokens は thinking と本文で共有する予算なのでモデルから決める（明示指定も可）。
+        init(
+            model: ClaudeModel = ClaudeRoute.conversationTurn.defaultModel,
+            maxTokens: Int? = nil,
+            effort: String? = ClaudeRoute.conversationTurn.effort
+        ) {
+            self.model = model
+            self.maxTokens = maxTokens ?? model.turnMaxTokens
+            self.effort = effort
+        }
     }
 
     var parameters = TurnParameters()
@@ -120,11 +134,13 @@ struct ClaudeMessagesClient: Sendable {
         system: String,
         messages: [ConversationMessage]
     ) throws -> Data {
+        // effort 非対応のモデル（haiku-4-5）へ送ると 400 になるので output_config ごと落とす
+        let effort = parameters.model.supportsEffort ? parameters.effort : nil
         let body = RequestBody(
-            model: parameters.model,
+            model: parameters.model.rawValue,
             maxTokens: parameters.maxTokens,
             stream: true,
-            outputConfig: .init(effort: parameters.effort),
+            outputConfig: effort.map { RequestBody.OutputConfig(effort: $0) },
             system: [.init(text: system)],
             messages: messages.map { .init(role: $0.role.rawValue, content: $0.text) }
         )
@@ -135,7 +151,7 @@ struct ClaudeMessagesClient: Sendable {
         let model: String
         let maxTokens: Int
         let stream: Bool
-        let outputConfig: OutputConfig
+        let outputConfig: OutputConfig?
         let system: [SystemBlock]
         let messages: [Message]
 

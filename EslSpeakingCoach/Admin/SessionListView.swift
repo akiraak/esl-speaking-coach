@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 管理画面「会話」タブ: セッション一覧（新しい順）→ 会話全文の詳細。
+/// 管理画面「会話」: セッション一覧（新しい順）→ 会話全文の詳細。
 /// スワイプ削除でセッションと、紐づく利用記録を削除する。
 struct SessionListView: View {
     let historyStore: ChatHistoryStore

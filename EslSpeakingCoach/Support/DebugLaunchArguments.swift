@@ -237,18 +237,19 @@ enum DebugLaunchArguments {
     }
 
     /// 起動時に管理画面を開く（シミュレータでの表示確認用）。
-    /// 例: -open-admin / -open-admin 料金 / -open-admin 診断（タブ名は AdminView.Tab の表示名）
+    /// 例: -open-admin（項目一覧）/ -open-admin 料金 / -open-admin 診断
+    /// （項目名は AdminView.Tab の表示名。指定するとその画面まで push した状態で開く）
     static var shouldOpenAdmin: Bool {
         ProcessInfo.processInfo.arguments.contains("-open-admin")
     }
 
-    /// タブ指定が無い / 不明な名前なら会話タブで開く。
-    static var adminInitialTab: AdminView.Tab {
+    /// 指定の項目を push した状態で開く。指定が無い / 不明な名前なら項目一覧（ルート）で開く。
+    static var adminInitialTab: AdminView.Tab? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-open-admin"), index + 1 < args.count else {
-            return .sessions
+            return nil
         }
-        return AdminView.Tab(rawValue: args[index + 1]) ?? .sessions
+        return AdminView.Tab(rawValue: args[index + 1])
     }
 }
 #endif

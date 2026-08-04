@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 管理画面「診断」タブ: クラッシュ調査用の追記ログ（docs/plans/end-session-crash.md Phase 0）。
+/// 管理画面「診断」: クラッシュ調査用の追記ログ（docs/plans/end-session-crash.md Phase 0）。
 /// 前回起動ぶんも残っているので、落ちた後に再起動してからここを読む。
 struct DiagnosticsLogView: View {
     /// 画面に出す行数の上限（コピーは全文）。長すぎる本文の描画で画面が固まらないようにする
@@ -26,6 +26,7 @@ struct DiagnosticsLogView: View {
             }
             .font(.subheadline)
             .padding(.horizontal, 16)
+            .padding(.top, 8)
             .padding(.bottom, 8)
 
             if text.isEmpty {

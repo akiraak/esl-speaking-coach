@@ -161,37 +161,105 @@ enum AIPricing {
         let note: String?
     }
 
-    /// 種別 → 現在適用中の既定モデルと単価。切替用の旧経路（gpt-4o-transcribe / Gemini TTS 等）は
-    /// 出さない。推定額の計算に使っている定数から組み立てるので、単価改定でこのファイルを
-    /// 更新すれば表示も追従する。at は sonnet-5 導入価格の判定に使う。
-    static func currentRate(for kind: AIUsageEvent.Kind, at date: Date = Date()) -> KindRate {
+    /// 種別 → **いま選ばれているモデル**と単価（管理画面「モデル」の選択に追従する）。
+    /// 推定額の計算に使っている定数から組み立てるので、単価改定でこのファイルを更新すれば
+    /// 表示も追従する。at は sonnet-5 導入価格の判定に使う。
+    static func currentRate(
+        for kind: AIUsageEvent.Kind,
+        selection: ModelSelectionSnapshot,
+        at date: Date = Date()
+    ) -> KindRate {
         switch kind {
-        case .conversationTurn, .topicSuggestion, .sessionFeedback, .memoryUpdate:
-            let sonnet = claudeRates(model: "claude-sonnet-5", at: date)
-            let regular = claudeRates(
-                model: "claude-sonnet-5", at: sonnet5IntroPriceEndsAfter.addingTimeInterval(1))
-            return KindRate(
-                model: "claude-sonnet-5",
-                price: tokenPrice(input: sonnet.input, output: sonnet.output),
-                note: date <= sonnet5IntroPriceEndsAfter
-                    ? "〜2026-08-31 は導入価格。以降は \(tokenPrice(input: regular.input, output: regular.output))"
-                    : nil)
-        case .translation:
-            let haiku = claudeRates(model: "claude-haiku-4-5", at: date)
-            return KindRate(
-                model: "claude-haiku-4-5",
-                price: tokenPrice(input: haiku.input, output: haiku.output), note: nil)
+        case .conversationTurn: return claudeRate(.conversationTurn, selection: selection, at: date)
+        case .topicSuggestion: return claudeRate(.topicSuggestion, selection: selection, at: date)
+        case .sessionFeedback: return claudeRate(.sessionFeedback, selection: selection, at: date)
+        case .memoryUpdate: return claudeRate(.memoryUpdate, selection: selection, at: date)
+        case .translation: return claudeRate(.translation, selection: selection, at: date)
         case .speechToText:
+            let model = selection.sttModel
             return KindRate(
-                model: "gpt-live-transcribe",
-                price: "音声 \(usd(liveTranscribeUSDPerMinute)) / 分",
-                note: "発話セグメント分のみ・秒単位切り上げ")
+                model: model.rawValue, price: priceDescription(for: model), note: note(for: model))
         case .textToSpeech:
+            let provider = selection.ttsProvider
             return KindRate(
-                model: "qwen3-tts-instruct-flash-realtime",
-                price: "\(usd(qwenTTSUSDPer10kCharacters)) / 1 万文字",
-                note: "生成音声 1 分 ≈ \(usd(qwenTTSFallbackUSDPerMinute))。instruct の単価は未公表のため base の確認値を暫定計上")
+                model: provider.modelDescription,
+                price: priceDescription(for: provider),
+                note: note(for: provider))
         }
+    }
+
+    /// Claude 経路の単価行。導入価格の期間中は「以降はいくらになるか」を補足に出す。
+    private static func claudeRate(
+        _ route: ClaudeRoute, selection: ModelSelectionSnapshot, at date: Date
+    ) -> KindRate {
+        let model = selection.model(for: route)
+        let current = claudeRates(model: model.rawValue, at: date)
+        let regular = claudeRates(
+            model: model.rawValue, at: sonnet5IntroPriceEndsAfter.addingTimeInterval(1))
+        let isIntroPrice = current.input != regular.input || current.output != regular.output
+        return KindRate(
+            model: model.rawValue,
+            price: tokenPrice(input: current.input, output: current.output),
+            note: isIntroPrice
+                ? "〜2026-08-31 は導入価格。以降は \(tokenPrice(input: regular.input, output: regular.output))"
+                : nil)
+    }
+
+    /// 単価表の但し書き（課金の効き方・暫定計上）。
+    private static func note(for model: STTModel) -> String? {
+        switch model {
+        case .live: return "秒単位切り上げ"
+        case .transcribe4o: return "実際は音声入力トークン課金（\(usd(transcribe4oAudioInputRate)) / 1M）"
+        case .qwenASR: return nil
+        }
+    }
+
+    private static func note(for provider: TTSProvider) -> String? {
+        switch provider {
+        case .gemini:
+            return "音声出力トークン課金（\(usd(geminiTTSAudioOutputRate)) / 1M・"
+                + "\(Int(geminiTTSTokensPerSecond)) トークン/秒）"
+        case .qwen:
+            return "instruct の単価は未公表のため base の確認値を暫定計上"
+        case .openAI:
+            return "参考値・要再確認"
+        }
+    }
+
+    /// 表示用の単価（1M トークン）。**単価表はこのファイルが単一の正**なので、画面はここを呼ぶ。
+    static func tokenPriceDescription(for model: ClaudeModel, at date: Date = Date()) -> String {
+        let rates = claudeRates(model: model.rawValue, at: date)
+        return tokenPrice(input: rates.input, output: rates.output)
+    }
+
+    /// 表示用の単価（STT。管理画面のモデル選択）。
+    static func priceDescription(for model: STTModel) -> String {
+        switch model {
+        case .live:
+            return "音声 \(usd(liveTranscribeUSDPerMinute)) / 分（発話セグメント分のみ）"
+        case .transcribe4o:
+            return "音声 約 \(usd(transcribe4oFallbackUSDPerMinute)) / 分"
+        case .qwenASR:
+            return "音声 \(usd(qwenASRUSDPerSecond * 60)) / 分"
+        }
+    }
+
+    /// 表示用の単価（TTS。管理画面のプロバイダ選択）。
+    static func priceDescription(for provider: TTSProvider) -> String {
+        switch provider {
+        case .gemini:
+            return "生成音声 1 分 ≈ \(usd(geminiTTSUSDPerMinute))"
+        case .qwen:
+            return "\(usd(qwenTTSUSDPer10kCharacters)) / 1 万文字"
+                + "（生成音声 1 分 ≈ \(usd(qwenTTSFallbackUSDPerMinute))）"
+        case .openAI:
+            return "音声 1 分 ≈ \(usd(openAIMiniTTSUSDPerMinute))"
+        }
+    }
+
+    /// 生成音声 1 分あたりの Gemini TTS 代（音声出力トークンの単価から算出）。
+    private static var geminiTTSUSDPerMinute: Double {
+        geminiTTSTokensPerSecond * 60 / 1_000_000 * geminiTTSAudioOutputRate
     }
 
     private static func tokenPrice(input: Double, output: Double) -> String {

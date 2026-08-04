@@ -1,14 +1,17 @@
 import SwiftUI
 
-/// 管理画面「料金」タブ: 推定額のサマリ（今日 / 今月 / 累計）、種別内訳（今月）、日別一覧。
+/// 管理画面「料金」: 推定額のサマリ（今日 / 今月 / 累計）、種別内訳（今月）、日別一覧。
 /// 表示は記録済みの推定額（記録時の単価表で計算）の合算のみで、再計算はしない。
-/// 種別内訳には現在適用中の既定モデルと単価（`AIPricing.currentRate(for:)`）を併記する。
+/// 種別内訳には**いま選ばれているモデル**と単価（`AIPricing.currentRate`）を併記する。
 struct UsageDashboardView: View {
     let usageStore: UsageStore
+    let modelSettings: ModelSettingsStore
 
     @State private var totals = UsageStore.Totals()
     @State private var kindTotals: [UsageStore.KindTotal] = []
     @State private var dailyTotals: [UsageStore.DailyTotal] = []
+    /// 描画のたびに UserDefaults を引かないよう、表示時に 1 回だけ読む
+    @State private var selection = ModelSelectionSnapshot()
 
     var body: some View {
         List {
@@ -35,8 +38,9 @@ struct UsageDashboardView: View {
                 Text("種別内訳（今月）")
             } footer: {
                 Text("""
-                    モデルと単価は現在適用中のもの。推定額は記録時の単価で計算・保存されるため、\
-                    単価改定後は表示中の単価と過去の記録が一致しないことがあります。
+                    モデルと単価は管理画面「モデル」でいま選んでいるもの。\
+                    推定額は呼び出し時のモデル・記録時の単価で計算・保存されるため、\
+                    モデルを切り替えたり単価が改定されたりすると、表示中の単価と過去の記録は一致しません。
                     """)
             }
 
@@ -73,7 +77,7 @@ struct UsageDashboardView: View {
     }
 
     private func kindRowView(_ total: UsageStore.KindTotal) -> some View {
-        let rate = AIPricing.currentRate(for: total.kind)
+        let rate = AIPricing.currentRate(for: total.kind, selection: selection)
         return HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(total.kind.label)
@@ -108,6 +112,7 @@ struct UsageDashboardView: View {
     }
 
     private func reload() {
+        selection = modelSettings.snapshot()
         totals = usageStore.totals()
         kindTotals = usageStore.kindTotals()
         dailyTotals = usageStore.dailyTotals(days: 30)

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 管理画面「記憶」タブ: キャラのセッション横断記憶（ローリング記憶ノート）の閲覧とリセット。
+/// 管理画面「記憶」: キャラのセッション横断記憶（ローリング記憶ノート）の閲覧とリセット。
 struct MemoryAdminView: View {
     let memoryStore: CharacterMemoryStore
 

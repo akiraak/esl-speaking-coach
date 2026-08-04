@@ -128,7 +128,7 @@
 
 ## 利用量の記録（2026-07-25 実装）
 
-管理画面「AI 利用料金」のため、6 経路すべてで API レスポンスの usage を記録している
+管理画面「AI 利用料金」のため、7 経路すべてで API レスポンスの usage を記録している
 （実装プラン: `docs/plans/archive/history-persistence-and-admin.md`）。
 
 - 取得元: Claude は SSE の `message_start` / `message_delta`（非ストリーミングは応答の `usage`）、
@@ -138,6 +138,10 @@
 - 記録: `Persistence/UsageStore.swift`（`APIUsageRecord`）。生の usage と、**記録時に** `Usage/AIPricing.swift`
   の単価表（この文書の単価表と対応。sonnet-5 の導入価格切替も考慮）で計算した推定額を保存する
 - 記録は best effort: barge-in でキャンセルしたターンの usage は取れないことがあり、推定額は実請求より下振れし得る
+- **7 経路とも管理画面「モデル」から使うモデルを切り替えられる**（Claude 5 経路は sonnet-5 / opus-5 /
+  haiku-4-5、TTS は Gemini / Qwen / OpenAI、STT は gpt-live-transcribe / gpt-4o-transcribe / Qwen3-ASR。
+  docs/plans/model-selection-in-admin.md）。**記録は呼び出し時のモデル名で残る**ので、
+  切り替えても過去の推定額は当時の単価・モデルのまま正しい
 
 ## コスト管理上の注意（今後の実装に効く順）
 
@@ -146,4 +150,5 @@
    直近ターン末尾への `cache_control` 追加（履歴分も 0.1 倍で読める）が次の最適化候補
 3. barge-in で破棄した TTS・キャンセルした Claude 生成分も課金される（仕様上許容。頻発するならセンテンス先読み数の制限を検討）
 4. 単価が改定されたら `Usage/AIPricing.swift` とこの文書の単価表を併せて更新する（保存済みの推定額は書き換えない）。
-   管理画面「料金」タブの種別内訳に出すモデル・単価は `AIPricing.currentRate(for:)` から生成されるため、コード側を更新すれば自動で追従する
+   管理画面「料金」タブの種別内訳に出すモデル・単価は `AIPricing.currentRate(for:selection:)` から生成される。
+   **単価はコード側を更新すれば、モデルは管理画面の選択を変えれば、それぞれ自動で追従する**

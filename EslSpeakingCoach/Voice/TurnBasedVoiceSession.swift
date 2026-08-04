@@ -56,6 +56,9 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     struct Configuration: Sendable {
         var transcription = OpenAITranscriptionConfiguration()
+        /// 会話ターンの Claude 設定（モデル・max_tokens・effort）。既定は ClaudeRoute が正で、
+        /// 管理画面の選択は ChatRoomStore がここへ詰める（セッション開始時に固定される）
+        var turn = ClaudeMessagesClient.TurnParameters()
         /// TTS のプロバイダ選択と各プロバイダ設定。既定（Qwen instruct）と生成の分岐は
         /// SentenceTTSClientFactory に一元化し、再読み上げ（UtteranceReplayer）と共有する
         var tts = SentenceTTSClientFactory.Configuration()
@@ -89,7 +92,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
     private let eventContinuation: AsyncStream<VoiceSessionEvent>.Continuation
     private let configuration: Configuration
-    private let client = ClaudeMessagesClient()
+    private let client: ClaudeMessagesClient
     private let claudeKeyProvider: @Sendable () -> String?
     private let openAIKeyProvider: @Sendable () -> String?
     private let geminiKeyProvider: @Sendable () -> String?
@@ -173,6 +176,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         dashScopeKeyProvider: @escaping @Sendable () -> String? = { nil }
     ) {
         self.configuration = configuration
+        self.client = ClaudeMessagesClient(parameters: configuration.turn)
         self.claudeKeyProvider = claudeKeyProvider
         self.openAIKeyProvider = openAIKeyProvider
         self.geminiKeyProvider = geminiKeyProvider
@@ -482,7 +486,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             case .preparing:
                 state = .listening
                 eventContinuation.yield(.info(
-                    "接続完了（STT: \(configuration.transcription.model), TTS: \(speaker.modelDescription), LLM: \(client.parameters.model)）"))
+                    "接続完了（STT: \(configuration.transcription.model), TTS: \(speaker.modelDescription), LLM: \(client.parameters.model.rawValue)）"))
                 startOpeningIfNeeded()
                 playListeningCueIfListening()
             case .reconnecting:
@@ -698,7 +702,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         guard !usage.isEmpty else { return }
         eventContinuation.yield(.apiUsage(AIUsageEvent(
             provider: .anthropic,
-            model: client.parameters.model,
+            model: client.parameters.model.rawValue,
             kind: .conversationTurn,
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,

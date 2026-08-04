@@ -170,6 +170,8 @@ final class ChatRoomStore {
     let usageStore: UsageStore
     /// キャラのセッション横断記憶（管理画面からも参照する）。
     let memoryStore: CharacterMemoryStore
+    /// 経路ごとのモデル選択（管理画面「モデル」で変える。リクエストのたびに読む）。
+    let modelSettings: ModelSettingsStore
     /// 起動時の永続履歴の掃除に使う（テストでは in-memory コンテナが注入される）。
     private let modelContainer: ModelContainer
 
@@ -180,6 +182,8 @@ final class ChatRoomStore {
     private var eventTask: Task<Void, Never>?
     /// 吹き出しタップの再読み上げ（初回タップ時に生成。セッションと TTS 構成を共有する）
     private var replayer: UtteranceReplayer?
+    /// 生成済み replayer が使っている TTS プロバイダ（管理画面で変えたら作り直すため）
+    private var replayerProvider: TTSProvider?
     /// 手動終了 / goodbye による正常終了か（events 終了時の分岐用）
     private var isEndingSession = false
     private var didAppear = false
@@ -217,8 +221,12 @@ final class ChatRoomStore {
     private var awaitsOpeningTurn = false
     #endif
 
-    init(container: ModelContainer = AppModelContainer.shared) {
+    init(
+        container: ModelContainer = AppModelContainer.shared,
+        modelSettings: ModelSettingsStore = .shared
+    ) {
         modelContainer = container
+        self.modelSettings = modelSettings
         historyStore = ChatHistoryStore(container: container)
         usageStore = UsageStore(container: container)
         memoryStore = CharacterMemoryStore(container: container)
@@ -398,7 +406,8 @@ final class ChatRoomStore {
             excludingGenreIDs: recentTopicGenres + carryOver.compactMap(\.genre),
             using: &rng)
         do {
-            let (topics, usage) = try await TopicSuggestionClient().suggestTopics(
+            let client = TopicSuggestionClient(model: modelSettings.model(for: .topicSuggestion))
+            let (topics, usage) = try await client.suggestTopics(
                 apiKey: apiKey,
                 recentTitles: recentTopicTitles + extraTitles + carryOver.map(\.title),
                 assignments: assignments)
@@ -718,7 +727,10 @@ final class ChatRoomStore {
         initialHistory: [ConversationMessage]
     ) {
         var configuration = TurnBasedVoiceSession.Configuration()
-        configuration.tts = Self.currentTTSConfiguration()
+        // 会話ターンのモデルはここで固定される（セッション中に変えても次のセッションから）
+        configuration.turn = .init(model: modelSettings.model(for: .conversationTurn))
+        configuration.tts = currentTTSConfiguration()
+        configuration.transcription.model = modelSettings.sttModel.rawValue
         #if DEBUG
         if let sttModel = DebugLaunchArguments.sttModelOverride {
             configuration.transcription.model = sttModel
@@ -755,6 +767,8 @@ final class ChatRoomStore {
             dashScopeKeyProvider: {
                 (try? KeychainStore().read(account: KeychainStore.dashScopeAPIKeyAccount)) ?? nil
             })
+        // どの構成で回したセッションかを後から辿れるようにする（モデル比較の実機検証で効く）
+        DiagnosticsLog.record("model: \(modelSettings.snapshot().diagnosticsSummary)")
         DiagnosticsLog.record(
             "session: 開始 topic=\(activeTopicTitle ?? "-") opening=\(opening) "
             + "practice=\(activeSessionKind.rawValue) "
@@ -860,7 +874,8 @@ final class ChatRoomStore {
             return
         }
         do {
-            let (feedback, usage) = try await SessionFeedbackClient().generateFeedback(
+            let client = SessionFeedbackClient(model: modelSettings.model(for: .sessionFeedback))
+            let (feedback, usage) = try await client.generateFeedback(
                 apiKey: apiKey, kind: card.kind, topic: card.topicTitle,
                 transcript: card.transcript)
             if let usage {
@@ -899,7 +914,8 @@ final class ChatRoomStore {
         let previousMemory = memoryStore.currentNote()
         Task {
             do {
-                let (memory, usage) = try await MemoryUpdateClient().updateMemory(
+                let client = MemoryUpdateClient(model: modelSettings.model(for: .memoryUpdate))
+                let (memory, usage) = try await client.updateMemory(
                     apiKey: apiKey, previousMemory: previousMemory,
                     topic: topic, transcript: transcript)
                 if let usage {
@@ -1111,9 +1127,11 @@ final class ChatRoomStore {
     }
 
     private func ensureReplayer() -> UtteranceReplayer {
-        if let replayer { return replayer }
-        let tts = Self.currentTTSConfiguration()
-        let account = Self.ttsKeyAccount(for: tts.provider)
+        let tts = currentTTSConfiguration()
+        // プロバイダを変えたら作り直す（使い回すとセッションと違う声で再生成してしまう）
+        if let replayer, replayerProvider == tts.provider { return replayer }
+        replayer?.stop()
+        let account = tts.provider.keychainAccount
         let created = UtteranceReplayer(
             ttsConfiguration: tts,
             apiKeyProvider: { (try? KeychainStore().read(account: account)) ?? nil })
@@ -1125,14 +1143,16 @@ final class ChatRoomStore {
             self?.replayErrorText = message
         }
         replayer = created
+        replayerProvider = tts.provider
         return created
     }
 
-    /// セッションと再読み上げが同じ TTS 構成（既定 = Qwen instruct・同じ voice 写像）を使うための
-    /// 一元組み立て。既定は SentenceTTSClientFactory.Configuration の 1 箇所が持ち、
-    /// DEBUG の起動引数は指定があるときだけ上書きする（既定を DEBUG 側で固定しない）。
-    private static func currentTTSConfiguration() -> SentenceTTSClientFactory.Configuration {
+    /// セッションと再読み上げが同じ TTS 構成（同じプロバイダ・同じ voice 写像）を使うための
+    /// 一元組み立て。**優先順位は DEBUG 起動引数 > 管理画面の選択 > コード既定**
+    /// （既定は SentenceTTSClientFactory.Configuration = TTSProvider.default が持つ）。
+    private func currentTTSConfiguration() -> SentenceTTSClientFactory.Configuration {
         var tts = SentenceTTSClientFactory.Configuration()
+        tts.provider = modelSettings.ttsProvider
         #if DEBUG
         if let provider = DebugLaunchArguments.ttsProviderOverride {
             tts.provider = provider
@@ -1157,15 +1177,6 @@ final class ChatRoomStore {
         }
         #endif
         return tts
-    }
-
-    /// 再読み上げ（再生成経路）が使う API キーの Keychain アカウント。
-    private static func ttsKeyAccount(for provider: TTSProvider) -> String {
-        switch provider {
-        case .openAI: return KeychainStore.openAIAPIKeyAccount
-        case .gemini: return KeychainStore.geminiAPIKeyAccount
-        case .qwen: return KeychainStore.dashScopeAPIKeyAccount
-        }
     }
 
     /// タイムラインから AI 発話を引く（再読み上げの対象は AI 吹き出しのみ）。
@@ -1212,7 +1223,7 @@ final class ChatRoomStore {
         // 前回の失敗はここで解除し、今回のフラッシュで再挑戦する
         failedTranslationIDs.removeAll()
 
-        let client = TranslationClient()
+        let client = TranslationClient(model: modelSettings.model(for: .translation))
         while isTranslationVisible {
             let sessionMessages = Self.translationTargetMessages(in: timeline)
             let pending = sessionMessages.filter {

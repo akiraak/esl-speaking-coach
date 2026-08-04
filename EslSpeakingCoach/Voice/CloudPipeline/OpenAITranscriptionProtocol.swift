@@ -6,9 +6,9 @@ struct OpenAITranscriptionConfiguration: Sendable {
     /// STT モデル。2026-07-31 の実機検証を経て gpt-live-transcribe を既定に採用
     /// （認識精度向上。サーバ VAD 非対応のためクライアント VAD + 手動 commit で動く。
     /// docs/plans/archive/gpt-live-transcribe-adoption.md）。
-    /// 旧構成（gpt-4o-transcribe + サーバ VAD）へは -stt-model 起動引数か
-    /// この既定値 1 箇所でいつでも戻せる
-    var model = "gpt-live-transcribe"
+    /// 旧構成（gpt-4o-transcribe + サーバ VAD）へは管理画面「モデル」・-stt-model 起動引数、
+    /// または `STTModel.default`（既定の単一の正）でいつでも戻せる
+    var model = STTModel.default.rawValue
     /// 認識言語のヒント。会話は英語のみ（CLAUDE.md）なので en 固定
     var language = "en"
     /// gpt-live-transcribe のレイテンシ / 精度トレードオフ

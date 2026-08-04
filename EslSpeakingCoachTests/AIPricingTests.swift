@@ -103,26 +103,55 @@ final class AIPricingTests: XCTestCase {
         let intro = ISO8601DateFormatter().date(from: "2026-07-25T00:00:00Z")!
         let after = ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")!
 
-        let introRate = AIPricing.currentRate(for: .conversationTurn, at: intro)
+        let introRate = AIPricing.currentRate(
+            for: .conversationTurn, selection: ModelSelectionSnapshot(), at: intro)
         XCTAssertEqual(introRate.price, "入力 $2 / 出力 $10（1M トークン）")
         XCTAssertNotNil(introRate.note)
 
-        let afterRate = AIPricing.currentRate(for: .conversationTurn, at: after)
+        let afterRate = AIPricing.currentRate(
+            for: .conversationTurn, selection: ModelSelectionSnapshot(), at: after)
         XCTAssertEqual(afterRate.price, "入力 $3 / 出力 $15（1M トークン）")
         XCTAssertNil(afterRate.note)
     }
 
-    /// 全種別が現在の既定モデルに対応づく（切替用の旧経路は出さない）。
-    /// フィードバック生成は 2026-07-31 に opus-5 → sonnet-5、TTS の既定は 2026-08-01 から
-    /// Qwen instruct 変種（docs/plans/archive/alibaba-voice-models.md）。
+    /// **管理画面で選んだモデルに追従する**（既定固定だと切り替えたあと表示と実態がズレる。
+    /// 実際に TTS の行が Qwen 固定のまま Gemini 復帰に追随できていなかった）。
+    func testCurrentRateFollowsSelection() {
+        let selection = ModelSelectionSnapshot(
+            claudeModels: [.conversationTurn: .opus5],
+            ttsProvider: .qwen,
+            sttModel: .transcribe4o)
+
+        let turn = AIPricing.currentRate(for: .conversationTurn, selection: selection)
+        XCTAssertEqual(turn.model, "claude-opus-5")
+        XCTAssertEqual(turn.price, "入力 $5 / 出力 $25（1M トークン）")
+        XCTAssertNil(turn.note, "opus-5 に導入価格は無い")
+
+        // 選んでいない経路は既定のまま
+        XCTAssertEqual(
+            AIPricing.currentRate(for: .translation, selection: selection).model,
+            "claude-haiku-4-5")
+
+        let tts = AIPricing.currentRate(for: .textToSpeech, selection: selection)
+        XCTAssertEqual(tts.model, "qwen3-tts-instruct-flash-realtime")
+        XCTAssertTrue(tts.price.contains("$0.13"), tts.price)
+
+        let stt = AIPricing.currentRate(for: .speechToText, selection: selection)
+        XCTAssertEqual(stt.model, "gpt-4o-transcribe")
+    }
+
+    /// 何も選んでいなければ全種別がコード既定のモデルに対応づく
+    /// （フィードバック生成は 2026-07-31 に opus-5 → sonnet-5、TTS は 2026-08-03 に Gemini へ復帰）。
     func testCurrentRateMapsAllKindsToDefaultModels() {
-        let models = AIUsageEvent.Kind.allCases.map { AIPricing.currentRate(for: $0).model }
+        let models = AIUsageEvent.Kind.allCases.map {
+            AIPricing.currentRate(for: $0, selection: ModelSelectionSnapshot()).model
+        }
         XCTAssertEqual(
             models,
             [
                 "gpt-live-transcribe",
                 "claude-sonnet-5",
-                "qwen3-tts-instruct-flash-realtime",
+                "gemini-3.1-flash-tts-preview",
                 "claude-sonnet-5",
                 "claude-sonnet-5",
                 "claude-sonnet-5",

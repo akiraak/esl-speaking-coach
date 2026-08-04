@@ -58,12 +58,12 @@ struct ChatRoomView: View {
             #if DEBUG
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,
-                memoryStore: store.memoryStore,
+                memoryStore: store.memoryStore, modelSettings: store.modelSettings,
                 initialTab: DebugLaunchArguments.adminInitialTab)
             #else
             AdminView(
                 historyStore: store.historyStore, usageStore: store.usageStore,
-                memoryStore: store.memoryStore)
+                memoryStore: store.memoryStore, modelSettings: store.modelSettings)
             #endif
         }
         // シートを閉じてからセッションを開始する（ピルタップと同じ経路）

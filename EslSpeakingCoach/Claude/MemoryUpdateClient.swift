@@ -22,11 +22,14 @@ enum MemoryUpdateError: Error, LocalizedError {
 
 /// セッション終了後に「前回までの記憶ノート + 今回の transcript → 更新済みノート」を生成する
 /// ローリング更新クライアント（docs/plans/character-memory.md）。
-/// `claude-sonnet-5` / structured outputs `{"memory": string}` / ストリーミング
+/// structured outputs `{"memory": string}` / ストリーミング（既定モデルは `ClaudeRoute.memoryUpdate`）
 /// （SSE を蓄積して最後にパースする。SessionFeedbackClient と同型）。
 /// 冪等: 生成が 1 回落ちても前回ノートが残るだけで壊れない。
 struct MemoryUpdateClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+
+    /// 使用モデル（既定は ClaudeRoute の既定。ChatRoomStore が管理画面の選択を詰める）
+    var model: ClaudeModel = ClaudeRoute.memoryUpdate.defaultModel
 
     /// システムプロンプト（固定英文）。
     static let systemPrompt = """
@@ -82,6 +85,7 @@ struct MemoryUpdateClient: Sendable {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try Self.makeRequestBody(
+            model: model,
             previousMemory: previousMemory, topic: topic, transcript: transcript)
 
         let (bytes, response) = try await Self.session.bytes(for: request)
@@ -115,7 +119,7 @@ struct MemoryUpdateClient: Sendable {
         let memory = try Self.parseResult(text: text, stopReason: stopReason)
         let usage: AIUsageEvent? = tokenUsage.isEmpty ? nil : AIUsageEvent(
             provider: .anthropic,
-            model: "claude-sonnet-5",
+            model: model.rawValue,
             kind: .memoryUpdate,
             inputTokens: tokenUsage.inputTokens,
             outputTokens: tokenUsage.outputTokens,
@@ -126,6 +130,7 @@ struct MemoryUpdateClient: Sendable {
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
     static func makeRequestBody(
+        model: ClaudeModel = ClaudeRoute.memoryUpdate.defaultModel,
         previousMemory: String?, topic: String, transcript: String
     ) throws -> Data {
         let schema: [String: Any] = [
@@ -147,16 +152,11 @@ struct MemoryUpdateClient: Sendable {
         \(transcript)
         """
         let payload: [String: Any] = [
-            "model": "claude-sonnet-5",
+            "model": model.rawValue,
             "max_tokens": 2000,
             "stream": true,
-            "output_config": [
-                "effort": "medium",
-                "format": [
-                    "type": "json_schema",
-                    "schema": schema,
-                ],
-            ],
+            "output_config": ClaudeRequestBody.outputConfig(
+                model: model, effort: ClaudeRoute.memoryUpdate.effort, schema: schema),
             "system": [
                 [
                     "type": "text",

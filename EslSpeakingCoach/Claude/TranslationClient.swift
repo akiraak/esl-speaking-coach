@@ -21,12 +21,15 @@ enum TranslationError: Error, LocalizedError {
 }
 
 /// 会話の発話をまとめて日本語訳するクライアント（docs/plans/message-translation.md）。
-/// `claude-haiku-4-5` / 非ストリーミング / structured outputs で `[{id, ja}]` を受け取る。
-/// 短文の英日翻訳に sonnet は過剰なため haiku を使う（$1 / $5 per 1M）。
-/// **`output_config.effort` は haiku-4-5 では 400 になるため送らない**
-/// （`temperature` / `top_p` / `top_k` も従来どおり送らない）。
+/// 非ストリーミング / structured outputs で `[{id, ja}]` を受け取る。
+/// 既定モデルは `ClaudeRoute.translation`（短文の英日翻訳に sonnet は過剰なため haiku-4-5。$1 / $5 per 1M）。
+/// **この経路は effort を送らない**（短い構造化出力なので不要。加えて haiku-4-5 は送ると 400 になる。
+/// `temperature` / `top_p` / `top_k` も従来どおり送らない）。
 struct TranslationClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+
+    /// 使用モデル（既定は ClaudeRoute の既定。ChatRoomStore が管理画面の選択を詰める）
+    var model: ClaudeModel = ClaudeRoute.translation.defaultModel
 
     /// 翻訳対象の 1 発話。id は発話 ID（レスポンスの突き合わせに使う）。
     struct Item: Sendable, Equatable {
@@ -86,6 +89,7 @@ struct TranslationClient: Sendable {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try Self.makeRequestBody(
+            model: model,
             topic: topic, context: context, targets: targets)
 
         let (data, response) = try await Self.session.data(for: request)
@@ -103,6 +107,7 @@ struct TranslationClient: Sendable {
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
     /// 文脈（トピック + 直前発話）は id を振らずに渡し、訳出対象と区別する。
     static func makeRequestBody(
+        model: ClaudeModel = ClaudeRoute.translation.defaultModel,
         topic: String?, context: [ContextLine], targets: [Item]
     ) throws -> Data {
         let schema: [String: Any] = [
@@ -141,14 +146,10 @@ struct TranslationClient: Sendable {
         \(targetBody)
         """
         let payload: [String: Any] = [
-            "model": "claude-haiku-4-5",
+            "model": model.rawValue,
             "max_tokens": 4096,
-            "output_config": [
-                "format": [
-                    "type": "json_schema",
-                    "schema": schema,
-                ]
-            ],
+            "output_config": ClaudeRequestBody.outputConfig(
+                model: model, effort: ClaudeRoute.translation.effort, schema: schema),
             "system": Self.systemPrompt,
             "messages": [
                 ["role": "user", "content": content]
@@ -184,12 +185,14 @@ struct TranslationClient: Sendable {
     }
 
     /// 応答の usage フィールドから利用量を取り出す（料金記録用。失敗しても nil を返すだけ）。
-    static func parseUsage(_ data: Data) -> AIUsageEvent? {
+    static func parseUsage(
+        _ data: Data, model: ClaudeModel = ClaudeRoute.translation.defaultModel
+    ) -> AIUsageEvent? {
         guard let payload = try? JSONDecoder().decode(ResponsePayload.self, from: data),
               let usage = payload.usage else { return nil }
         return AIUsageEvent(
             provider: .anthropic,
-            model: "claude-haiku-4-5",
+            model: model.rawValue,
             kind: .translation,
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,

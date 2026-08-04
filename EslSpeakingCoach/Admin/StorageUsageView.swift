@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 管理画面「容量」タブ: 端末に書いているファイルの内訳とレコード件数
+/// 管理画面「容量」: 端末に書いているファイルの内訳とレコード件数
 /// （docs/plans/archive/chat-storage-audit.md Phase 1）。
 /// 無期限に増えるのは SwiftData ストアだけ、を実測で確かめるための画面。
 struct StorageUsageView: View {

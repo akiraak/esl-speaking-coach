@@ -56,8 +56,9 @@ enum SessionFeedbackError: Error, LocalizedError {
 struct SessionFeedbackClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
-    /// 2026-07-31 に `claude-opus-5` から変更（単発で最も高額な呼び出しだったため。ここ 1 箇所で戻せる）。
-    static let model = "claude-sonnet-5"
+    /// 使用モデル。既定は `ClaudeRoute.sessionFeedback`（2026-07-31 に opus-5 から sonnet-5 へ変更。
+    /// 単発で最も高額な呼び出しだったため）。管理画面から切り替えられる。
+    var model: ClaudeModel = ClaudeRoute.sessionFeedback.defaultModel
 
     /// システムプロンプト（固定英文。docs/specs/session-feedback.md）。
     static let systemPrompt = """
@@ -112,6 +113,7 @@ struct SessionFeedbackClient: Sendable {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try Self.makeRequestBody(
+            model: model,
             kind: kind, topic: topic, transcript: transcript)
 
         // 文章が途切れる不具合の調査ログ（docs/plans/feedback-truncated.md Phase 1）。
@@ -175,7 +177,7 @@ struct SessionFeedbackClient: Sendable {
             + "corrections=\(feedback.corrections.count) phrases=\(feedback.tryPhrases.count)")
         let usage: AIUsageEvent? = tokenUsage.isEmpty ? nil : AIUsageEvent(
             provider: .anthropic,
-            model: Self.model,
+            model: model.rawValue,
             kind: .sessionFeedback,
             inputTokens: tokenUsage.inputTokens,
             outputTokens: tokenUsage.outputTokens,
@@ -186,6 +188,7 @@ struct SessionFeedbackClient: Sendable {
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
     static func makeRequestBody(
+        model: ClaudeModel = ClaudeRoute.sessionFeedback.defaultModel,
         kind: SessionKind = .conversation, topic: String, transcript: String
     ) throws -> Data {
         let correctionSchema: [String: Any] = [
@@ -218,16 +221,11 @@ struct SessionFeedbackClient: Sendable {
             "additionalProperties": false,
         ]
         let payload: [String: Any] = [
-            "model": model,
+            "model": model.rawValue,
             "max_tokens": 16000,
             "stream": true,
-            "output_config": [
-                "effort": "high",
-                "format": [
-                    "type": "json_schema",
-                    "schema": schema,
-                ],
-            ],
+            "output_config": ClaudeRequestBody.outputConfig(
+                model: model, effort: ClaudeRoute.sessionFeedback.effort, schema: schema),
             "system": [
                 [
                     "type": "text",

@@ -37,10 +37,14 @@ enum TopicSuggestionError: Error, LocalizedError {
 /// 会話とは別の軽量呼び出しでトピック候補を生成する（conversation-design.md「トピック生成」）。
 /// 生成件数は渡した割り当て（`assignments`）の件数に従う
 /// （初回起動・🔄 は 3 件、セッション終了後の補充は 1 件。docs/plans/topic-card-carry-over.md）。
-/// claude-sonnet-5 / 非ストリーミング / effort low / output_config.format の structured outputs。
+/// 非ストリーミング / structured outputs（output_config.format）。
+/// モデルと effort は `ClaudeRoute.topicSuggestion` が正（管理画面から切り替えられる）。
 /// 固定候補「話しかける」は生成せず、アプリ側で追加する。
 struct TopicSuggestionClient: Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+
+    /// 使用モデル（既定は ClaudeRoute の既定。ChatRoomStore が管理画面の選択を詰める）
+    var model: ClaudeModel = ClaudeRoute.topicSuggestion.defaultModel
 
     /// システムプロンプト（固定英文。付録 B）。
     static let systemPrompt = """
@@ -89,7 +93,7 @@ struct TopicSuggestionClient: Sendable {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try Self.makeRequestBody(
-            recentTitles: recentTitles, assignments: assignments)
+            model: model, recentTitles: recentTitles, assignments: assignments)
 
         let (data, response) = try await Self.session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -100,11 +104,12 @@ struct TopicSuggestionClient: Sendable {
                 statusCode: http.statusCode,
                 body: String(data: data, encoding: .utf8) ?? "")
         }
-        return (try Self.parseResponse(data), Self.parseUsage(data))
+        return (try Self.parseResponse(data), Self.parseUsage(data, model: model))
     }
 
     /// リクエストボディを生成する。テストから直接検証できるよう static にしてある。
     static func makeRequestBody(
+        model: ClaudeModel = ClaudeRoute.topicSuggestion.defaultModel,
         recentTitles: [String], assignments: [TopicAssignment]
     ) throws -> Data {
         let recentList = recentTitles.isEmpty ? "(none)" : recentTitles.joined(separator: ", ")
@@ -129,15 +134,10 @@ struct TopicSuggestionClient: Sendable {
             "additionalProperties": false,
         ]
         let payload: [String: Any] = [
-            "model": "claude-sonnet-5",
+            "model": model.rawValue,
             "max_tokens": 1024,
-            "output_config": [
-                "effort": "low",
-                "format": [
-                    "type": "json_schema",
-                    "schema": schema,
-                ],
-            ],
+            "output_config": ClaudeRequestBody.outputConfig(
+                model: model, effort: ClaudeRoute.topicSuggestion.effort, schema: schema),
             "system": Self.systemPrompt,
             "messages": [
                 [
@@ -182,12 +182,14 @@ struct TopicSuggestionClient: Sendable {
     }
 
     /// 応答の usage フィールドから利用量を取り出す（料金記録用。失敗しても nil を返すだけ）。
-    static func parseUsage(_ data: Data) -> AIUsageEvent? {
+    static func parseUsage(
+        _ data: Data, model: ClaudeModel = ClaudeRoute.topicSuggestion.defaultModel
+    ) -> AIUsageEvent? {
         guard let payload = try? JSONDecoder().decode(ResponsePayload.self, from: data),
               let usage = payload.usage else { return nil }
         return AIUsageEvent(
             provider: .anthropic,
-            model: "claude-sonnet-5",
+            model: model.rawValue,
             kind: .topicSuggestion,
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,
