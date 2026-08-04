@@ -1,7 +1,7 @@
 import Foundation
 
 /// 管理画面「音声入力」で調整できるしきい値 1 項目
-/// （docs/plans/voice-input-tuning-in-admin.md）。
+/// （docs/plans/archive/voice-input-tuning-in-admin.md）。
 ///
 /// 表示名・説明・範囲・刻み・書式・`ClientSpeechEndpointer.Thresholds` への読み書きを
 /// ここへ集約し、画面と保存の双方がこれだけを見る（項目を足すときも 1 箇所で済む）。
@@ -157,7 +157,7 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// 練習する場所ごとのしきい値のプリセット（docs/plans/voice-input-tuning-in-admin.md Phase 5）。
+/// 練習する場所ごとのしきい値のプリセット（docs/plans/archive/voice-input-tuning-in-admin.md Phase 5）。
 /// 7 項目を個別に動かすのは最終手段で、普段はここから 1 タップで丸ごと入れる。
 ///
 /// 暗騒音が上がるほど「絶対値の下限」と「暗騒音への倍率」を上げ、単発の物音を弾くために

@@ -2,7 +2,7 @@ import Foundation
 
 /// サーバ VAD が切り出したセグメント 1 件の音量統計（`SegmentLevelMeter` が作る）。
 /// Codable なのは管理画面「音声入力」が直近の実測を保存して見せるため
-/// （docs/plans/voice-input-tuning-in-admin.md）。
+/// （docs/plans/archive/voice-input-tuning-in-admin.md）。
 struct SpeechSegmentLevels: Sendable, Equatable, Codable {
     /// セグメント区間の RMS 最大値（口元の声か遠くの音かを最もよく分ける）
     var peak: Float
@@ -81,7 +81,7 @@ enum SpeechLevelGate {
 
 /// STT セグメント 1 件の実測（音量統計 + 採否 + 認識結果）。
 /// 管理画面の会話ログに 1 行残すのと、「音声入力」でしきい値を追い込むための直近一覧に使う
-/// （docs/plans/voice-input-tuning-in-admin.md）。
+/// （docs/plans/archive/voice-input-tuning-in-admin.md）。
 struct SpeechSegmentMeasurement: Sendable, Equatable, Codable {
     /// 計測できなかった場合は nil（判定は採用側へ倒している）
     var levels: SpeechSegmentLevels?

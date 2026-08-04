@@ -1,7 +1,7 @@
 import XCTest
 @testable import EslSpeakingCoach
 
-/// 音声入力のしきい値の保存（docs/plans/voice-input-tuning-in-admin.md Phase 1）。
+/// 音声入力のしきい値の保存（docs/plans/archive/voice-input-tuning-in-admin.md Phase 1）。
 @MainActor
 final class VoiceInputSettingsStoreTests: XCTestCase {
     private var suiteName = ""

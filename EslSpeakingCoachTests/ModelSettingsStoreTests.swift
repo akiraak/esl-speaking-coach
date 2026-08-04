@@ -1,7 +1,7 @@
 import XCTest
 @testable import EslSpeakingCoach
 
-/// 経路ごとのモデル選択の保存（docs/plans/model-selection-in-admin.md Phase 2）。
+/// 経路ごとのモデル選択の保存（docs/plans/archive/model-selection-in-admin.md Phase 2）。
 @MainActor
 final class ModelSettingsStoreTests: XCTestCase {
     private var suiteName = ""

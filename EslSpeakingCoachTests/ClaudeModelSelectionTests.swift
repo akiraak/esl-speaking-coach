@@ -3,7 +3,7 @@ import XCTest
 
 /// 選んだモデルがリクエストボディと利用記録に乗ること、
 /// **effort 非対応のモデル（haiku-4-5）では effort を送らないこと**を確かめる
-/// （送ると 400 になる。docs/plans/model-selection-in-admin.md Phase 2）。
+/// （送ると 400 になる。docs/plans/archive/model-selection-in-admin.md Phase 2）。
 final class ClaudeModelSelectionTests: XCTestCase {
     private func json(_ data: Data) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

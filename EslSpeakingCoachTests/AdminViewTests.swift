@@ -1,7 +1,7 @@
 import XCTest
 @testable import EslSpeakingCoach
 
-/// 管理画面ルートの構成（docs/plans/model-selection-in-admin.md Phase 1）。
+/// 管理画面ルートの構成（docs/plans/archive/model-selection-in-admin.md Phase 1）。
 @MainActor
 final class AdminViewTests: XCTestCase {
     /// セクションへの入れ忘れ・重複はルートから辿れない項目 / 二重表示になるので落とす。

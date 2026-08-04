@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 管理画面「モデル」: 経路ごとに使う Claude のモデルを選ぶ
-/// （docs/plans/model-selection-in-admin.md Phase 2。TTS / STT は Phase 3 で足す）。
+/// （docs/plans/archive/model-selection-in-admin.md Phase 2。TTS / STT は Phase 3 で足す）。
 /// 単価は `AIPricing` から引く（表示のために単価を二重管理しない）。
 struct ModelSettingsView: View {
     let store: ModelSettingsStore

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 管理画面から選べる STT モデル（docs/plans/model-selection-in-admin.md Phase 3）。
+/// 管理画面から選べる STT モデル（docs/plans/archive/model-selection-in-admin.md Phase 3）。
 /// **rawValue はそのまま `OpenAITranscriptionConfiguration.model` に入る値**
 /// （接続クライアント・VAD の方式・マイクのサンプルレートはこの値から派生する）。
 enum STTModel: String, CaseIterable, Identifiable, Sendable {

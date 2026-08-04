@@ -23,7 +23,7 @@ struct ModelSelectionSnapshot: Sendable {
     }
 }
 
-/// 経路ごとに使うモデルの選択（管理画面「モデル」。docs/plans/model-selection-in-admin.md）。
+/// 経路ごとに使うモデルの選択（管理画面「モデル」。docs/plans/archive/model-selection-in-admin.md）。
 /// 保存は UserDefaults（端末内）。
 ///
 /// **既定値はコード側（`ClaudeRoute.defaultModel` / `TTSProvider.default` / `STTModel.default`）が正**で、

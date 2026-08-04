@@ -140,7 +140,7 @@
 - 記録は best effort: barge-in でキャンセルしたターンの usage は取れないことがあり、推定額は実請求より下振れし得る
 - **7 経路とも管理画面「モデル」から使うモデルを切り替えられる**（Claude 5 経路は sonnet-5 / opus-5 /
   haiku-4-5、TTS は Gemini / Qwen / OpenAI、STT は gpt-live-transcribe / gpt-4o-transcribe / Qwen3-ASR。
-  docs/plans/model-selection-in-admin.md）。**記録は呼び出し時のモデル名で残る**ので、
+  docs/plans/archive/model-selection-in-admin.md）。**記録は呼び出し時のモデル名で残る**ので、
   切り替えても過去の推定額は当時の単価・モデルのまま正しい
 
 ## コスト管理上の注意（今後の実装に効く順）

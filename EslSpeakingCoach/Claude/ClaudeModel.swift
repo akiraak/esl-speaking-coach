@@ -1,6 +1,6 @@
 import Foundation
 
-/// 管理画面から選べる Claude のモデル（docs/plans/model-selection-in-admin.md Phase 2）。
+/// 管理画面から選べる Claude のモデル（docs/plans/archive/model-selection-in-admin.md Phase 2）。
 /// **rawValue はそのまま API の `model` に送る値**（日付サフィックスは付けない。CLAUDE.md の規約）。
 /// 単価は `AIPricing` が単一の正なのでここには持たない。
 enum ClaudeModel: String, CaseIterable, Identifiable, Sendable {

@@ -57,7 +57,7 @@ struct ClaudeMessagesClient: Sendable {
     /// 会話ターン用の設定（ストリーミング必須・effort low・max_tokens は意図的に小さく）。
     /// 既定のモデルと effort は `ClaudeRoute.conversationTurn` が正
     /// （2026-07-25 に sonnet-5 で決定。記録: docs/plans/archive/spike-conversation/。
-    /// 管理画面から切り替えられる: docs/plans/model-selection-in-admin.md）。
+    /// 管理画面から切り替えられる: docs/plans/archive/model-selection-in-admin.md）。
     struct TurnParameters: Sendable {
         var model: ClaudeModel
         var maxTokens: Int

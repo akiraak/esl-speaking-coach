@@ -2,7 +2,7 @@ import XCTest
 @testable import EslSpeakingCoach
 
 /// STT / TTS の選択が音声パイプラインの構成へ正しく効くこと
-/// （docs/plans/model-selection-in-admin.md Phase 3）。
+/// （docs/plans/archive/model-selection-in-admin.md Phase 3）。
 final class VoiceModelSelectionTests: XCTestCase {
     /// STT はモデルを変えると **VAD の方式とマイクのサンプルレートごと**変わる。
     func testSTTSelectionDrivesTranscriptionBehaviour() {

@@ -5,7 +5,7 @@ import UIKit
 
 /// 管理画面（ヘッダメニューから開く）。会話内容の閲覧・キャラの記憶・AI 利用料金の確認。
 /// ルートは項目一覧で、各項目は push して開く（項目が増えても破綻しないよう、5 つで窮屈だった
-/// segmented picker から組み替えた。docs/plans/model-selection-in-admin.md Phase 1）。
+/// segmented picker から組み替えた。docs/plans/archive/model-selection-in-admin.md Phase 1）。
 /// 標準コンポーネント中心の簡素な作り。トーク画面に合わせてライト固定。
 struct AdminView: View {
     let historyStore: ChatHistoryStore

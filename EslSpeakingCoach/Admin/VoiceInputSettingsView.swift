@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 管理画面「音声入力」: 発話の検知（クライアント VAD）と認識後の棄却（レベルゲート）の
-/// しきい値を実機で追い込む（docs/plans/voice-input-tuning-in-admin.md）。
+/// しきい値を実機で追い込む（docs/plans/archive/voice-input-tuning-in-admin.md）。
 /// 反映は**次のセッションから**。調整の手がかりに直近セグメントの実測を下に並べる。
 struct VoiceInputSettingsView: View {
     let store: VoiceInputSettingsStore

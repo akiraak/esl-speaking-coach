@@ -50,7 +50,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 - エンドポイント: `POST https://api.anthropic.com/v1/messages`
 - 必須ヘッダ: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
 - モデルは会話ターン・トピック生成・会話後のフィードバック生成・記憶更新とも **`claude-sonnet-5`**、翻訳のみ `claude-haiku-4-5`。日付サフィックスは付けない
-  - **既定は `ClaudeRoute`（`Claude/ClaudeModel.swift`）の 1 箇所が正**。経路ごとに**管理画面「モデル」から sonnet-5 / opus-5 / haiku-4-5 へ切り替えられる**（保存は UserDefaults。既定と同じ選択は保存しないので、既定を変えれば追従する。docs/plans/model-selection-in-admin.md）
+  - **既定は `ClaudeRoute`（`Claude/ClaudeModel.swift`）の 1 箇所が正**。経路ごとに**管理画面「モデル」から sonnet-5 / opus-5 / haiku-4-5 へ切り替えられる**（保存は UserDefaults。既定と同じ選択は保存しないので、既定を変えれば追従する。docs/plans/archive/model-selection-in-admin.md）
   - **`output_config.effort` はモデルによって受け付けない**（`claude-haiku-4-5` は 400）。判定は `ClaudeModel.supportsEffort` の 1 箇所で、非対応なら effort ごと送らない
   - **プロンプトキャッシュの最小プレフィックスもモデルで違う**（opus-5 512 / sonnet-5 1,024 / haiku-4-5 4,096 トークン）。2 キャラ台本の system prompt は約 2,000 トークンなので、**会話ターンを haiku-4-5 にするとキャッシュが黙って効かなくなる**（エラーは出ない）
 - **`temperature` / `top_p` / `top_k` は送ってはいけない**（`claude-sonnet-5` / `claude-opus-5` とも 400 になる）
