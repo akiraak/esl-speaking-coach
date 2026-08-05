@@ -26,7 +26,14 @@
   - [x] Step 3: 送信猶予を画面に出す（最小語数と同じ「ターンの締め方」セクションへ）2026-08-05
   - [ ] 実機確認（相槌・エコーで消えたときに一覧で理由が読める / 送信猶予を下げると応答が速くなる）
 
-- [ ] Chobi, Naruko にも記憶を持たせる
+- [ ] Chobi, Naruko にも記憶を持たせる [plan](docs/plans/per-character-memory.md)
+  - 方針: 学習者ノート（共有）はそのまま残し、キャラ自身のことを覚える別ノートを Chobi / Naruko に 1 本ずつ持たせる。
+    生成はセッション終了時 1 回の呼び出しで 3 本同時（structured outputs を 3 フィールド化）、注入は先頭 user メッセージへ 3 ブロック、管理画面は scope 切替と個別リセット
+  - [ ] Phase 1: 保存（`MemoryScope` + `scopeRawValue` + scope 付きストア API + 既存レコードのマイグレーション確認）
+  - [ ] Phase 2: 生成（3 フィールド structured outputs + 振り分け / 語数プロンプト + `saveAll`）
+  - [ ] Phase 3: 注入（`MemoryNotes` + 3 ブロック合成 + `rebuildHistory` + system prompt 追記 + spec 同期）
+  - [ ] Phase 4: 管理画面（scope Picker + 個別リセット / 全リセット）
+  - [ ] Phase 5: シミュレータ E2E + 実機確認 + ドキュメント同期（ai-cost-map.md / conversation-design.md）
 
 ## 不具合
 
