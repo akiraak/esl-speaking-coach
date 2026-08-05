@@ -137,9 +137,18 @@ final class VoiceInputProbeTests: XCTestCase {
         XCTAssertEqual(probe.peak, 0.006, accuracy: 0.0001)
     }
 
+    /// 候補しきい値は listening の minimumPeak の倍数で作る
+    /// （管理画面でしきい値を動かしても、判定点（現行値と AI ターン中の候補）を跨ぎ続ける）
+    func testThresholdsScaleFromListeningMinimumPeak() {
+        let thresholds = PlaybackEchoProbe.thresholds(base: 0.016)
+        XCTAssertEqual(thresholds.count, PlaybackEchoProbe.defaultScales.count)
+        XCTAssertEqual(thresholds[0], 0.016, accuracy: 0.0001)
+        XCTAssertEqual(thresholds[1], 0.024, accuracy: 0.0001)
+    }
+
     /// 1 バッファも届いていなければ平均は 0（ゼロ除算しない）
     func testEmptyProbe() {
-        let probe = PlaybackEchoProbe()
+        let probe = PlaybackEchoProbe(thresholds: PlaybackEchoProbe.thresholds(base: 0.016))
         XCTAssertEqual(probe.mean, 0)
         XCTAssertEqual(probe.bufferCount, 0)
     }
@@ -151,8 +160,8 @@ final class VoiceInputProbeTests: XCTestCase {
         let line = probe.summaryLine(context: "floor 0.0030 / VP=on / 内蔵スピーカー")
         XCTAssertTrue(line.hasPrefix("probe echo: 読み上げ 0.50s"), line)
         XCTAssertTrue(line.contains("rms 平均 0.0200 最大 0.0200"), line)
-        XCTAssertTrue(line.contains(">0.010 0.50s(最長 0.50s)"), line)
-        XCTAssertTrue(line.contains(">0.050 0.00s(最長 0.00s)"), line)
+        XCTAssertTrue(line.contains(">0.0100 0.50s(最長 0.50s)"), line)
+        XCTAssertTrue(line.contains(">0.0500 0.00s(最長 0.00s)"), line)
         XCTAssertTrue(line.contains("VP=on"), line)
     }
 }

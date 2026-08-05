@@ -117,9 +117,14 @@ struct SegmentTranscriptProbe: Sendable, Equatable {
 /// `minimumSpeechDuration` 続く」ことで発火するので、**候補しきい値ごとの連続超過の最長時間**が
 /// そのまま「その設定なら誤発火するか」の答えになる。
 struct PlaybackEchoProbe: Sendable, Equatable {
-    /// 候補しきい値。現行 listening の `minimumPeak`（0.01）から
-    /// `unconditionalPeak`（0.05）までを刻む
-    static let defaultThresholds: [Float] = [0.01, 0.02, 0.03, 0.05]
+    /// 候補しきい値。**listening の `minimumPeak` の倍数**で刻む（絶対値で固定すると、
+    /// 管理画面でしきい値を動かした瞬間に判定点を跨げなくなる）。
+    /// AI ターン中に何倍へ持ち上げれば誤発火しないか、がそのまま読める
+    static let defaultScales: [Float] = [1.0, 1.5, 2.0, 3.0]
+
+    static func thresholds(base: Float, scales: [Float] = defaultScales) -> [Float] {
+        scales.map { base * $0 }
+    }
 
     struct ThresholdStat: Sendable, Equatable {
         let threshold: Float
@@ -150,7 +155,7 @@ struct PlaybackEchoProbe: Sendable, Equatable {
     private(set) var stats: [ThresholdStat]
     private var levelSum: Double = 0
 
-    init(thresholds: [Float] = defaultThresholds) {
+    init(thresholds: [Float]) {
         stats = thresholds.map(ThresholdStat.init(threshold:))
     }
 
@@ -177,7 +182,7 @@ struct PlaybackEchoProbe: Sendable, Equatable {
             format: "読み上げ %.2fs / rms 平均 %.4f 最大 %.4f / %d buf",
             duration, mean, peak, bufferCount)
         let detail = stats
-            .map { String(format: ">%.3f %.2fs(最長 %.2fs)", $0.threshold, $0.totalAbove, $0.longestRun) }
+            .map { String(format: ">%.4f %.2fs(最長 %.2fs)", $0.threshold, $0.totalAbove, $0.longestRun) }
             .joined(separator: " / ")
         let tail = context.isEmpty ? "" : " / \(context)"
         return "probe echo: \(head) / \(detail)\(tail)"

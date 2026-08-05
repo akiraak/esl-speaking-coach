@@ -147,7 +147,8 @@ final class TurnBasedVoiceSession: VoiceSession {
     private func syncPlaybackEchoProbe(from previous: VoiceSessionState) {
         guard state != previous else { return }
         if state == .speaking {
-            microphone.router.beginPlaybackEchoProbe()
+            microphone.router.beginPlaybackEchoProbe(thresholds: PlaybackEchoProbe.thresholds(
+                base: configuration.clientEndpointer.minimumPeak))
         } else if previous == .speaking {
             guard let result = microphone.router.endPlaybackEchoProbe() else { return }
             DiagnosticsLog.record(result.probe.summaryLine(

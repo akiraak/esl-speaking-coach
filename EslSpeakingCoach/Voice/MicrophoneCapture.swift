@@ -159,10 +159,12 @@ final class AudioTapRouter: @unchecked Sendable {
     /// 読み上げ中のマイク RMS（VP 通過後のエコー残留）の集計を始める
     /// （docs/plans/always-on-voice-input.md Phase 2 の実測。ゲートの開閉とは無関係に、
     /// タップへ届いた生のレベルをそのまま積む）。
-    func beginPlaybackEchoProbe() {
+    /// - Parameter thresholds: 候補しきい値。listening 側の `minimumPeak` の倍数で渡す
+    ///   （`PlaybackEchoProbe.thresholds(base:)`）
+    func beginPlaybackEchoProbe(thresholds: [Float]) {
         lock.lock()
         defer { lock.unlock() }
-        echoProbe = PlaybackEchoProbe()
+        echoProbe = PlaybackEchoProbe(thresholds: thresholds)
     }
 
     /// 集計を終えて結果を取り出す。バッファが 1 つも届いていなければ nil（シミュレータ等）。
