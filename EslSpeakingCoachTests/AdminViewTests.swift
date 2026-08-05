@@ -35,7 +35,7 @@ final class MemoryAdminViewTests: XCTestCase {
         let text = "- Name is Akira."
         XCTAssertEqual(
             MemoryAdminView.size(of: text, scope: .shared),
-            MemoryAdminView.NoteSize(characters: 16, words: 3, limit: 400))
+            MemoryAdminView.NoteSize(words: 3, limit: 400))
         XCTAssertEqual(
             MemoryAdminView.size(of: text, scope: .character(.chobi)).limit, 120)
     }

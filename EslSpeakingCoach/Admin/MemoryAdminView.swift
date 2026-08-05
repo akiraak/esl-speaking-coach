@@ -31,7 +31,6 @@ struct MemoryAdminView: View {
                         "更新日時",
                         value: snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))
                     let size = Self.size(of: snapshot.text, scope: scope)
-                    LabeledContent("文字数", value: "\(size.characters) 字")
                     LabeledContent("語数") {
                         Text("\(size.words) 語 / 約 \(size.limit) 語")
                             .foregroundStyle(size.isOverLimit ? Color.orange : Color.secondary)
@@ -97,7 +96,6 @@ struct MemoryAdminView: View {
     /// ノートの分量。上限は `MemoryScope.wordLimit` = 生成プロンプトがモデルへ指示している値で、
     /// コード側の強制ではない（超えていたら生成プロンプトを詰める合図）。
     struct NoteSize: Equatable {
-        let characters: Int
         let words: Int
         let limit: Int
 
@@ -105,8 +103,7 @@ struct MemoryAdminView: View {
     }
 
     static func size(of text: String, scope: MemoryScope) -> NoteSize {
-        NoteSize(
-            characters: text.count, words: wordCount(text), limit: scope.wordLimit)
+        NoteSize(words: wordCount(text), limit: scope.wordLimit)
     }
 
     /// 空白区切りの語数。英数字を 1 文字も含まないトークン（箇条書きの "-" など）は数えない。
