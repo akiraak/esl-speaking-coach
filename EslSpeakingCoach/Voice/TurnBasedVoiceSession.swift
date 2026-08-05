@@ -18,8 +18,12 @@ import UIKit
 /// 分かってから鳴らすので、ノイズだけで VAD が発火したターンは無音で通り過ぎる
 /// （docs/plans/empty-segment-no-cue.md）。4o 経路は従来どおり常時入力 + 音声 barge-in。
 ///
+/// 発話終端の直後は**送信猶予**（TurnCommitGrace）を挟む。listening のまま数百 ms〜1.6 秒
+/// 待ち、その間に続きを話せば同じターンへ継ぎ足す（言い淀みで途中送信されない。
+/// docs/plans/always-on-voice-input.md Phase 1）。
+///
 /// 状態遷移:
-///   listening --(VAD: speech_stopped / テキスト送信)--> thinking
+///   listening --(VAD: speech_stopped → 送信猶予 / テキスト送信)--> thinking
 ///     --(STT 確定 → Claude → 初文 TTS 再生)--> speaking --> listening
 ///   speaking / thinking 中に speech_started（4o のみ）かテキスト送信が来たら barge-in
 ///   （TTS 停止 + Claude キャンセル + 読み上げ開始済み発話まで履歴確定）で listening へ戻る。
@@ -84,6 +88,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         /// live（サーバ VAD 非対応モデル）のときに使うクライアント VAD の閾値
         /// （docs/plans/archive/gpt-live-transcribe-adoption.md）
         var clientEndpointer = ClientSpeechEndpointer.Thresholds()
+        /// 発話終端から Claude へ投げるまでの送信猶予（言い淀み対策。
+        /// docs/plans/always-on-voice-input.md Phase 1）。standard = 0 で従来どおり即送信
+        var commitGrace = TurnCommitGrace()
     }
 
     let events: AsyncStream<VoiceSessionEvent>
@@ -177,6 +184,11 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 確定テキストが空（ノイズだけで VAD が発火した）なら鳴らさずに取り消す
     /// （docs/plans/empty-segment-no-cue.md）
     private var pendingInputEndCue = false
+    /// 送信猶予のタイマー（走っている間は listening のまま追加発話を待つ）
+    private var commitGraceTask: Task<Void, Never>?
+    /// 猶予の起点（= 直近の発話終端）。確定テキストで長さを見直すときの基準にする。
+    /// nil なら猶予は張られていない（テキスト送信・再接続後の積み残しは即座に送る）
+    private var commitGraceStartedAt: Date?
 
     init(
         configuration: Configuration = Configuration(),
@@ -384,6 +396,8 @@ final class TurnBasedVoiceSession: VoiceSession {
             return
         }
         guard claudeTask == nil else { return }
+        // 猶予待ちの音声ターンがあれば猶予は畳む（積み残しは AI のターン後に即 commit される）
+        cancelCommitGrace()
         state = .thinking
 
         metrics = TurnMetricsBuilder()
@@ -457,6 +471,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         pendingSegmentLevels.removeAll()
         pendingTurnText = ""
         pendingInputEndCue = false
+        cancelCommitGrace()
     }
 
     /// STT 切断。セッションを殺さず backoff 付きで再接続する（Wi-Fi ⇔ LTE 切替やサーバ側打ち切り対策）。
@@ -468,6 +483,8 @@ final class TurnBasedVoiceSession: VoiceSession {
         pendingSegmentLevels.removeAll()
         // 認識途中のセグメントは失われる。そのセグメント向けの終了ジングルも取り消す
         pendingInputEndCue = false
+        // 確定済みの pendingTurnText は再接続後に commit する（続きはもう来ないので猶予は畳む）
+        cancelCommitGrace()
         sttEventTask?.cancel()
         sttEventTask = nil
         transcriber?.stop()
@@ -535,7 +552,10 @@ final class TurnBasedVoiceSession: VoiceSession {
             let now = Date()
             metrics.utteranceEndedAt = now
             metrics.committedAt = now
-            if state == .listening { state = .thinking }
+            // 送信猶予: ここでは thinking へ進めず listening のまま続きを待つ
+            // （言い淀みで切れたセグメントの続きを同じターンへ継ぎ足すため）。
+            // 猶予ぶんの待ちは metrics では committedAt 以降 = pipelineTotal に乗る
+            beginCommitGrace(at: now)
 
         case .partialTranscript(let text):
             eventContinuation.yield(.userPartialTranscript(text))
@@ -589,6 +609,9 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// barge-in: サーバ VAD がユーザーの発話開始を検知した。応答の生成・再生中なら即座に止める。
     private func handleSpeechStarted() {
         isUserSpeaking = true
+        // 猶予中に続きを話し始めた。締めのタイマーを止める（次の終端で張り直す）。
+        // pendingTurnText は残るので、確定した続きは既存の連結ロジックがそのまま繋ぐ
+        cancelCommitGrace()
         microphone.router.beginLevelSegment()
         if claudeTask != nil || state == .speaking {
             interruptAssistantTurn()
@@ -605,23 +628,66 @@ final class TurnBasedVoiceSession: VoiceSession {
     }
 
     /// 確定テキストが揃っていて、ユーザーが話しておらず、Claude ターンも走っていなければ投げる。
+    /// ただし送信猶予（`TurnCommitGrace`）が残っている間は投げずに待つ。
+    /// 猶予中に続きを話せば `pendingTurnText` へ継ぎ足され、1 つのターンとして送られる。
     private func commitPendingTurnIfReady() {
         guard !isUserSpeaking, pendingSegments == 0, claudeTask == nil else { return }
         let text = pendingTurnText
-        pendingTurnText = ""
         guard !text.isEmpty else {
             // ノイズ等で VAD だけ発火して空だった。窓が閉じたことは知らせていないので、
-            // 開始ジングルも鳴らさずに黙って聞き取りへ戻す（一連が完全に無音で通り過ぎる）
+            // 開始ジングルも鳴らさずに黙って聞き取りへ戻す（一連が完全に無音で通り過ぎる）。
+            // 空セグメントに猶予は挟まない（黙って通り過ぎるまでの時間を伸ばさない）
+            cancelCommitGrace()
             pendingInputEndCue = false
             if state == .thinking { state = .listening }
             return
         }
+        if let startedAt = commitGraceStartedAt {
+            // 猶予の長さは確定テキストの末尾で決まる。タイマー自体は終端の時点から
+            // 走っている（STT の確定待ちと並行させる）ので、ここでは残りを計算し直す
+            let decision = configuration.commitGrace.decide(for: text)
+            let remaining = decision.duration - Date().timeIntervalSince(startedAt)
+            if remaining > 0 {
+                scheduleCommitGrace(after: remaining)
+                return
+            }
+            eventContinuation.yield(.info("送信猶予 \(decision.logDescription)"))
+        }
+        cancelCommitGrace()
+        pendingTurnText = ""
         if state != .thinking { state = .thinking }
         if pendingInputEndCue {
             pendingInputEndCue = false
             speaker.playInputEndCue()
         }
         commitText(text)
+    }
+
+    /// 発話終端からの送信猶予を張る（docs/plans/always-on-voice-input.md Phase 1）。
+    /// 猶予中の state は **`.listening` のまま**にする。「考え中」表示を出さないことで
+    /// まだ話していいことが伝わり、live 経路では入力の窓（送信ゲート）も開いたままになる。
+    private func beginCommitGrace(at instant: Date) {
+        guard configuration.commitGrace.standard > 0 else { return }
+        commitGraceStartedAt = instant
+        scheduleCommitGrace(after: configuration.commitGrace.standard)
+    }
+
+    /// 猶予タイマーを張り直す（終端時は標準の長さ、確定テキスト受信後は残り時間で）。
+    private func scheduleCommitGrace(after delay: TimeInterval) {
+        commitGraceTask?.cancel()
+        commitGraceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !self.isStopped, !Task.isCancelled else { return }
+            self.commitGraceTask = nil
+            self.commitPendingTurnIfReady()
+        }
+    }
+
+    /// 猶予を打ち切る（commit 確定・追加発話の開始・テキスト送信・STT 切断・停止）。
+    private func cancelCommitGrace() {
+        commitGraceTask?.cancel()
+        commitGraceTask = nil
+        commitGraceStartedAt = nil
     }
 
     // MARK: - Turn commit → Claude

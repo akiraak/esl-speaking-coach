@@ -221,6 +221,7 @@ STT 確定に 400ms かかっているなら猶予 1.0 秒の実質上乗せは 
 ## Phase 構成
 
 - **Phase 1: 送信猶予（①）** ← **ゲートを触らないので単独で入れられ、日常の不満に一番効く**
+  （2026-08-04 完了・実機確認済み。下記「Phase 1 実装メモ」）
   - `commitPendingTurnIfReady()` にタイマー、`TurnCommitGrace`（純関数）、猶予中の state 維持、
     ジングルのタイミング調整
   - この時点で「詰まっても続きを言えば 1 つのターンになる」
@@ -249,12 +250,43 @@ Phase 1 は独立で、実機確認して悪ければ猶予 0 に戻すだけで
 Phase 3 だけでも「いつでも話せる」体験の大半（話しかけを取りこぼさない）は入る。
 Phase 4 以降は「相手が止まる」ぶんの上積みなので、Phase 3 の実機確認で切り分けてから進める。
 
+## Phase 1 実装メモ（2026-08-04）
+
+実装したのは①の送信猶予だけ。ゲート（`AudioTapRouter`）・割り込み・回収には触っていない。
+
+- `Voice/TurnCommitGrace.swift`（新規・純粋な値型）。`standard`（既定 1.0 秒）と
+  確定テキストからの出し分けを持つ。長短は**標準からの固定比**で導く
+  （続きそう ×1.6 / 完結 ×0.4）。`standard = 0` で従来どおりの即送信に戻る
+  - 判定順は「3 点リーダ → `.` `?` `!` → `,` `-` `—` → 末尾語」。live の STT が
+    句読点を出さない場合でも末尾語だけで効くようにしてある（Phase 2 の実測待ち）
+  - 末尾語のリストには**文末にも普通に立つ語（`you` `it` `that` `there` `some` `well` `yes`）を
+    入れていない**。入れると完結した発話まで 1.6 秒待たされ、体感レイテンシがまるごと悪化する
+- `TurnBasedVoiceSession`
+  - `.speechStopped` で `state = .thinking` に**しなくなった**。`beginCommitGrace(at:)` で
+    猶予タイマーを張り、listening のまま追加発話を待つ（＝ live のゲートも開いたまま）。
+    従来はここでゲートが閉じるので、ポーズ直後の続きは**入力ごと捨てられていた**
+  - `commitPendingTurnIfReady()` が唯一の締めの口。猶予が残っていればタイマーを張り直して return、
+    残っていなければ従来どおり commit する。確定テキスト受信時に**残り時間を計算し直す**
+    （タイマーの起点は終端の時点なので STT の確定待ちと並行する）
+  - 猶予を畳むのは commit 確定 / 追加発話の開始（`.speechStarted`）/ テキスト送信 /
+    STT 切断 / `tearDownSTT`。空セグメント（ノイズ誤検知）には猶予を挟まない
+  - 入力終了ジングルは従来どおり commit の瞬間に鳴る（猶予ぶん遅れる = 窓が閉じた時刻と一致する）
+- 会話ログに 1 行（`送信猶予 1.60 秒（続きそう: "the"）`）。実機で「なぜその長さになったか」を追える
+- `TurnMetrics` は変えていない。`committedAt` は終端の時点のままなので、
+  **猶予ぶんは `pipelineTotalMs` / `perceivedTotalMs` に乗る**（`sttFinalizeMs` は従来どおり）
+- 4o 経路（サーバ VAD）にも同じ猶予がかかる（`commitPendingTurnIfReady()` が経路共通）
+- ユニットテスト 12 件（`TurnCommitGraceTests`）。全テスト green・シミュレータビルド確認済み
+
+**2026-08-04 実機で確認して確定**（詰まっても 1 ターンになる / 完結文の応答が遅くなっていない /
+ノイズだけのターンは従来どおり無音で通り過ぎる）。既定値は `standard = 1.0` 秒のまま据え置き。
+挙動を元へ戻したいときは `commitGrace.standard` を 0 にする。
+
 ## 影響範囲
 
 | ファイル | 変更 |
 | --- | --- |
 | `Voice/TurnBasedVoiceSession.swift` | 送信猶予のタイマー、`recallAssistantTurn()`、`syncVoiceInputGate` のモード判定、`handleSpeechStarted` の遅延確定、ダッキングとシステム音量ゲインの集約、エコー判定の適用、診断ログ |
-| `Voice/TurnCommitGrace.swift`（新規） | 確定テキストの末尾から猶予の長さを決める純関数 |
+| `Voice/TurnCommitGrace.swift`（新規・Phase 1 済） | 確定テキストの末尾から猶予の長さを決める純関数 |
 | `Voice/MicrophoneCapture.swift`（`AudioTapRouter`） | ゲートを 3 値化、モードごとのしきい値差し替え |
 | `Voice/ClientSpeechEndpointer.swift` | `Thresholds` から AI ターン用の派生を作る（純関数） |
 | `Voice/VoiceSession.swift` | `.assistantUtteranceRemoved(id:)` イベントの追加 |
@@ -315,6 +347,10 @@ Phase 4 以降は「相手が止まる」ぶんの上積みなので、Phase 3 �
 - **確定テキストの句読点**（Phase 2 で測る）。出ないなら猶予の出し分けは末尾語だけになる
 - **猶予による体感レイテンシの悪化**。STT 確定待ちと並行させても純増ぶんは残る。
   完結文を短い猶予にする出し分けが効かないと、全ターンが 1 秒近く遅くなる
+- **猶予の再武装が続くと送信が伸びる**（Phase 1 で入った挙動）。VAD が発火するたびに
+  猶予を張り直すので、テレビ等で VAD が鳴り続ける部屋では 1 ターンの送信が遅れ続けうる。
+  ただし「発話中・確定待ちのあいだは commit しない」のは元からの条件で、猶予はそこに
+  1.6 秒足すだけ。総待ち時間に上限を置くかは Phase 7 の実機確認で判断する
 - **VP のエコー除去性能**が端末・経路（本体スピーカー / Bluetooth）で大きく変わる。
   Bluetooth HFP では特に厳しい可能性があり、経路ごとにゲートを閉じる判断が要るかもしれない
 - ダッキングと `PlaybackVolumePolicy` の掛け合わせで、**音量下限（0.05 以下は無音）**の扱いが
