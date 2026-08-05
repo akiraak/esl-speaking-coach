@@ -240,13 +240,20 @@ STT 確定に 400ms かかっているなら猶予 1.0 秒の実質上乗せは 
   - **確定テキストに句読点が入るか** → 終止記号は 2/9。末尾語の判定が主
   - 読み上げ中のマイク RMS（＝ VP 通過後のエコー残留）→ `.assistantTurn` は ×1.5 + 0.30 秒
 - **Phase 3: ゲートモード 3 値 + 非対称しきい値**（割り込みはまだしない = 案 A4）
+  （2026-08-04 完了・実機確認済み。下記「Phase 3 実装メモ」と「Phase 3 実機確認結果」。
+  Bluetooth の宿題も解決 = **HFP は半二重ではない**）
   - `AudioTapRouter` / `syncVoiceInputGate` / `ClientSpeechEndpointer.Thresholds` の派生
   - この時点で「AI が話している間に話しかけると、読み上げ終了後に自分のターンとして入る」
   - **Bluetooth（HFP）で読み上げ中にマイクが生きているかをここで確認する**（実測 4 の宿題）
+- **Phase 3.5: 相槌フィルタ**（Phase 3 の実機確認で出てきた宿題。Phase 4 の前提）
+  （2026-08-04 実装・**実機未確認**。下記「Phase 3.5 実装メモ」）
+  - `BackchannelFilter`（新規・純関数）。相槌と、キャッチボールにならない短い返事を落とす
+  - **自分のターンでも落とす**（「Yes」だけで済ませられなくなる = 発話量を稼ぐ方針に合う）
 - **Phase 4: 遅延確定 + ダッキング + 回収ウィンドウ（②④）**
-  - `handleSpeechStarted` の分岐、確定判定（純関数。partial 1 語）、`applyPlaybackGain()` の集約、
-    `recallAssistantTurn()` と `.assistantUtteranceRemoved` イベント
-  - ②（thinking 中の回収）は Phase 3 のゲート開放だけで成立するので先に入れて確認できる
+  （2026-08-04 実装・**実機未確認**。下記「Phase 4 実装メモ」）
+  - `handleSpeechStarted` の分岐、確定判定（純関数。**partial に相槌語でない語が 1 つ出たら確定**。
+    `i` だけは文頭とみなして中身扱いする）、`applyPlaybackGain()` の集約、
+    thinking 中の回収（`.assistantUtteranceRemoved` イベントは不要だった）
 - **Phase 5: エコー対策**
   - `AssistantEchoFilter` + VP オフ端末のフォールバック（speaking 中は閉じる）
 - **Phase 6: 管理画面（窓モード切替 + 新規 4 項目 + 会話ログ）**
@@ -406,6 +413,195 @@ minimumSpeechDuration=0.20 / silenceDuration=1.20`。
    止まっているなら BT ではゲートを開けても話しかけを拾えない
 5. VP は全区間 on のままだった（watchdog による VP オフへのフォールバックは発生せず）
 
+## Phase 3 実装メモ（2026-08-04）
+
+**入力の窓を AI のターン中も開けた。ただし割り込みはしない**（案 A4）。
+ダッキング・遅延確定・回収は Phase 4 のまま手を付けていない。
+
+- `ClientSpeechEndpointer.Thresholds` に AI ターン用の派生（純関数 `assistantTurnDerived`）
+  - `minimumPeak` × `assistantTurnPeakMultiplier`（既定 1.5）/
+    `minimumSpeechDuration` = `assistantTurnMinimumSpeechDuration`（既定 0.30 秒）。実測どおり
+  - **`unconditionalPeak` も一緒に押し上げる**。閾値は
+    `min(max(floor × snr, minimumPeak), unconditionalPeak)` なので、上限を据え置くと
+    持ち上げたぶんが上限で削られて厳しくならない（`minimumPeak` を 0.05 まで上げた設定で顕在化する）
+  - 厳しくするのは**発話開始の条件だけ**。終端（`silenceDuration`）・遡り・強制終端・`snrRatio` は
+    listening と共通にする（読み上げ中に始まった発話が、読み上げ終了後もそのまま 1 つの発話として続く）
+- `AudioTapRouter`: `setSpeechGateOpen(Bool)` → `setSpeechGateMode(SpeechGateMode)`
+  （`.closed` / `.listening` / `.assistantTurn`）。base のしきい値を保持し、モードごとに差し替える
+  - **開 ⇄ 開（listening ⇄ assistantTurn）では進行中のセグメントを破棄しない。**
+    破棄して `input_audio_buffer.clear` を出すのは `.closed` へ落ちるときだけ ＝ 従来の導線のまま
+- `TurnBasedVoiceSession`
+  - `desiredSpeechGateMode()`: listening → `.listening` / **thinking → `.listening`**（AI はまだ
+    音を出していない = エコーが無い）/ speaking → `.assistantTurn` / それ以外は `.closed`
+  - **VP（AEC）が切れた端末では speaking 中は `.closed`** へ倒す。エコーが素通りする端末で開けると
+    AI の声を自分のターンとして送ってしまう（Phase 5 の `AssistantEchoFilter` までの安全側。
+    watchdog が VP を切った直後にも `syncVoiceInputGate()` を呼び直す）
+  - `Configuration.voiceInputWindow`（`.turnGated` / `.always`。**既定 `.always`**）。
+    元の挙動へ戻すのはここを `.turnGated` にするだけ。管理画面の切替は Phase 6
+  - `handleSpeechStarted`: AI のターン中は**割り込まず**に会話ログへ 1 行だけ残して return
+    （`AI のターン中に発話を検知しました（読み上げ後に送ります）`）
+  - `commitPendingTurnIfReady()`: AI のターン中は投げずに `pendingTurnText` へ溜める。
+    読み上げ終了後の `handleTurnFinished` → `commitPendingTurnIfReady()` がそのまま投入する
+  - **`TurnMetrics` を汚さない**: AI のターン中に話したぶんは、進行中の AI ターンの計測へ
+    書き込まず（`metricsAwaitsAssistantTurn`）、投入の瞬間に測り直す。読み上げの残り時間は
+    パイプラインのレイテンシではないので `pipelineTotalMs` に乗せない
+  - 診断ログにゲート遷移 1 行（`gate: 開（自分のターン） → 開（AI ターン: 音量 0.024 / 開始 0.30 秒）`）。
+    **派生後の実効値**を出す（実機でしきい値を追い込むとき、倍率だけでは判断できない）
+- ユニットテスト 7 件追加（`AudioTapRouterGateTests`）。実測（本体スピーカー・ターン 3）の
+  再現として「エコー 0.020 は listening では発話開始になるが `.assistantTurn` では発火しない」を固定した。
+  全 455 件 green・シミュレータビルド確認済み
+- 4o 経路（サーバ VAD）は不変。`defersBargeInDuringAssistantTurn` が
+  `usesClientEndpointing` を見るので、4o では従来どおり即時 barge-in のまま
+
+### 実機で確かめること（Phase 3）
+
+1. AI が話している間に話しかけて、**読み上げは止まらず**、読み上げ終了後に自分のターンとして入る
+2. thinking 中（無音の待ち時間）に話しかけたぶんが取りこぼされない
+3. 読み上げ中に咳・物音・キーボードを立てても、**ターンが増えない**
+   （会話ログに「AI のターン中に発話を検知」が出なければ VAD が発火していない）
+4. イヤフォンなし（本体スピーカー）で、AI の声が自分のターンとして送られない
+   （送られるなら Phase 5 の `AssistantEchoFilter` を前倒しする）
+5. **Bluetooth（HFP）で読み上げ中にマイクが生きているか**（実測 4 の宿題）。
+   BT 接続で AI の読み上げ中に話しかけ、
+   - 会話ログに「AI のターン中に発話を検知」が出る → マイクは生きている
+   - 出ない場合は診断ログの `probe echo:` を見る。`最大 0.0000` のままなら
+     **HFP が半二重でマイクを止めている**（＝ BT では Phase 3 の効果が出ない）。
+     最大 RMS が上がっているのにログが出ないなら、しきい値が厳しすぎるだけ
+6. 会話ログの `pipelineTotal` が、AI ターン中に話したターンでも異常に伸びていない
+
+### Phase 3 実機確認結果（2026-08-04 実機 / iPhone・Bluetooth HFP・Shokz OpenDots ONE）
+
+**同じヘッドセットで「黙って聞く」「かぶせて話す」を 1 セッションずつ録って比べた。**
+これが Bluetooth の宿題（実測 4）の答えになる。
+
+| `probe echo`（読み上げ中の生レベル） | 黙って聞いた回 | かぶせて話した回 |
+| --- | --- | --- |
+| `rms 最大` | 0.0001〜0.0021 | **0.0476〜0.0595** |
+| `>0.024 最長` | 0.00s | **0.38〜0.51s** |
+
+1. **HFP は半二重ではない。読み上げ中もマイクは生きている。** 生レベルが 25 倍に跳ねる。
+   前回 RMS がほぼ 0 だったのは**エコーが無かったから**で、マイクが止まっていたからではない
+   （ついでに **HFP の真のエコー残留は 0.002** と確定した。`0.024 / 0.30 秒` に対して十分低い）
+2. **読み上げ中の話しかけを 3/3 で拾えた。** `probe stt` の開始時刻を
+   （ログ時刻 − `commit→final` − `発話`）で逆算すると、3 セグメントとも読み上げ区間の内側から始まっている
+3. **読み上げ終了後に自分のターンとして入った**（読み上げ終了の 2.5〜3.0 秒後に次の AI ターンが始まり、
+   セッション終了時の `学習者発話=3` とも一致）
+4. **モード切替でセグメントが途切れない**（3 つ目は読み上げを跨いで 5.89 秒の 1 セグメント。
+   `開 ⇄ 開では破棄しない` が実機で効いている）
+5. 本体スピーカーは Phase 2 の実測どおり問題なし（作者確認）
+
+#### この確認で出てきた宿題: 相槌が 1 ターンになる
+
+「Um,」だけ、「いいね。 そう」だけで user ターンが成立し、Chobi が返事をした。
+A4（止めずに後で投入）の素直な帰結だが、**聞きながらの相槌がいちいち会話ターンになる**のは邪魔。
+
+そして**これは Phase 4 でそのままでは直らない**。④の確定条件は「partial 1 語」なので、
+「Um」で Chobi が止まる。実測時は「ノイズはテキストにならない」ことを根拠に 1 語で釣り合うと
+判断したが、**相槌はテキストになる**という抜けがあった。
+
+→ **Phase 3.5 として相槌フィルタを入れてから Phase 4 へ進む**（下記）。
+語数を上げる案は却下済み（2 語は中央値 2.1 秒で割り込みには遅すぎる）。
+
+## Phase 3.5 実装メモ（2026-08-04）
+
+落とす対象は 4 つ。①聞きながらの相槌（「Um」「うん」）②**会話のキャッチボールにならない
+短い返事**（「Yes」「Thank you」「And you?」）③**単発の間投詞**（「No」「Wait」）
+④**1 語しかない発話**（「Hello」）。②③④は Chobi が真面目に返事を組み立てるだけで練習にならない。
+
+**④は語彙ではなく語数で切る**（`isWorthSending`。**既定 3 語**、管理画面「音声入力」の
+「ターンにする最小語数」で 1〜5 に変えられる。1 は語数で切らない ＝ 語彙だけで判定）。
+実機で「Hello」が通ってしまったが、語彙リストに足し続けるのは終わりがない。
+単語で済ませずに文で言い直してもらうのは、発話量を稼ぐという目的にも合う。
+副作用として、分かち書きされない日本語は 1 トークンになりやすく、たいてい落ちる
+（会話は英語のみなので意図どおり）。
+
+**②③は自分のターンでも落とす**（作者判断 2026-08-04）。質問へ「Yes」だけで答えると
+無反応になるが、**もう一言うながされるのは発話量を稼ぐという目的に合う**（CLAUDE.md）。
+続きを言えば落ちない（"No I don't think so" は通る）ので、意思表示そのものは失わない。
+
+**Phase 4 の割り込み確定もこの判定を使う**（作者判断 2026-08-04）。
+**Chobi の読み上げを止めるのは「こちらが文章を話したとき」だけ**でよく、
+「Wait」「Um」の単発では止めない。＝ 相槌語だけで構成されているうちは止めず、
+**相槌語でない語が 1 つ出た時点で確定**する。実測の「partial 1 語で確定」から
+「partial に中身のある語が 1 つ出たら確定」へ条件を差し替える。
+
+ただし **`i` は割り込み側では例外にする**。文頭に立つ語なので、`I think—` で止めるには
+「相槌語でない 2 語目（think）」を待つことになり、実測で中央値 2.1 秒かかって遅すぎる。
+`isBackchannel`（ターンにするか）では `i` を相槌語のまま残す — 単発の「I」は言い直しの
+途中であってターンではないため。**2 つの判定は `i` の扱いだけが違う。**
+
+- `Voice/BackchannelFilter.swift`（新規・純関数）。小文字化して記号（`.` `,` `-` `。` `、` …）を
+  区切りに変えて分割し、**決まり文句に一致するか、全トークンが相槌語なら true**
+  - 1 語でも相槌語でないものが混ざれば false ＝ 実機の「Yeah I do a similar chobi so I…」は落ちない
+  - ハイフンを区切りにするのは "uh-huh" / "mm-hmm" を語の並びとして拾うため
+  - **決まり文句（`phrases`）は全文一致、相槌語（`words`）は全トークン一致**の 2 段。
+    "you" は `phrases` 側に置く — `words` に入れると "Thank you for the tip" まで落ちる
+  - 日本語は分かち書きされないので、決まり文句も 1 トークン（`ありがとうございます`）で持つ
+- **判定は `commitPendingTurnIfReady()` の 1 箇所＝送信猶予が明けた時点のターン全文**に掛ける。
+  セグメントごとに落とすと「Yes」→ 一呼吸 →「I love it」で前半だけ消えるが、
+  ここなら合流後の "Yes I love it" が見えるのでそのまま送られる
+- **`isWorthSending`（ターンにするか）と `startsSentence`（読み上げを止めるか）は別**。
+  1 語だけの「Actually」でも読み上げは止める（止めるのに 2 語目を待てない）。
+  帰結として「1 語だけ言って黙る」と Chobi は止まるが返事もしない — 稀なので許容する
+- 落としたら `dropPendingTurn()` で黙って listening へ戻す（空セグメントと同じ導線）。
+  入力終了ジングルも鳴らさないので**一連が完全に無音で通り過ぎる**。会話ログへ 1 行だけ残す
+  （`相槌だけのターンを破棄しました「Yes」`）
+- ついでに `dropPendingTurn()` で**聞き取り中テキストを消す**ようにした。
+  従来は棄却されたセグメントの partial が画面に残り続けていた（相槌落としが日常的に起きると目立つ）
+- 最小語数は管理画面「音声入力」に**独立したセクション**として出す（VAD のしきい値とは
+  別の層なので Stepper も分ける）。保存は `VoiceInputSettingsStore` の規約どおり
+  **既定と違うときだけ**（既定を変えれば追従する）。セッション開始時に
+  `Configuration.minimumTurnWordCount` へ固定される
+- ユニットテスト 17 件（`BackchannelFilterTests` 15 / `VoiceInputSettingsStoreTests` 2）。
+  実機で実際にターンになった「Um,」「いいね。 そう」「Hello」を固定してある。
+  全 477 件 green・シミュレータビルド確認済み
+
+## Phase 4 実装メモ（2026-08-04）
+
+**Chobi を止めるのは「こちらが文章を話したとき」だけ**（作者判断 2026-08-04）。
+割り込むのは前の発話の補足か会話の続きで、どちらも文章になる。単語の割り込みは想定しない。
+
+- `BackchannelFilter.startsSentence(_:)`（純関数）。相槌語だけで構成されているうちは false、
+  **相槌語でない語が 1 つ出た時点で true**。partial に対して毎回呼ぶので 1 語目から判断できる
+  - `i` だけは相槌語のまま**中身として数える**（`sentenceStarters`）。文頭に立つ語なので、
+    `I think—` で止めるのに 2 語目を待つと実測で中央値 2.1 秒かかる
+  - 決まり文句（`Thank you`）では止めない。止めても直後にターンが破棄され、
+    Chobi が黙ったまま何も返らない形になる
+- `TurnBasedVoiceSession` の割り込み 3 段:
+  1. `beginPendingBargeIn()` — `.speechStarted` でダッキング（ゲイン ×0.3）。**非破壊**。
+     物音・咳で読み上げが切れないための猶予でもある
+  2. `confirmBargeInIfSentence(_:)` — `.partialTranscript` ごとに判定。
+     文章と分かった瞬間に `confirmBargeIn` へ（実測: 初回 delta 中央値 +0.90 秒）
+  3. `resolvePendingBargeInAfterFinal()` — partial で確定できなかったときの保険。
+     確定テキストが揃った時点で、文章なら遅れて確定、相槌・ノイズなら音量を戻して読み上げ続行
+- `confirmBargeIn(trigger:)` が回収（②）と通常 barge-in（④）を分ける。
+  **分岐は `state == .speaking` かどうかだけ**:
+  - thinking（まだ声が出ていない）→ `commitAssistantTurn` を**呼ばない**。
+    `turnUtterances` を捨てるので履歴に一切残らない。`history.last` は user のままなので、
+    次の commit で `appendUserMessage` が自動的に合流させ、Chobi は補足込みで返事をやり直す
+  - speaking → 従来どおり `commitAssistantTurn(onlyBegun: true)`（聞こえたぶんまで残す）
+  - **フラグは自分で降ろさず `state = .listening` の didSet に任せる**。
+    先に降ろすと `cancelPendingBargeIn()` の guard に弾かれ、ゲインが下がったままになる
+- `applyPlaybackGain()` に再生ゲインを集約。`systemPlaybackGain`（音量ボタンの KVO 由来）×
+  ダッキング係数を 1 箇所から出す。**KVO とダッキングが互いを上書きしない**ようにするため、
+  `speaker.setOutputGain` の呼び出し口はここだけにした
+- ダッキングの取りこぼし対策として、`state` の didSet（AI ターンから出たとき）・
+  `interruptAssistantTurn()`（テキスト送信・suspend・経路変更。thinking ⇄ speaking では
+  didSet が効かない）・`tearDownSTT()` からも `cancelPendingBargeIn()` を呼ぶ
+- 会話ログ: `AI のターン中に発話を検知しました（音量を下げて待機）` /
+  `割り込み確定・読み上げを停止しました（「I think—」）` /
+  `割り込み確定・生成中の返事を取り消しました（…）` / `割り込みを取り消しました（相槌のみ「Um」）`
+- ユニットテスト 4 件追加（`startsSentence`。全 471 件 green・シミュレータビルド確認済み）
+
+### 実機で確かめること（Phase 4）
+
+1. 読み上げ中に**文章で**話しかけると、音量が下がってから読み上げが**止まる**
+2. 読み上げ中に「うん」「Um」と相槌を打っても**止まらない**（音量が一瞬下がって戻る）
+3. 読み上げ中に咳・物音を立てても止まらない（ダッキングすら起きなければなお良い）
+4. 「考え中」の間に言い直すと、**Chobi の返事が出ないまま**やり直しになる（吹き出しが消えない）
+5. 割り込み後に音量が**元に戻っている**（ダッキングが残らない）
+6. 音量ボタンで下げた状態で割り込んでも、戻ったときに下げた音量が保たれている
+
 ## 影響範囲
 
 | ファイル | 変更 |
@@ -413,6 +609,7 @@ minimumSpeechDuration=0.20 / silenceDuration=1.20`。
 | `Voice/TurnBasedVoiceSession.swift` | 送信猶予のタイマー、`recallAssistantTurn()`、`syncVoiceInputGate` のモード判定、`handleSpeechStarted` の遅延確定、ダッキングとシステム音量ゲインの集約、エコー判定の適用、診断ログ |
 | `Voice/TurnCommitGrace.swift`（新規・Phase 1 済） | 確定テキストの末尾から猶予の長さを決める純関数 |
 | `Voice/VoiceInputProbe.swift`（新規・Phase 2 済） | 実測用のプローブ 2 種（診断ログへ 1 行。挙動は変えない） |
+| `Voice/BackchannelFilter.swift`（新規・Phase 3.5 済） | 相槌だけの発話かを判定する純関数（落とす判断は呼び出し側の state 次第） |
 | `Voice/MicrophoneCapture.swift`（`AudioTapRouter`） | ゲートを 3 値化、モードごとのしきい値差し替え |
 | `Voice/ClientSpeechEndpointer.swift` | `Thresholds` から AI ターン用の派生を作る（純関数） |
 | ~~`Voice/VoiceSession.swift`~~ | ~~`.assistantUtteranceRemoved(id:)` イベントの追加~~ → ③を落として不要（吹き出しは speaking 以降にしか出ない） |

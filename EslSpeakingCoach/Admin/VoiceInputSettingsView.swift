@@ -9,6 +9,7 @@ struct VoiceInputSettingsView: View {
     /// 表示中の値。`VoiceInputSettingsStore` は UserDefaults の薄いラッパで observable では
     /// ないので、画面側で保持して再描画のトリガにする（保存は都度ストアへ書く）
     @State private var values: [VoiceInputParameter: Double] = [:]
+    @State private var minimumTurnWordCount = BackchannelFilter.defaultMinimumTurnWordCount
     @State private var measurements: [SpeechSegmentMeasurement] = []
 
     var body: some View {
@@ -32,6 +33,8 @@ struct VoiceInputSettingsView: View {
                     Text(footer(for: group).joined(separator: "\n"))
                 }
             }
+
+            turnWordCountSection
 
             Section {
                 Button("すべて既定に戻す", role: .destructive) {
@@ -88,6 +91,47 @@ struct VoiceInputSettingsView: View {
             Text(
                 "練習する場所に合わせて 7 項目をまとめて入れます。"
                 + "そのあと下で 1 項目ずつ追い込めます（チェックは現在値が一致しているときだけ付きます）。")
+        }
+    }
+
+    /// 相槌フィルタの最小語数（docs/plans/always-on-voice-input.md Phase 3.5）。
+    /// しきい値（VAD）とは別の層なので、プリセットにも「すべて既定に戻す」の対象にも
+    /// 入るが、セクションは分ける。
+    @ViewBuilder
+    private var turnWordCountSection: some View {
+        let isOverridden = minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount
+        Section {
+            Stepper(
+                value: turnWordCountBinding,
+                in: VoiceInputSettingsStore.minimumTurnWordCountRange
+            ) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("ターンにする最小語数")
+                        Spacer()
+                        Text("\(minimumTurnWordCount) 語")
+                            .monospacedDigit()
+                            .foregroundStyle(isOverridden ? ChatTheme.accent : .secondary)
+                    }
+                    Text("これ未満の発話は会話ターンにせず、黙って聞き取りに戻る。"
+                         + "上げると単語で済ませられなくなる")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if isOverridden {
+                        Text("既定は \(BackchannelFilter.defaultMinimumTurnWordCount) 語")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Text("相槌フィルタ")
+        } footer: {
+            Text(
+                "「Um」「Yes」「Thank you」などの相槌は語数に関わらず落とします。"
+                + "ここは語彙リストに無い短い発話（「Hello」など）を落とすための語数です。"
+                + "1 語にすると語数では落とさなくなります。"
+                + "AI の読み上げを止めるかどうかの判定には効きません（1 語でも文章なら止めます）。")
         }
     }
 
@@ -208,13 +252,24 @@ struct VoiceInputSettingsView: View {
         }
     }
 
+    private var turnWordCountBinding: Binding<Int> {
+        Binding(
+            get: { minimumTurnWordCount },
+            set: { newValue in
+                store.setMinimumTurnWordCount(newValue)
+                minimumTurnWordCount = store.minimumTurnWordCount
+            })
+    }
+
     private var hasOverrides: Bool {
         VoiceInputParameter.allCases.contains { values[$0] != nil && values[$0] != $0.defaultValue }
+            || minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount
     }
 
     private func reload() {
         values = Dictionary(
             uniqueKeysWithValues: VoiceInputParameter.allCases.map { ($0, store.value(for: $0)) })
+        minimumTurnWordCount = store.minimumTurnWordCount
         measurements = store.recentMeasurements
     }
 }

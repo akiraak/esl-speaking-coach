@@ -31,6 +31,29 @@ struct ClientSpeechEndpointer: Sendable {
         /// 持続的な環境音（テレビ等）で終端が出ないことがあり、放置すると append と
         /// 課金が無制限に伸びる（サーバ VAD 時代には無かった故障モード）
         var maxSegmentDuration: TimeInterval = 60
+
+        // MARK: - AI の読み上げ中だけ効く派生（docs/plans/always-on-voice-input.md Phase 3）
+
+        /// AI の読み上げ中に `minimumPeak` へ掛ける倍率。読み上げ中は暗騒音の更新が止まる
+        /// ＝ `snrRatio` が当てにならないので、**絶対値側**で効かせる。
+        /// 2026-08-04 の実機実測（本体スピーカー 6 ターン）で ×1.5 なら誤発火 0
+        var assistantTurnPeakMultiplier: Float = 1.5
+        /// AI の読み上げ中に使う発話開始の継続時間。実測ではエコーの連続超過が最悪 0.20 秒
+        /// だったので、タップバッファ 3 個ぶん（0.30 秒）なら越えられない
+        var assistantTurnMinimumSpeechDuration: TimeInterval = 0.30
+
+        /// AI の読み上げ中に使う派生（純関数）。厳しくするのは発話**開始**の条件だけで、
+        /// 終端（`silenceDuration`）・遡り・強制終端・`snrRatio` は listening と共通にする
+        /// （読み上げ中に始まった発話が、読み上げ終了後もそのまま 1 つの発話として続くため）。
+        var assistantTurnDerived: Thresholds {
+            var derived = self
+            derived.minimumPeak = minimumPeak * assistantTurnPeakMultiplier
+            // 閾値は `min(max(floor × snr, minimumPeak), unconditionalPeak)` なので、
+            // 上限を一緒に押し上げないと持ち上げたぶんが上限で削られる
+            derived.unconditionalPeak = max(unconditionalPeak, derived.minimumPeak)
+            derived.minimumSpeechDuration = assistantTurnMinimumSpeechDuration
+            return derived
+        }
     }
 
     enum Event: Sendable, Equatable {

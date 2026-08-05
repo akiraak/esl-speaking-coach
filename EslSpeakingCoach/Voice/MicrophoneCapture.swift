@@ -15,6 +15,34 @@ enum GatedMicEvent: Sendable, Equatable {
     case speechStopped(forced: Bool)
 }
 
+/// live の送信ゲートの開き方（docs/plans/always-on-voice-input.md Phase 3）。
+/// 開 / 閉の 2 値ではなく 3 値にするのは、**入力の窓は AI のターン中も開けておき、
+/// 読み上げ中だけしきい値を厳しくする**ため。窓を閉じるのは「聞かない」ことであり、
+/// 話しかけを取りこぼすが、しきい値を上げるのは「エコーでは発火しない」だけで
+/// 本人の声は通る。
+enum SpeechGateMode: Sendable, Equatable {
+    /// 閉。エンドポインタ判定・遡り蓄積・append を丸ごと止める
+    /// （窓モードがターン制のときの AI ターン、入力無効、接続待ち、VP が切れた端末の読み上げ中）
+    case closed
+    /// 自分のターン（listening）と thinking。設定どおりのしきい値で開く
+    /// （thinking は AI がまだ音を出していない ＝ エコーが無いので listening と同じでよい）
+    case listening
+    /// AI の読み上げ中（speaking）。VP 通過後のエコー残留で誤発火しないよう
+    /// `ClientSpeechEndpointer.Thresholds.assistantTurnDerived` の厳しい側で開く
+    case assistantTurn
+
+    var isOpen: Bool { self != .closed }
+}
+
+/// 入力の窓をいつ開けるかの方針（セッション開始時に固定する）。
+/// 既定はコード側が正で、管理画面からの切替は Phase 6 で足す。
+enum VoiceInputWindow: String, Sendable, CaseIterable {
+    /// 自分のターン（listening）のときだけ開く（docs/plans/archive/turn-gated-voice-input.md）
+    case turnGated = "ターン制"
+    /// AI のターン中も開けたままにする。読み上げ中はしきい値を厳しくして誤発火を抑える
+    case always = "常時"
+}
+
 /// マイクのタップから受け取ったバッファを、RMS レベルと（接続中なら）PCM16 の生バイト列へ配る。
 /// process(buffer:) はオーディオスレッドから呼ばれるため NSLock で守る。
 /// AVAudioConverter 等の非 Sendable な状態はこのクラス内に閉じ込める。
@@ -31,9 +59,10 @@ final class AudioTapRouter: @unchecked Sendable {
     private var gatedConverter: AVAudioConverter?
     /// live モードのクライアント VAD（暗騒音は meter の推定を共有する）
     private var endpointer = ClientSpeechEndpointer()
-    /// live の送信ゲートの開閉。自分が話すターン（listening）のときだけ開く
-    /// （docs/plans/archive/turn-gated-voice-input.md。attach 直後は閉、セッションが state に同期させる）
-    private var isSpeechGateOpen = false
+    /// live の送信ゲートの開き方（attach 直後は閉、セッションが state に同期させる）
+    private var gateMode = SpeechGateMode.closed
+    /// 管理画面で調整した listening 側のしきい値。AI ターン用の派生はここから作る
+    private var baseThresholds = ClientSpeechEndpointer.Thresholds()
     /// 発話開始判定時に prefix padding として送る直近チャンク（合計 ≒ lookbackDuration）
     private var lookbackChunks: [(data: Data, duration: TimeInterval)] = []
     private var lookbackTotal: TimeInterval = 0
@@ -79,27 +108,48 @@ final class AudioTapRouter: @unchecked Sendable {
         gatedContinuation = continuation
         gatedFormat = format
         gatedConverter = nil
+        baseThresholds = thresholds
         endpointer = ClientSpeechEndpointer(thresholds: thresholds)
-        isSpeechGateOpen = false
+        gateMode = .closed
         lookbackChunks.removeAll()
         lookbackTotal = 0
     }
 
-    /// live の送信ゲートを開閉する。閉じている間はエンドポインタ判定・遡り蓄積・append を
+    /// 現在の送信ゲートの開き方（セッションが遷移をログへ残すために読む）。
+    var speechGateMode: SpeechGateMode {
+        lock.lock()
+        defer { lock.unlock() }
+        return gateMode
+    }
+
+    /// live の送信ゲートを切り替える。閉じている間はエンドポインタ判定・遡り蓄積・append を
     /// 丸ごと止める（暗騒音の推定とレベル表示は動き続ける）。
+    ///
+    /// **開いたまま listening ⇄ assistantTurn を移るときは進行中のセグメントを破棄しない。**
+    /// 読み上げ中に話し始めた発話が、読み上げ終了の瞬間に切られてしまわないようにする
+    /// （破棄するのは `.closed` へ落ちるときだけ ＝ 従来の導線をそのまま残す）。
     /// - Returns: 発話中セグメントを破棄したか。true なら呼び出し側でサーバ側の
     ///   append 済みバッファも clear すること（次セグメントの commit への混入防止）
     @discardableResult
-    func setSpeechGateOpen(_ open: Bool) -> Bool {
+    func setSpeechGateMode(_ mode: SpeechGateMode) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard open != isSpeechGateOpen else { return false }
-        isSpeechGateOpen = open
+        guard mode != gateMode else { return false }
+        let wasOpen = gateMode.isOpen
+        gateMode = mode
+        endpointer.thresholds = thresholds(for: mode)
+        // 開 ⇄ 開（しきい値の差し替えだけ）はセグメントを継続させる
+        guard !mode.isOpen || !wasOpen else { return false }
         let discardedActiveSegment = endpointer.isSpeaking
         endpointer.reset()
         lookbackChunks.removeAll()
         lookbackTotal = 0
         return discardedActiveSegment
+    }
+
+    /// モードごとのしきい値（ロック下で呼ぶ）。AI の読み上げ中だけ厳しい派生を使う。
+    private func thresholds(for mode: SpeechGateMode) -> ClientSpeechEndpointer.Thresholds {
+        mode == .assistantTurn ? baseThresholds.assistantTurnDerived : baseThresholds
     }
 
     /// raw / gated 両モードの配送を止める（マイク停止・セッション終了の共通処理）。
@@ -114,6 +164,7 @@ final class AudioTapRouter: @unchecked Sendable {
         gatedContinuation = nil
         gatedFormat = nil
         gatedConverter = nil
+        gateMode = .closed
         endpointer.reset()
         lookbackChunks.removeAll()
         lookbackTotal = 0
@@ -201,9 +252,9 @@ final class AudioTapRouter: @unchecked Sendable {
     }
 
     /// 送信ゲート（ロック下で呼ぶ）: エンドポインタを駆動し、発話区間 + 遡りだけを流す。
-    /// ゲートが閉じている間（AI のターン中）は何もしない。
+    /// ゲートが閉じている間は何もしない（しきい値はモードごとに差し替え済み）。
     private func processGated(buffer: AVAudioPCMBuffer, level: Float, duration: TimeInterval) {
-        guard isSpeechGateOpen else { return }
+        guard gateMode.isOpen else { return }
         guard let continuation = gatedContinuation, let format = gatedFormat else { return }
         let data = convert(buffer, to: format, converter: &gatedConverter)
             .flatMap { Self.pcm16Data(from: $0) }

@@ -11,12 +11,19 @@ import UIKit
 /// AudioTapRouter の送信ゲート）、gpt-4o-transcribe は STT セッションのサーバ VAD を使う。
 /// イベントの形（.speechStarted / .speechStopped）は共通で、以降の状態遷移は変わらない。
 ///
-/// live の音声入力は**自分が話すターン（listening）のときだけ**動く
-/// （syncVoiceInputGate。docs/plans/archive/turn-gated-voice-input.md）。AI のターン中は入力ごと
-/// 止まるため音声での barge-in は無く、割り込みは一時停止ボタンとテキスト送信のみ。
+/// live の音声入力は **AI のターン中も開いたまま**にする（syncVoiceInputGate /
+/// SpeechGateMode。docs/plans/always-on-voice-input.md Phase 3）。読み上げ中（speaking）だけ
+/// しきい値を厳しい派生へ差し替えてエコー残留での誤発火を抑え、thinking は音が鳴っていない
+/// ＝エコーが無いので listening と同じしきい値で開ける。
+/// AI のターン中に話しかけても**その場では止めない**（Phase 4）。まず読み上げをダッキングして
+/// 「聞こえてるよ」だけ返し、**こちらが文章を話し始めたと分かった時点で割り込みを確定**して止める
+/// （`confirmBargeInIfSentence`。「Um」「Wait」の単発では止めない）。確定しなければ読み上げは
+/// 続き、認識ぶんは読み上げ終了後に自分のターンとして投入される。
+/// まだ声が出ていない（thinking）うちに確定したときは、生成中の返事を履歴に一切残さず捨てて
+/// 学習者の発言へ合流させる（回収）。読み上げ済みなら聞こえたぶんまでは履歴に残す。
 /// 入力の窓は開始 / 終了のジングルで知らせる。ただし終了ジングルは確定テキストが空でないと
 /// 分かってから鳴らすので、ノイズだけで VAD が発火したターンは無音で通り過ぎる
-/// （docs/plans/empty-segment-no-cue.md）。4o 経路は従来どおり常時入力 + 音声 barge-in。
+/// （docs/plans/empty-segment-no-cue.md）。4o 経路は従来どおり常時入力 + 即時の音声 barge-in。
 ///
 /// 発話終端の直後は**送信猶予**（TurnCommitGrace）を挟む。listening のまま数百 ms〜1.6 秒
 /// 待ち、その間に続きを話せば同じターンへ継ぎ足す（言い淀みで途中送信されない。
@@ -88,9 +95,16 @@ final class TurnBasedVoiceSession: VoiceSession {
         /// live（サーバ VAD 非対応モデル）のときに使うクライアント VAD の閾値
         /// （docs/plans/archive/gpt-live-transcribe-adoption.md）
         var clientEndpointer = ClientSpeechEndpointer.Thresholds()
+        /// 入力の窓の開け方（docs/plans/always-on-voice-input.md Phase 3）。
+        /// always では AI のターン中も入力を開けたままにし、読み上げ中だけしきい値を厳しくする。
+        /// 割り込みはその場で確定させず、文章を話し始めたと分かってから止める（Phase 4）
+        var voiceInputWindow: VoiceInputWindow = .always
         /// 発話終端から Claude へ投げるまでの送信猶予（言い淀み対策。
         /// docs/plans/always-on-voice-input.md Phase 1）。standard = 0 で従来どおり即送信
         var commitGrace = TurnCommitGrace()
+        /// 会話ターンとして送るのに必要な最小語数（これ未満は相槌と同じく黙って捨てる。
+        /// docs/plans/always-on-voice-input.md Phase 3.5）。管理画面「音声入力」で変えられる
+        var minimumTurnWordCount = BackchannelFilter.defaultMinimumTurnWordCount
     }
 
     let events: AsyncStream<VoiceSessionEvent>
@@ -116,16 +130,26 @@ final class TurnBasedVoiceSession: VoiceSession {
             microphone.router.setNoiseFloorUpdateSuppressed(state == .speaking)
             syncPlaybackEchoProbe(from: oldValue)
             syncVoiceInputGate()
+            // AI のターンから出たら、確定しなかった割り込み候補は用済み（ダッキングも戻す）
+            if state != .thinking, state != .speaking { cancelPendingBargeIn() }
         }
     }
 
-    /// live の音声入力ゲートを state に同期する。自分が話すターン（listening）のときだけ
-    /// 開き、AI のターン中は入力を止める（docs/plans/archive/turn-gated-voice-input.md。
-    /// 帰結として音声での barge-in は行わない。割り込みは一時停止ボタンとテキスト送信のみ）。
+    /// 割り込み待ちのダッキング係数。「聞こえてるよ」を返すだけなので消音はしない。
+    private static let bargeInDuckingGain: Float = 0.3
+
+    /// live の音声入力ゲートを state に同期する。窓モードが always なら AI のターン中も
+    /// 開けたままにし、読み上げ中だけしきい値を厳しくする
+    /// （docs/plans/always-on-voice-input.md Phase 3）。
     private func syncVoiceInputGate() {
         guard configuration.transcription.usesClientEndpointing else { return }
-        let discarded = microphone.router.setSpeechGateOpen(
-            state == .listening && isVoiceInputEnabled)
+        let previous = microphone.router.speechGateMode
+        let mode = desiredSpeechGateMode()
+        let discarded = microphone.router.setSpeechGateMode(mode)
+        if mode != previous {
+            DiagnosticsLog.record(
+                "gate: \(describeGateMode(previous)) → \(describeGateMode(mode))（state=\(state.rawValue)）")
+        }
         if discarded {
             // テキスト送信などで発話の途中にゲートが閉じた。中途セグメントは
             // クライアント / サーバ両方で破棄し、対応する計測・フラグも仕切り直す
@@ -141,9 +165,149 @@ final class TurnBasedVoiceSession: VoiceSession {
         }
     }
 
+    /// 入力の窓をどのモードで開けるか。
+    ///
+    /// - `.listening`（設定どおりのしきい値）は自分のターンと **thinking**。thinking を
+    ///   厳しくしないのは AI がまだ音を出しておらず、エコーが無いから
+    /// - `.assistantTurn`（厳しい派生）は読み上げ中だけ
+    /// - VP（AEC）が切れた端末では読み上げ中は**閉じる**。エコーが素通りするので
+    ///   しきい値を上げるだけでは足りず、AI の声を自分のターンとして送ってしまう
+    ///   （Phase 5 の `AssistantEchoFilter` が入るまでの安全側。実測では VP は常に on だった）
+    private func desiredSpeechGateMode() -> SpeechGateMode {
+        guard isVoiceInputEnabled else { return .closed }
+        switch state {
+        case .listening:
+            return .listening
+        case .thinking:
+            return configuration.voiceInputWindow == .always ? .listening : .closed
+        case .speaking:
+            guard configuration.voiceInputWindow == .always else { return .closed }
+            return isVoiceProcessingActive ? .assistantTurn : .closed
+        default:
+            return .closed
+        }
+    }
+
+    /// ゲート遷移の診断ログ 1 行。AI ターン中は**実際に効いているしきい値**も出す
+    /// （実機でしきい値を追い込むとき、派生後の値が分からないと判断できない）。
+    private func describeGateMode(_ mode: SpeechGateMode) -> String {
+        switch mode {
+        case .closed:
+            return "閉"
+        case .listening:
+            return "開（自分のターン）"
+        case .assistantTurn:
+            let derived = configuration.clientEndpointer.assistantTurnDerived
+            return String(format: "開（AI ターン: 音量 %.3f / 開始 %.2f 秒）",
+                          derived.minimumPeak, derived.minimumSpeechDuration)
+        }
+    }
+
+    /// AI のターン中の発話で**即座には割り込まない**か（遅延確定する経路か）。
+    /// 常時入力は live（クライアント VAD）経路だけの話で、
+    /// **4o + サーバ VAD は従来どおり即時 barge-in のまま**にする。
+    private var defersBargeInDuringAssistantTurn: Bool {
+        configuration.voiceInputWindow == .always
+            && configuration.transcription.usesClientEndpointing
+    }
+
+    /// AI のターンが進行中（生成中 / 読み上げ中）で、割り込みが確定するまでは
+    /// 話しかけても読み上げが続く状態か。
+    private var isAssistantTurnInFlight: Bool {
+        defersBargeInDuringAssistantTurn && (state == .thinking || state == .speaking)
+    }
+
+    // MARK: - 割り込みの遅延確定（Phase 4）
+
+    /// AI のターン中に発話開始を検知した。**その場では止めず**、読み上げをダッキングして
+    /// 「聞こえてるよ」だけ返す（非破壊）。物音・咳で読み上げが切れないための猶予でもある。
+    private func beginPendingBargeIn() {
+        guard !isPendingBargeIn else { return }
+        isPendingBargeIn = true
+        applyPlaybackGain()
+        eventContinuation.yield(.info("AI のターン中に発話を検知しました（音量を下げて待機）"))
+    }
+
+    /// 確定しなかった割り込み候補を畳んで音量を戻す（相槌だけだった / ノイズだった /
+    /// AI のターンが終わった）。
+    private func cancelPendingBargeIn(reason: String? = nil) {
+        guard isPendingBargeIn else { return }
+        isPendingBargeIn = false
+        applyPlaybackGain()
+        if let reason {
+            eventContinuation.yield(.info("割り込みを取り消しました（\(reason)）"))
+        }
+    }
+
+    /// 割り込みの確定判定。**Chobi を止めるのは「こちらが文章を話したとき」だけ**にする
+    /// （作者判断 2026-08-04）。割り込むのは前の発話の補足か会話の続きで、
+    /// どちらも文章になるため。「Um」「Wait」の単発では止めない。
+    ///
+    /// partial は発話中に流れてくる（実測: 初回 delta 中央値 +0.90 秒）ので、
+    /// 終端を待たずに掴める。
+    private func confirmBargeInIfSentence(_ partial: String) {
+        guard isPendingBargeIn, isAssistantTurnInFlight else { return }
+        guard BackchannelFilter.startsSentence(partial) else { return }
+        confirmBargeIn(trigger: partial)
+    }
+
+    /// 割り込みを確定して AI のターンを止める。
+    ///
+    /// **まだ声が出ていない（thinking）なら返事を丸ごと捨てる**（回収 ②）。
+    /// 学習者にはまだ 1 文字も見えていないので、履歴に残すと「言っていないこと」が残る。
+    /// `history.last` は user のままなので、次の commit で `appendUserMessage` が
+    /// 自動的に合流させ、Chobi は補足込みで最初から返事をやり直す。
+    ///
+    /// **読み上げ済みなら聞こえたぶんまでは残す**（通常の barge-in ④）。
+    private func confirmBargeIn(trigger: String) {
+        let wasSpeaking = state == .speaking
+        claudeTask?.cancel()
+        claudeTask = nil
+        speaker.stopNow()
+        if wasSpeaking {
+            commitAssistantTurn(onlyBegun: true)
+        } else {
+            // 回収: assistant のターンを履歴へ一切残さない
+            turnUtterances = []
+            scriptEndDetected = false
+        }
+        let snippet = DiagnosticsSnippet.make(trigger, limit: 40)
+        eventContinuation.yield(.info(
+            wasSpeaking
+                ? "割り込み確定・読み上げを停止しました（「\(snippet)」）"
+                : "割り込み確定・生成中の返事を取り消しました（「\(snippet)」）"))
+        // **ここでフラグを自分で降ろさない。** listening への遷移の didSet が
+        // cancelPendingBargeIn() を呼び、そこでダッキングが戻る（自分で降ろすと
+        // guard に弾かれてゲインが下がったままになる）
+        state = .listening
+    }
+
+    /// 確定テキストが出そろった時点の後始末（partial で確定できなかったときの保険）。
+    /// 溜まったテキストが文章になっていれば遅れて確定させ、相槌・ノイズだけなら
+    /// ダッキングを戻して読み上げを続けさせる。
+    private func resolvePendingBargeInAfterFinal() {
+        guard isPendingBargeIn, isAssistantTurnInFlight else { return }
+        // まだ確定を待っているセグメントがあれば、揃うまで待つ（ダッキングは保つ）
+        guard pendingSegments == 0 else { return }
+        let text = pendingTurnText
+        if !text.isEmpty, BackchannelFilter.startsSentence(text) {
+            confirmBargeIn(trigger: text)
+        } else {
+            cancelPendingBargeIn(reason: text.isEmpty ? "認識されなかった" : "相槌のみ「\(text)」")
+        }
+    }
+
+    /// システム音量（KVO）由来のゲインとダッキングを掛け合わせて 1 箇所から出す。
+    /// 別々に `setOutputGain` を呼ぶと、音量ボタン操作とダッキングが互いを上書きする。
+    private func applyPlaybackGain() {
+        speaker.setOutputGain(systemPlaybackGain * (isPendingBargeIn ? Self.bargeInDuckingGain : 1))
+    }
+
     /// 読み上げ（speaking）の区間だけマイクの RMS を集計し、抜けるときに診断ログへ 1 行残す
     /// （docs/plans/always-on-voice-input.md Phase 2 の実測 3: VP 通過後のエコー残留）。
-    /// AI ターン中にゲートを開ける Phase 3 のしきい値を、この実測から決める。
+    /// Phase 3 のしきい値はこの実測で決めた。以降も残すのは、経路（Bluetooth / 有線 /
+    /// 本体スピーカー）ごとに残留量が変わるためと、**読み上げ中にマイクが生きているか**を
+    /// buf 数と最大 RMS から確かめられるため（HFP が半二重でマイクを止めていないかの確認）。
     private func syncPlaybackEchoProbe(from previous: VoiceSessionState) {
         guard state != previous else { return }
         if state == .speaking {
@@ -214,6 +378,14 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 確定テキストが空（ノイズだけで VAD が発火した）なら鳴らさずに取り消す
     /// （docs/plans/empty-segment-no-cue.md）
     private var pendingInputEndCue = false
+    /// AI のターン中に話したぶんの投入待ち（常時入力の Phase 3）。true の間は
+    /// 進行中の AI ターンの計測を壊さないよう `metrics` へ書き込まず、投入時に測り直す
+    private var metricsAwaitsAssistantTurn = false
+    /// AI のターン中に発話を検知したが、まだ割り込みとして確定していない（Phase 4）。
+    /// この間は読み上げをダッキングして「聞こえてるよ」だけ返す（非破壊）
+    private var isPendingBargeIn = false
+    /// システム音量（KVO）由来の再生ゲイン。ダッキングと掛け合わせて出す
+    private var systemPlaybackGain: Float = 1
     /// 送信猶予のタイマー（走っている間は listening のまま追加発話を待つ）
     private var commitGraceTask: Task<Void, Never>?
     /// 猶予の起点（= 直近の発話終端）。確定テキストで長さを見直すときの基準にする。
@@ -433,6 +605,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         guard claudeTask == nil else { return }
         // 猶予待ちの音声ターンがあれば猶予は畳む（積み残しは AI のターン後に即 commit される）
         cancelCommitGrace()
+        metricsAwaitsAssistantTurn = false
         state = .thinking
 
         metrics = TurnMetricsBuilder()
@@ -506,6 +679,9 @@ final class TurnBasedVoiceSession: VoiceSession {
         pendingSegmentLevels.removeAll()
         pendingTurnText = ""
         pendingInputEndCue = false
+        metricsAwaitsAssistantTurn = false
+        // 音声入力を止めた以上、確定を待っていた割り込み候補はもう来ない（音量も戻す）
+        cancelPendingBargeIn()
         cancelCommitGrace()
         flushSegmentProbes(note: "STT 停止で打ち切り")
     }
@@ -585,10 +761,18 @@ final class TurnBasedVoiceSession: VoiceSession {
             // 入力の窓が閉じたことを知らせるジングルは、確定テキストが空でないと分かってから鳴らす
             // （ノイズ誤検知のターンを無音で通すため。テキスト送信ターンでは元々鳴らない）
             pendingInputEndCue = true
-            metrics = TurnMetricsBuilder()
             let now = Date()
-            metrics.utteranceEndedAt = now
-            metrics.committedAt = now
+            if isAssistantTurnInFlight {
+                // 常時入力（Phase 3）: AI のターン中に話したぶんは読み上げ後に投入される。
+                // 進行中の AI ターンの計測を壊さないよう、ここでは測り始めない
+                // （投入の瞬間に commitPendingTurnIfReady が測り直す）
+                metricsAwaitsAssistantTurn = true
+            } else {
+                metricsAwaitsAssistantTurn = false
+                metrics = TurnMetricsBuilder()
+                metrics.utteranceEndedAt = now
+                metrics.committedAt = now
+            }
             commitSegmentProbe(at: now)
             // 送信猶予: ここでは thinking へ進めず listening のまま続きを待つ
             // （言い淀みで切れたセグメントの続きを同じターンへ継ぎ足すため）。
@@ -597,11 +781,14 @@ final class TurnBasedVoiceSession: VoiceSession {
 
         case .partialTranscript(let text):
             recordSegmentProbePartial(text)
+            // AI のターン中なら、ここが割り込みを確定できる最速の地点
+            confirmBargeInIfSentence(text)
             eventContinuation.yield(.userPartialTranscript(text))
 
         case .finalTranscript(let transcript):
             pendingSegments = max(0, pendingSegments - 1)
-            metrics.transcriptFinalizedAt = Date()
+            // AI のターン中に話したぶんは、進行中の AI ターンの計測へ書き込まない
+            if !metricsAwaitsAssistantTurn { metrics.transcriptFinalizedAt = Date() }
             finishSegmentProbe(final: transcript)
             let levels = dequeueSegmentLevels()
             let verdict = SpeechLevelGate.verdict(for: levels, thresholds: configuration.levelGate)
@@ -620,6 +807,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             } else if !trimmed.isEmpty {
                 pendingTurnText = pendingTurnText.isEmpty ? trimmed : pendingTurnText + " " + trimmed
             }
+            resolvePendingBargeInAfterFinal()
             commitPendingTurnIfReady()
 
         case .segmentUsage(let usage):
@@ -637,6 +825,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             _ = dequeueSegmentLevels()
             finishSegmentProbe(final: nil, note: "認識失敗")
             eventContinuation.yield(.info("認識に失敗したセグメントがあります: \(message)"))
+            resolvePendingBargeInAfterFinal()
             commitPendingTurnIfReady()
 
         case .notice(let message):
@@ -660,6 +849,14 @@ final class TurnBasedVoiceSession: VoiceSession {
         // pendingTurnText は残るので、確定した続きは既存の連結ロジックがそのまま繋ぐ
         cancelCommitGrace()
         microphone.router.beginLevelSegment()
+        // 常時入力: AI のターン中でも聞くが、**その場では止めない**（Phase 4）。
+        // ダッキングだけ掛けて「聞こえてるよ」を返し、文章を話し始めたと分かった時点で
+        // confirmBargeInIfSentence が確定させる。確定しなければ読み上げは続き、
+        // 認識ぶんは読み上げ終了後に自分のターンとして投入される
+        if isAssistantTurnInFlight {
+            beginPendingBargeIn()
+            return
+        }
         if claudeTask != nil || state == .speaking {
             interruptAssistantTurn()
             eventContinuation.yield(.info("割り込みを検知しました"))
@@ -726,14 +923,16 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 猶予中に続きを話せば `pendingTurnText` へ継ぎ足され、1 つのターンとして送られる。
     private func commitPendingTurnIfReady() {
         guard !isUserSpeaking, pendingSegments == 0, claudeTask == nil else { return }
+        // 常時入力（Phase 3 = 案 A4）: AI のターン中（生成中 / 読み上げ中）に確定した発話は
+        // ここでは投げない。pendingTurnText に溜めておき、読み上げが終わって listening へ
+        // 戻った handleTurnFinished が投入する。割り込みは Phase 4 まで行わない
+        if isAssistantTurnInFlight { return }
         let text = pendingTurnText
         guard !text.isEmpty else {
             // ノイズ等で VAD だけ発火して空だった。窓が閉じたことは知らせていないので、
             // 開始ジングルも鳴らさずに黙って聞き取りへ戻す（一連が完全に無音で通り過ぎる）。
             // 空セグメントに猶予は挟まない（黙って通り過ぎるまでの時間を伸ばさない）
-            cancelCommitGrace()
-            pendingInputEndCue = false
-            if state == .thinking { state = .listening }
+            dropPendingTurn()
             return
         }
         if let startedAt = commitGraceStartedAt {
@@ -748,6 +947,30 @@ final class TurnBasedVoiceSession: VoiceSession {
             eventContinuation.yield(.info("送信猶予 \(decision.logDescription)"))
         }
         cancelCommitGrace()
+        // 猶予が明けても相槌・1 語だけだった。会話ターンにしない
+        // （docs/plans/always-on-voice-input.md Phase 3.5）。
+        // **判定はここ 1 箇所＝ターン全文に対して掛ける**。セグメントごとに落とすと
+        // 「Yes」→ 一呼吸 →「I love it」で前半だけ消えるが、ここなら合流後の
+        // "Yes I love it" が見えるのでそのまま送られる
+        if !BackchannelFilter.isWorthSending(
+            text, minimumWordCount: configuration.minimumTurnWordCount)
+        {
+            let reason = BackchannelFilter.isBackchannel(text)
+                ? "相槌" : "\(configuration.minimumTurnWordCount) 語未満"
+            eventContinuation.yield(.info("\(reason)のターンを破棄しました「\(text)」"))
+            dropPendingTurn()
+            return
+        }
+        if metricsAwaitsAssistantTurn {
+            // AI の読み上げが終わるのを待っていたターン。待たされたぶんはパイプラインの
+            // レイテンシではないので、投入の瞬間から測り直す（会話ログの数字を汚さない）
+            metricsAwaitsAssistantTurn = false
+            metrics = TurnMetricsBuilder()
+            let now = Date()
+            metrics.utteranceEndedAt = now
+            metrics.committedAt = now
+            metrics.transcriptFinalizedAt = now
+        }
         pendingTurnText = ""
         if state != .thinking { state = .thinking }
         if pendingInputEndCue {
@@ -755,6 +978,18 @@ final class TurnBasedVoiceSession: VoiceSession {
             speaker.playInputEndCue()
         }
         commitText(text)
+    }
+
+    /// ターンにせず黙って聞き取りへ戻す（ノイズだけの空セグメント / 相槌だけのターン）。
+    /// 入力終了ジングルも鳴らさないので、**一連が完全に無音で通り過ぎる**。
+    /// 画面に残っている聞き取り中テキストも消す（消さないと「Yes」が出たまま止まって見える）。
+    private func dropPendingTurn() {
+        cancelCommitGrace()
+        pendingTurnText = ""
+        pendingInputEndCue = false
+        metricsAwaitsAssistantTurn = false
+        eventContinuation.yield(.userPartialTranscript(""))
+        if state == .thinking { state = .listening }
     }
 
     /// 発話終端からの送信猶予を張る（docs/plans/always-on-voice-input.md Phase 1）。
@@ -950,6 +1185,10 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 応答の生成・読み上げを即時停止し、読み上げ開始済みの発話までを履歴に確定する
     /// （barge-in / テキスト割り込み / suspend / 経路変更の共通処理）。
     private func interruptAssistantTurn() {
+        // テキスト送信・suspend・経路変更で AI のターンごと畳む。確定していない
+        // 割り込み候補は用済みなので、ダッキングもここで戻す
+        // （thinking ⇄ speaking 間の遷移では state の didSet が走らないため）
+        cancelPendingBargeIn()
         claudeTask?.cancel()
         claudeTask = nil
         speaker.stopNow()
@@ -1146,7 +1385,12 @@ final class TurnBasedVoiceSession: VoiceSession {
             let volume = session.outputVolume
             let gain = PlaybackVolumePolicy.gain(systemVolume: volume)
             DiagnosticsLog.record("volume: \(Self.describeVolume(session)) gain=\(gain)")
-            Task { @MainActor [weak self] in self?.speaker.setOutputGain(gain) }
+            // 直接 setOutputGain せず applyPlaybackGain へ通す（ダッキングと掛け合わせる）
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.systemPlaybackGain = gain
+                self.applyPlaybackGain()
+            }
         }
     }
 
@@ -1334,6 +1578,9 @@ final class TurnBasedVoiceSession: VoiceSession {
                     self.fail("マイクの再起動に失敗: \(error.localizedDescription)")
                     return
                 }
+                // VP なしではエコーが素通りする。読み上げ中は窓を閉じる側へ倒し直す
+                // （docs/plans/always-on-voice-input.md Phase 3）
+                self.syncVoiceInputGate()
                 self.startMicWatchdog()
             } else {
                 self.fail(

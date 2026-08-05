@@ -233,6 +233,36 @@ final class VoiceInputSettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.recentMeasurements.isEmpty)
     }
 
+    // MARK: - 最小語数（docs/plans/always-on-voice-input.md Phase 3.5）
+
+    /// 未設定ならコード側の既定。既定と同じ値を入れても保存しない（既定が変われば追従する）
+    func testMinimumTurnWordCountUsesCodeDefault() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.minimumTurnWordCount, BackchannelFilter.defaultMinimumTurnWordCount)
+        XCTAssertFalse(store.hasAnyOverride)
+
+        store.setMinimumTurnWordCount(BackchannelFilter.defaultMinimumTurnWordCount)
+        XCTAssertNil(defaults.object(forKey: VoiceInputSettingsStore.minimumTurnWordCountKey))
+    }
+
+    /// 変更は保存され、範囲外は丸められる。しきい値と同じく「戻す」の対象になる
+    func testMinimumTurnWordCountIsStoredClampedAndReset() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        store.setMinimumTurnWordCount(5)
+        XCTAssertEqual(store.minimumTurnWordCount, 5)
+        XCTAssertTrue(store.hasAnyOverride)
+        XCTAssertEqual(store.diagnosticsSummary, "minimumTurnWordCount=5")
+
+        store.setMinimumTurnWordCount(99)
+        XCTAssertEqual(store.minimumTurnWordCount, 5)
+        store.setMinimumTurnWordCount(0)
+        XCTAssertEqual(store.minimumTurnWordCount, 1)
+
+        store.resetToDefaults()
+        XCTAssertEqual(store.minimumTurnWordCount, BackchannelFilter.defaultMinimumTurnWordCount)
+        XCTAssertFalse(store.hasAnyOverride)
+    }
+
     private func measurement(transcript: String) -> SpeechSegmentMeasurement {
         SpeechSegmentMeasurement(
             levels: SpeechSegmentLevels(peak: 0.05, mean: 0.02, noiseFloor: 0.005, sampleCount: 12),

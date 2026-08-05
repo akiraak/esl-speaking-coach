@@ -270,12 +270,48 @@ final class VoiceInputSettingsStore {
 
     var overriddenCount: Int { overriddenParameters.count }
 
+    /// しきい値以外も含めて、既定から動かしているものがあるか（画面の「戻す」ボタン用）。
+    var hasAnyOverride: Bool {
+        overriddenCount > 0 || minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount
+    }
+
     func resetToDefaults() {
-        guard overriddenCount > 0 else { return }
+        guard hasAnyOverride else { return }
         for parameter in VoiceInputParameter.allCases {
             defaults.removeObject(forKey: Self.key(for: parameter))
         }
+        defaults.removeObject(forKey: Self.minimumTurnWordCountKey)
         DiagnosticsLog.record("voiceInput: すべて既定に戻した")
+    }
+
+    // MARK: - 最小語数（相槌フィルタ）
+
+    static let minimumTurnWordCountKey = "voiceInput.minimumTurnWordCount"
+    /// 1 = 語数で切らない（相槌の語彙だけで判定する）〜 5。
+    static let minimumTurnWordCountRange = 1...5
+
+    /// 会話ターンとして送るのに必要な最小語数
+    /// （docs/plans/always-on-voice-input.md Phase 3.5）。**既定はコード側が正**。
+    var minimumTurnWordCount: Int {
+        guard let stored = defaults.object(forKey: Self.minimumTurnWordCountKey) as? Int else {
+            return BackchannelFilter.defaultMinimumTurnWordCount
+        }
+        return min(
+            max(stored, Self.minimumTurnWordCountRange.lowerBound),
+            Self.minimumTurnWordCountRange.upperBound)
+    }
+
+    func setMinimumTurnWordCount(_ value: Int) {
+        let clamped = min(
+            max(value, Self.minimumTurnWordCountRange.lowerBound),
+            Self.minimumTurnWordCountRange.upperBound)
+        guard clamped != minimumTurnWordCount else { return }
+        if clamped == BackchannelFilter.defaultMinimumTurnWordCount {
+            defaults.removeObject(forKey: Self.minimumTurnWordCountKey)
+        } else {
+            defaults.set(clamped, forKey: Self.minimumTurnWordCountKey)
+        }
+        DiagnosticsLog.record("voiceInput: ターンにする最小語数 → \(clamped) 語")
     }
 
     // MARK: - プリセット
@@ -321,13 +357,18 @@ final class VoiceInputSettingsStore {
     /// セッション開始時の診断ログ 1 行（既定のままなら「既定」）。
     /// プリセットに一致していれば名前も添える（あとから「どの環境設定のセッションか」を辿る）。
     var diagnosticsSummary: String {
+        var parts: [String] = []
         let overrides = overriddenParameters
-        guard !overrides.isEmpty else { return "既定" }
-        let values = overrides
-            .map { "\($0.rawValue)=\($0.formatted(value(for: $0)))" }
-            .joined(separator: " ")
-        guard let preset = matchingPreset else { return values }
-        return "preset=\(preset.rawValue) \(values)"
+        if !overrides.isEmpty {
+            let values = overrides
+                .map { "\($0.rawValue)=\($0.formatted(value(for: $0)))" }
+                .joined(separator: " ")
+            parts.append(matchingPreset.map { "preset=\($0.rawValue) \(values)" } ?? values)
+        }
+        if minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount {
+            parts.append("minimumTurnWordCount=\(minimumTurnWordCount)")
+        }
+        return parts.isEmpty ? "既定" : parts.joined(separator: " ")
     }
 
     // MARK: - 直近の実測

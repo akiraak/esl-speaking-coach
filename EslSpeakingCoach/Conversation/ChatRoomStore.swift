@@ -739,6 +739,7 @@ final class ChatRoomStore {
         // 音声入力のしきい値もここで固定される（管理画面で変えても次のセッションから）
         configuration.clientEndpointer = voiceInputSettings.thresholds()
         configuration.levelGate = voiceInputSettings.levelGateThresholds()
+        configuration.minimumTurnWordCount = voiceInputSettings.minimumTurnWordCount
         #if DEBUG
         if let sttModel = DebugLaunchArguments.sttModelOverride {
             configuration.transcription.model = sttModel
