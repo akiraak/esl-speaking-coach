@@ -41,6 +41,8 @@ final class AudioTapRouter: @unchecked Sendable {
     /// 雑音セグメントの判定用。levels ストリームは .bufferingNewest(1) で取りこぼすため、
     /// 統計はここ（タップの呼び出しごと）で積む
     private var meter = SegmentLevelMeter()
+    /// 読み上げ中のエコー残留の実測（Phase 2 の診断。走っている間だけ集計する）
+    private var echoProbe: PlaybackEchoProbe?
 
     /// タップから受け取ったバッファ数の累計（マイクが生きているかの診断用）。
     var bufferCount: Int {
@@ -154,13 +156,37 @@ final class AudioTapRouter: @unchecked Sendable {
         meter.isNoiseFloorUpdateSuppressed = suppressed
     }
 
+    /// 読み上げ中のマイク RMS（VP 通過後のエコー残留）の集計を始める
+    /// （docs/plans/always-on-voice-input.md Phase 2 の実測。ゲートの開閉とは無関係に、
+    /// タップへ届いた生のレベルをそのまま積む）。
+    func beginPlaybackEchoProbe() {
+        lock.lock()
+        defer { lock.unlock() }
+        echoProbe = PlaybackEchoProbe()
+    }
+
+    /// 集計を終えて結果を取り出す。バッファが 1 つも届いていなければ nil（シミュレータ等）。
+    /// 暗騒音は判断材料として一緒に返す（エコーが「自分のターンの静けさ」に対してどれだけ
+    /// 持ち上がったかが見たいため）。
+    func endPlaybackEchoProbe() -> (probe: PlaybackEchoProbe, noiseFloor: Float)? {
+        lock.lock()
+        defer { lock.unlock() }
+        let probe = echoProbe
+        echoProbe = nil
+        guard let probe, probe.bufferCount > 0 else { return nil }
+        return (probe, meter.currentNoiseFloor)
+    }
+
     func process(buffer: AVAudioPCMBuffer) {
         let level = Self.rmsLevel(of: buffer)
         levelContinuation.yield(level)
+        // バッファ数ではなく実時間で扱う（HFP 等でサンプルレートが変わっても基準を保つ）
+        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
 
         lock.lock()
         defer { lock.unlock() }
         meter.record(level)
+        echoProbe?.record(level: level, duration: duration)
         buffersReceived += 1
         if let continuation = rawContinuation, let format = rawFormat,
            let converted = convert(buffer, to: format, converter: &rawConverter),
@@ -168,17 +194,15 @@ final class AudioTapRouter: @unchecked Sendable {
             continuation.yield(data)
         }
         if gatedContinuation != nil {
-            processGated(buffer: buffer, level: level)
+            processGated(buffer: buffer, level: level, duration: duration)
         }
     }
 
     /// 送信ゲート（ロック下で呼ぶ）: エンドポインタを駆動し、発話区間 + 遡りだけを流す。
     /// ゲートが閉じている間（AI のターン中）は何もしない。
-    private func processGated(buffer: AVAudioPCMBuffer, level: Float) {
+    private func processGated(buffer: AVAudioPCMBuffer, level: Float, duration: TimeInterval) {
         guard isSpeechGateOpen else { return }
         guard let continuation = gatedContinuation, let format = gatedFormat else { return }
-        // バッファ数ではなく実時間で判定する（HFP 等でサンプルレートが変わっても基準を保つ）
-        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let data = convert(buffer, to: format, converter: &gatedConverter)
             .flatMap { Self.pcm16Data(from: $0) }
         let event = endpointer.record(

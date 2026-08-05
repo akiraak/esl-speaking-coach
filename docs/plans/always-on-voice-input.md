@@ -281,12 +281,65 @@ Phase 4 以降は「相手が止まる」ぶんの上積みなので、Phase 3 �
 ノイズだけのターンは従来どおり無音で通り過ぎる）。既定値は `standard = 1.0` 秒のまま据え置き。
 挙動を元へ戻したいときは `commitGrace.standard` を 0 にする。
 
+## Phase 2 実装メモ（2026-08-04）
+
+**測るための計装だけを入れた。音声パスの挙動は 1 つも変えていない**（読むだけ・記録するだけ）。
+
+- `Voice/VoiceInputProbe.swift`（新規・純粋な値型 2 つ）
+  - `SegmentTranscriptProbe`: 発話開始を起点に、partial delta の到達時刻と語数・commit・確定を並べる。
+    **delta を「commit より前 / 後」で分けて数える**ところが実測 1 の本体
+  - `PlaybackEchoProbe`: 読み上げ中のマイク RMS を集計する。平均・最大だけでなく
+    **候補しきい値（0.01 / 0.02 / 0.03 / 0.05）ごとの連続超過の最長時間**を持つ。
+    エンドポインタは「しきい値超えが連続して `minimumSpeechDuration` 続く」で発火するので、
+    この最長時間がそのまま「その設定なら誤発火するか」の答えになる
+- `AudioTapRouter`: `beginPlaybackEchoProbe()` / `endPlaybackEchoProbe()`。集計は
+  **ゲートの開閉と無関係**にタップの生レベルから行う（＝ AI ターン中にゲートを開けたら
+  VAD が何を見ることになるかが、ゲートを開ける前に分かる）
+- `TurnBasedVoiceSession`: state が `.speaking` に入る / 出るでエコー計測を開始 / 終了し、
+  STT の `.speechStarted` / `.partialTranscript` / `.speechStopped` / `.finalTranscript` に
+  セグメント計測をぶら下げる。プローブは `pendingSegmentLevels` と同じ FIFO で持つ
+  （STT は commit した順に確定を返すので、delta と確定テキストが別セグメントへ付かない）
+- 出力先は**診断ログ**（管理画面「診断ログ」）。会話ログ・トーク画面には出さない
+- ユニットテスト 14 件（`VoiceInputProbeTests`）。全 448 件 green・シミュレータビルド確認済み
+
+### 実機での測り方
+
+1. `./run-install-iphone.sh` でインストール（端末はロック解除しておく）
+2. 管理画面「診断ログ」を**クリア**してから会話を 1 セッション（3〜5 ターン）
+3. 以下を **1 セッションずつ条件を変えて** 3 回: ①イヤフォンなし（本体スピーカー）
+   ②イヤフォンあり ③Bluetooth。エコーの乗り方は経路で大きく変わる
+4. 診断ログを共有する（`probe stt:` / `probe echo:` の行だけ見ればよい）
+
+### 読み方（どの数字が何を決めるか）
+
+```
+probe stt: 発話 2.10s / delta 6 件（初回 +0.85s / 2 語 +1.20s / commit 前 4 件（5 語）・後 2 件）
+           / commit→final 0.36s / final 9 語 末尾"."・読点あり 「I went to the park, ...」
+probe echo: 読み上げ 4.20s / rms 平均 0.0031 最大 0.0180 / 512 buf / >0.010 0.43s(最長 0.13s)
+           / >0.020 0.00s(最長 0.00s) / ... / floor 0.0021 / VP=on / 内蔵スピーカー
+```
+
+| 見る数字 | 決まること |
+| --- | --- |
+| `commit 前 N 件`（0 なら delta は確定と同時） | **③の回収と④の遅延確定が成立するか**。0 件なら「partial 2 語以上」で割り込みを確定できないので、確定テキスト待ち（遅い側）へ倒すか③を落とす |
+| `2 語 +X.XXs` | ④の割り込み確定までの体感待ち時間。ここが 1 秒を超えるなら `redoWindow` を 1 秒から伸ばす |
+| `commit→final` | ①の送信猶予のうち、STT 確定待ちと並行して食える時間（純増ぶんの見積り） |
+| `末尾"."・読点あり / 末尾記号なし` | 猶予の出し分け（`TurnCommitGrace`）が記号で効くか、末尾語だけが頼りか |
+| `>0.0XX ...(最長 Y.YYs)` | Phase 3 の `.assistantTurn` のしきい値。**最長が `minimumSpeechDuration`（0.30 秒案）を超えないしきい値**が下限。全しきい値で最長 0.00s ならエコーは実質無害 |
+| `floor` と `rms 平均` の差 | 読み上げ中に暗騒音がどれだけ持ち上がって見えるか（比での判定が当てにならない度合い） |
+| `VP=off` の行 | その端末・経路では speaking 中にゲートを閉じるフォールバックが要る（Phase 5） |
+
+### 実測結果
+
+（実機での収集待ち。ここに 3 経路ぶんの代表値と、上の表に沿った判断を書く）
+
 ## 影響範囲
 
 | ファイル | 変更 |
 | --- | --- |
 | `Voice/TurnBasedVoiceSession.swift` | 送信猶予のタイマー、`recallAssistantTurn()`、`syncVoiceInputGate` のモード判定、`handleSpeechStarted` の遅延確定、ダッキングとシステム音量ゲインの集約、エコー判定の適用、診断ログ |
 | `Voice/TurnCommitGrace.swift`（新規・Phase 1 済） | 確定テキストの末尾から猶予の長さを決める純関数 |
+| `Voice/VoiceInputProbe.swift`（新規・Phase 2 済） | 実測用のプローブ 2 種（診断ログへ 1 行。挙動は変えない） |
 | `Voice/MicrophoneCapture.swift`（`AudioTapRouter`） | ゲートを 3 値化、モードごとのしきい値差し替え |
 | `Voice/ClientSpeechEndpointer.swift` | `Thresholds` から AI ターン用の派生を作る（純関数） |
 | `Voice/VoiceSession.swift` | `.assistantUtteranceRemoved(id:)` イベントの追加 |

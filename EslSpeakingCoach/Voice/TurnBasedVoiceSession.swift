@@ -114,6 +114,7 @@ final class TurnBasedVoiceSession: VoiceSession {
             eventContinuation.yield(.stateChanged(state))
             // 読み上げ中はスピーカーの回り込みで暗騒音が持ち上がりうるので推定を止める
             microphone.router.setNoiseFloorUpdateSuppressed(state == .speaking)
+            syncPlaybackEchoProbe(from: oldValue)
             syncVoiceInputGate()
         }
     }
@@ -131,8 +132,36 @@ final class TurnBasedVoiceSession: VoiceSession {
             isUserSpeaking = false
             _ = microphone.router.endLevelSegment()
             transcriber?.clearClientBuffer()
+            // 破棄されるのは発話中のセグメントだけ（commit 済みの確定はこの後も届く）
+            if let discarded = segmentProbe {
+                segmentProbe = nil
+                recordSegmentProbe(discarded, final: nil, note: "入力ゲートが閉じて破棄")
+            }
             eventContinuation.yield(.userPartialTranscript(""))
         }
+    }
+
+    /// 読み上げ（speaking）の区間だけマイクの RMS を集計し、抜けるときに診断ログへ 1 行残す
+    /// （docs/plans/always-on-voice-input.md Phase 2 の実測 3: VP 通過後のエコー残留）。
+    /// AI ターン中にゲートを開ける Phase 3 のしきい値を、この実測から決める。
+    private func syncPlaybackEchoProbe(from previous: VoiceSessionState) {
+        guard state != previous else { return }
+        if state == .speaking {
+            microphone.router.beginPlaybackEchoProbe()
+        } else if previous == .speaking {
+            guard let result = microphone.router.endPlaybackEchoProbe() else { return }
+            DiagnosticsLog.record(result.probe.summaryLine(
+                context: echoProbeContext(noiseFloor: result.noiseFloor)))
+        }
+    }
+
+    /// エコー実測の判断材料（暗騒音・VP の有無・出力経路）。同じ残留レベルでも、
+    /// 内蔵スピーカーか Bluetooth かで意味が変わるので数字と一緒に残す。
+    private func echoProbeContext(noiseFloor: Float) -> String {
+        let session = AVAudioSession.sharedInstance()
+        let route = AudioRoutePolicy.describe(session.currentRoute, sampleRate: session.sampleRate)
+        return String(format: "floor %.4f / VP=%@ / %@",
+                      noiseFloor, isVoiceProcessingActive ? "on" : "off", route)
     }
 
     /// 現在ターンの台本発話（吹き出し単位）。
@@ -189,6 +218,11 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// 猶予の起点（= 直近の発話終端）。確定テキストで長さを見直すときの基準にする。
     /// nil なら猶予は張られていない（テキスト送信・再接続後の積み残しは即座に送る）
     private var commitGraceStartedAt: Date?
+    /// 発話中セグメントの到達タイミング実測（Phase 2 の診断。commit で pending へ移す）
+    private var segmentProbe: SegmentTranscriptProbe?
+    /// commit 済みで確定テキスト待ちのプローブ（pendingSegmentLevels と同じ FIFO。
+    /// STT は commit した順に確定を返すので、先頭が次に確定するセグメント）
+    private var pendingSegmentProbes: [SegmentTranscriptProbe] = []
 
     init(
         configuration: Configuration = Configuration(),
@@ -472,6 +506,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         pendingTurnText = ""
         pendingInputEndCue = false
         cancelCommitGrace()
+        flushSegmentProbes(note: "STT 停止で打ち切り")
     }
 
     /// STT 切断。セッションを殺さず backoff 付きで再接続する（Wi-Fi ⇔ LTE 切替やサーバ側打ち切り対策）。
@@ -485,6 +520,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         pendingInputEndCue = false
         // 確定済みの pendingTurnText は再接続後に commit する（続きはもう来ないので猶予は畳む）
         cancelCommitGrace()
+        flushSegmentProbes(note: "STT 切断で打ち切り")
         sttEventTask?.cancel()
         sttEventTask = nil
         transcriber?.stop()
@@ -552,17 +588,20 @@ final class TurnBasedVoiceSession: VoiceSession {
             let now = Date()
             metrics.utteranceEndedAt = now
             metrics.committedAt = now
+            commitSegmentProbe(at: now)
             // 送信猶予: ここでは thinking へ進めず listening のまま続きを待つ
             // （言い淀みで切れたセグメントの続きを同じターンへ継ぎ足すため）。
             // 猶予ぶんの待ちは metrics では committedAt 以降 = pipelineTotal に乗る
             beginCommitGrace(at: now)
 
         case .partialTranscript(let text):
+            recordSegmentProbePartial(text)
             eventContinuation.yield(.userPartialTranscript(text))
 
         case .finalTranscript(let transcript):
             pendingSegments = max(0, pendingSegments - 1)
             metrics.transcriptFinalizedAt = Date()
+            finishSegmentProbe(final: transcript)
             let levels = dequeueSegmentLevels()
             let verdict = SpeechLevelGate.verdict(for: levels, thresholds: configuration.levelGate)
             let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -595,6 +634,7 @@ final class TurnBasedVoiceSession: VoiceSession {
         case .transcriptFailed(let message):
             pendingSegments = max(0, pendingSegments - 1)
             _ = dequeueSegmentLevels()
+            finishSegmentProbe(final: nil, note: "認識失敗")
             eventContinuation.yield(.info("認識に失敗したセグメントがあります: \(message)"))
             commitPendingTurnIfReady()
 
@@ -609,6 +649,12 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// barge-in: サーバ VAD がユーザーの発話開始を検知した。応答の生成・再生中なら即座に止める。
     private func handleSpeechStarted() {
         isUserSpeaking = true
+        // 実測（Phase 2）: ここを起点に partial delta の到達と commit / final の時刻を並べる。
+        // 終端を見ないまま次の発話が始まったら、前のぶんはその場で畳む（通常は起きない）
+        if let stale = segmentProbe {
+            recordSegmentProbe(stale, final: nil, note: "終端なしで次の発話が始まった")
+        }
+        segmentProbe = SegmentTranscriptProbe(startedAt: Date())
         // 猶予中に続きを話し始めた。締めのタイマーを止める（次の終端で張り直す）。
         // pendingTurnText は残るので、確定した続きは既存の連結ロジックがそのまま繋ぐ
         cancelCommitGrace()
@@ -618,6 +664,53 @@ final class TurnBasedVoiceSession: VoiceSession {
             eventContinuation.yield(.info("割り込みを検知しました"))
         }
         if state != .listening { state = .listening }
+    }
+
+    /// 発話中のプローブを commit 済み（確定待ち）へ移す。
+    private func commitSegmentProbe(at instant: Date) {
+        guard var probe = segmentProbe else { return }
+        segmentProbe = nil
+        probe.recordCommit(at: instant)
+        pendingSegmentProbes.append(probe)
+    }
+
+    /// partial delta を記録する先。commit 済みが残っていればそれ（確定は commit 順に返るので
+    /// 先頭ぶんの続き）、無ければ発話中のセグメント。
+    private func recordSegmentProbePartial(_ text: String) {
+        let now = Date()
+        if !pendingSegmentProbes.isEmpty {
+            pendingSegmentProbes[0].recordPartial(text, at: now)
+        } else {
+            segmentProbe?.recordPartial(text, at: now)
+        }
+    }
+
+    /// セグメント 1 件の実測を診断ログへ 1 行残して畳む（確定テキスト / 認識失敗の両方から呼ぶ）。
+    /// 確定待ちが居ればその先頭、居なければ発話中のぶんを畳む。どちらも無ければ何もしない。
+    private func finishSegmentProbe(final transcript: String?, note: String = "") {
+        let probe: SegmentTranscriptProbe?
+        if !pendingSegmentProbes.isEmpty {
+            probe = pendingSegmentProbes.removeFirst()
+        } else {
+            probe = segmentProbe
+            segmentProbe = nil
+        }
+        guard let probe else { return }
+        recordSegmentProbe(probe, final: transcript, note: note)
+    }
+
+    private func recordSegmentProbe(
+        _ probe: SegmentTranscriptProbe, final transcript: String?, note: String
+    ) {
+        let line = probe.summaryLine(final: transcript, at: Date())
+        DiagnosticsLog.record(note.isEmpty ? line : line + " / \(note)")
+    }
+
+    /// 確定を待たずに全プローブを畳む（STT 停止・切断・入力ゲートが閉じたとき）。
+    private func flushSegmentProbes(note: String) {
+        while segmentProbe != nil || !pendingSegmentProbes.isEmpty {
+            finishSegmentProbe(final: nil, note: note)
+        }
     }
 
     /// 確定テキストに対応するセグメントの音量統計を取り出す。
