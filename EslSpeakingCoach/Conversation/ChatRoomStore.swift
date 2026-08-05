@@ -740,6 +740,8 @@ final class ChatRoomStore {
         configuration.clientEndpointer = voiceInputSettings.thresholds()
         configuration.levelGate = voiceInputSettings.levelGateThresholds()
         configuration.minimumTurnWordCount = voiceInputSettings.minimumTurnWordCount
+        configuration.voiceInputWindow = voiceInputSettings.window
+        configuration.commitGrace = voiceInputSettings.commitGraceSettings()
         #if DEBUG
         if let sttModel = DebugLaunchArguments.sttModelOverride {
             configuration.transcription.model = sttModel

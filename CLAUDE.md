@@ -26,7 +26,7 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 | 役割 | 採用 | 備考 |
 | --- | --- | --- |
 | STT | OpenAI `gpt-live-transcribe`（Realtime API の transcription セッション / WebSocket。2026-07-31 採用） | `languages: [en]` + prompt ヒントで英語固定（短い発話の言語誤判定対策）。`delay: low` を明示固定。分数課金 $0.017/分（発話セグメント分のみ）。旧既定 `gpt-4o-transcribe`・Qwen3-ASR へは**管理画面「モデル」**か `-stt-model`、既定は `STTModel.default` の 1 箇所で戻せる |
-| 発話終端・入力の窓 | クライアント VAD（`ClientSpeechEndpointer` + `AudioTapRouter` の送信ゲート）+ 手動 commit。**音声入力は自分が話すターン（listening）のときだけ動く** | live はサーバ VAD 非対応。無音 800ms で終端・遡り 0.5 秒・60 秒で強制終端。AI のターン中は入力ごと停止するため**音声での barge-in は無い**（割り込みは一時停止ボタン / テキスト送信のみ）。入力の窓の開始 / 終了はジングル 2 種で提示（`docs/plans/archive/turn-gated-voice-input.md`）。発話区間だけ append するので無音・AI 発話中は課金されない。4o 経路では従来どおり常時入力 + サーバ VAD + 音声 barge-in |
+| 発話終端・入力の窓 | クライアント VAD（`ClientSpeechEndpointer` + `AudioTapRouter` の送信ゲート）+ 手動 commit。**入力の窓は AI のターン中も開いている**（2026-08-04 に常時入力へ変更） | live はサーバ VAD 非対応。無音 800ms で終端・遡り 0.5 秒・60 秒で強制終端。読み上げ中だけしきい値を厳しくし（`minimumPeak` ×1.5 / 発話開始 0.30 秒）、**こちらが文章を話し始めたら読み上げを止める**（相槌・物音では止まらない。下記「割り込みと入力の窓」）。入力の窓の開始 / 終了はジングル 2 種で提示。発話区間だけ append するので無音時は課金されない。4o 経路では従来どおり常時入力 + サーバ VAD + 即時 barge-in |
 | 会話 LLM | `claude-sonnet-5`（下記規約どおりストリーミング + 文単位 TTS） | 2026-07-25 に opus-5 / sonnet-5 / haiku-4-5 を比較して決定（記録: `docs/plans/archive/spike-conversation/`） |
 | TTS | Gemini 3.1 Flash TTS（`gemini-3.1-flash-tts-preview`。SSE ストリーミング、24kHz PCM16 LE。**2026-08-03 に Qwen instruct から戻した**） | voice とスタイル前置文は `ChatCharacter.speechStyle` が正（Chobi=Leda / Naruko=Aoede）。Gemini は独立した instructions フィールドを持たないため、本文先頭に自然文で前置する。音声出力従量 ≈ $0.03/分。Qwen instruct・OpenAI TTS へは**管理画面「モデル」**か `-tts-provider`、既定は `TTSProvider.default` の 1 箇所で切り替えられる |
 
@@ -36,6 +36,14 @@ AI と音声で英会話（スピーキング）練習をする **iOS ネイテ�
 - TTS は当初 Gemini Flash TTS を採用し、実聴選定を経て 2026-08-01 に Alibaba Qwen3 TTS（instruct 変種）へ切り替えたが、**2026-08-03 に Gemini へ戻した**（作者判断）。単価は Gemini のほうが約 3 倍（$0.03/分 対 $0.0098/分）だが、1 セッション 5 分の生成音声で月あたり $3 前後の差。検証記録は `docs/plans/archive/alibaba-voice-models.md`。Qwen3 ASR も検証したが **STT は見送り**（gpt-live-transcribe 維持）。切替経路（Qwen TTS / OpenAI TTS、Qwen ASR）は削除せず維持している
 - **キャラの voice / スタイル指示は `ChatCharacter.speechStyle` が単一の正**（Chobi=Leda / Naruko=Aoede、Gemini の prebuilt voice 名）。Qwen はこれを `voiceMap` / `instructionMap` で自分の voice 名へ写像し、OpenAI は固定 voice で読む。**プロバイダを変えてもキャラ定義は書き換えない**
 - ターン制のため会話中の音声レベルの発音指摘はしない（発音・表現のフィードバックはセッション後にテキストベースで行う）
+- **割り込みと入力の窓**（2026-08-04 決定。`docs/plans/archive/always-on-voice-input.md`）。live 経路の音声入力は AI のターン中も開いたままで、割り込みは**その場で確定させず遅延確定する**
+  - **止めるのは「こちらが文章を話し始めた」と分かったときだけ**。発話を検知した時点ではダッキング（読み上げゲイン ×0.3）だけ掛けて待ち、partial に相槌語でない語が 1 つ出た時点で停止する（実測: 初回 delta 中央値 0.90 秒）。「Um」「Wait」の単発や物音では止まらない
+  - **止めた時点でまだ声が出ていなければ（thinking）、生成中の返事は履歴に一切残さず捨てる**（学習者にはまだ 1 文字も見えていない）。読み上げ済みなら聞こえたぶんまで履歴に残す
+  - **相槌・中身のない短い返事は会話ターンにしない**（`BackchannelFilter`）。「Um」「Yes」「Thank you」「And you?」と、**最小語数（既定 3 語）未満**の発話は黙って聞き取りへ戻る。判定は commit 直前の**ターン全文**に 1 度だけ掛ける（セグメント単位だと「Yes」→ 一呼吸 →「I love it」で前半が消える）
+  - **`isWorthSending`（ターンにするか）と `startsSentence`（読み上げを止めるか）は別**。`i` は前者では中身なし・後者では文頭とみなす（`I think—` で止めるのに 2 語目を待つと中央値 2.1 秒かかる）
+  - 再生ゲインは `applyPlaybackGain()` の 1 箇所から出す（音量ボタンの KVO とダッキングが互いを上書きしないため）
+  - エコー対策は 2 段。一次はしきい値（読み上げ中は `minimumPeak` ×1.5 / 発話開始 0.30 秒。実測で誤発火 0）、二次が `AssistantEchoFilter`（**語順の連続一致 + 被覆率**で判定。単語の重なりだけで見ると、AI の言い回しを借りた正当な発話まで捨てる）。VP（AEC）が切れた端末では読み上げ中は窓を閉じる
+  - 管理画面「音声入力」で**窓モード（常時 / ターン制）**を切り替えれば 2026-07 の挙動へ丸ごと戻せる。しきい値・最小語数も同画面から
 - **出力経路に `.defaultToSpeaker` を使わない**（2026-07-28 決定）。カテゴリは `.playAndRecord` / `mode: .voiceChat` / options は `AudioRoutePolicy.categoryOptions`（Bluetooth HFP・A2DP・AirPlay を許可）。スピーカーへは「出力が**本体内蔵（受話口 / スピーカー）だけのとき**」に `overrideOutputAudioPort(.speaker)` で寄せ、経路変更のたびに再評価する。**内蔵スピーカーを判定から外さない**（外すと自分のオーバーライドを自分で取り消し、受話口 ⇄ スピーカーの往復で AVAudioEngine が止まり無音になる。`docs/plans/archive/speaker-no-audio.md`）。`.defaultToSpeaker` を付けるとイヤフォン / Bluetooth があっても出力が内蔵スピーカーへ固定される（`AudioRoutePolicy` / `docs/plans/archive/earphone-audio-route.md`）
 - **`mode: .voiceChat` を `.default` に変えない**（2026-08-04 決定）。`.voiceChat` だと音量が**通話音量チャンネル**扱いになり `outputVolume` が 0.05 で打ち止め＝ボリュームボタンで消音できないが、`.default` にすると AGC が外れて**マイクの入力レベルが激減し、調整済みの VAD しきい値が丸ごと合わなくなる**（実機で確認）。音量の下限は出力側のソフトウェアゲイン `PlaybackVolumePolicy`（0.05 以下は無音、0.05〜0.50 は dB 直線、0.50 以上は素通し）で潰す。`AVAudioSession.outputVolume` の KVO が唯一の駆動元（`docs/plans/archive/tts-volume-not-following.md`）
 

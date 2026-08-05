@@ -14,6 +14,8 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
     case silenceDuration
     case lookbackDuration
     case maxSegmentDuration
+    case assistantTurnPeakMultiplier
+    case assistantTurnSpeechDuration
 
     var id: String { rawValue }
 
@@ -21,6 +23,7 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
     enum Group: String, CaseIterable, Identifiable, Sendable {
         case level = "音量"
         case time = "時間"
+        case assistantTurn = "AI のターン中"
         var id: String { rawValue }
 
         var parameters: [VoiceInputParameter] {
@@ -34,6 +37,8 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
             return .level
         case .minimumSpeechDuration, .silenceDuration, .lookbackDuration, .maxSegmentDuration:
             return .time
+        case .assistantTurnPeakMultiplier, .assistantTurnSpeechDuration:
+            return .assistantTurn
         }
     }
 
@@ -46,6 +51,8 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
         case .silenceDuration: return "無音での終端"
         case .lookbackDuration: return "語頭の遡り"
         case .maxSegmentDuration: return "強制終端"
+        case .assistantTurnPeakMultiplier: return "音量の倍率"
+        case .assistantTurnSpeechDuration: return "発話開始の継続"
         }
     }
 
@@ -68,6 +75,11 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
             return "発話開始判定より前に遡って送る長さ。短いと語頭が欠けて認識精度が落ちる"
         case .maxSegmentDuration:
             return "終端が出ないまま伸び続けたときの打ち切り（持続的な環境音への保険）"
+        case .assistantTurnPeakMultiplier:
+            return "読み上げ中だけ「発話とみなす音量」に掛ける倍率。"
+                + "上げると自分の声のエコーで誤検知しにくくなり、話しかけを取りこぼしやすくなる"
+        case .assistantTurnSpeechDuration:
+            return "読み上げ中だけ使う発話開始の継続。エコーは単発・短いので、ここが主に効く"
         }
     }
 
@@ -80,6 +92,8 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
         case .silenceDuration: return 0.3...2
         case .lookbackDuration: return 0...1.5
         case .maxSegmentDuration: return 15...180
+        case .assistantTurnPeakMultiplier: return 1...3
+        case .assistantTurnSpeechDuration: return 0.1...0.8
         }
     }
 
@@ -91,6 +105,9 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
         case .minimumSpeechDuration: return 0.02
         case .silenceDuration, .lookbackDuration: return 0.1
         case .maxSegmentDuration: return 15
+        case .assistantTurnPeakMultiplier: return 0.1
+        // タップバッファは 0.1 秒（HFP は 0.128 秒）なので、実効的な刻みもこの単位
+        case .assistantTurnSpeechDuration: return 0.05
         }
     }
 
@@ -98,8 +115,9 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
     var decimals: Int {
         switch self {
         case .minimumPeak, .unconditionalPeak: return 3
-        case .snrRatio: return 1
-        case .minimumSpeechDuration, .silenceDuration, .lookbackDuration: return 2
+        case .snrRatio, .assistantTurnPeakMultiplier: return 1
+        case .minimumSpeechDuration, .silenceDuration, .lookbackDuration,
+             .assistantTurnSpeechDuration: return 2
         case .maxSegmentDuration: return 0
         }
     }
@@ -123,9 +141,10 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .minimumPeak, .unconditionalPeak:
             return String(format: "%.3f", value)
-        case .snrRatio:
+        case .snrRatio, .assistantTurnPeakMultiplier:
             return String(format: "%.1f×", value)
-        case .minimumSpeechDuration, .silenceDuration, .lookbackDuration:
+        case .minimumSpeechDuration, .silenceDuration, .lookbackDuration,
+             .assistantTurnSpeechDuration:
             return String(format: "%.2f 秒", value)
         case .maxSegmentDuration:
             return String(format: "%.0f 秒", value)
@@ -141,6 +160,8 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
         case .silenceDuration: return thresholds.silenceDuration
         case .lookbackDuration: return thresholds.lookbackDuration
         case .maxSegmentDuration: return thresholds.maxSegmentDuration
+        case .assistantTurnPeakMultiplier: return Double(thresholds.assistantTurnPeakMultiplier)
+        case .assistantTurnSpeechDuration: return thresholds.assistantTurnMinimumSpeechDuration
         }
     }
 
@@ -153,6 +174,8 @@ enum VoiceInputParameter: String, CaseIterable, Identifiable, Sendable {
         case .silenceDuration: thresholds.silenceDuration = value
         case .lookbackDuration: thresholds.lookbackDuration = value
         case .maxSegmentDuration: thresholds.maxSegmentDuration = value
+        case .assistantTurnPeakMultiplier: thresholds.assistantTurnPeakMultiplier = Float(value)
+        case .assistantTurnSpeechDuration: thresholds.assistantTurnMinimumSpeechDuration = value
         }
     }
 }
@@ -182,6 +205,9 @@ enum VoiceInputPreset: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// **全項目を持つ**（一部でも欠けると、プリセット適用でその項目が黙って既定へ戻る）。
+    /// 「AI のターン中」の 2 項目は、騒がしい場所ほど読み上げ音量も上がる ＝ エコーも増える、
+    /// という関係で出し分ける（docs/plans/voice-input-admin-followups.md Step 2）。
     var values: [VoiceInputParameter: Double] {
         switch self {
         case .quietRoom:
@@ -189,18 +215,21 @@ enum VoiceInputPreset: String, CaseIterable, Identifiable, Sendable {
                 .minimumPeak: 0.012, .snrRatio: 3.0, .unconditionalPeak: 0.05,
                 .minimumSpeechDuration: 0.16, .silenceDuration: 0.8,
                 .lookbackDuration: 0.5, .maxSegmentDuration: 60,
+                .assistantTurnPeakMultiplier: 1.5, .assistantTurnSpeechDuration: 0.3,
             ]
         case .livingNoise:
             return [
                 .minimumPeak: 0.016, .snrRatio: 4.0, .unconditionalPeak: 0.06,
                 .minimumSpeechDuration: 0.2, .silenceDuration: 0.8,
                 .lookbackDuration: 0.5, .maxSegmentDuration: 45,
+                .assistantTurnPeakMultiplier: 1.5, .assistantTurnSpeechDuration: 0.3,
             ]
         case .outdoors:
             return [
                 .minimumPeak: 0.024, .snrRatio: 5.0, .unconditionalPeak: 0.08,
                 .minimumSpeechDuration: 0.24, .silenceDuration: 0.7,
                 .lookbackDuration: 0.5, .maxSegmentDuration: 30,
+                .assistantTurnPeakMultiplier: 2.0, .assistantTurnSpeechDuration: 0.35,
             ]
         }
     }
@@ -272,7 +301,10 @@ final class VoiceInputSettingsStore {
 
     /// しきい値以外も含めて、既定から動かしているものがあるか（画面の「戻す」ボタン用）。
     var hasAnyOverride: Bool {
-        overriddenCount > 0 || minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount
+        overriddenCount > 0
+            || minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount
+            || commitGrace != Self.defaultCommitGrace
+            || window != Self.defaultWindow
     }
 
     func resetToDefaults() {
@@ -281,7 +313,78 @@ final class VoiceInputSettingsStore {
             defaults.removeObject(forKey: Self.key(for: parameter))
         }
         defaults.removeObject(forKey: Self.minimumTurnWordCountKey)
+        defaults.removeObject(forKey: Self.commitGraceKey)
+        defaults.removeObject(forKey: Self.windowKey)
         DiagnosticsLog.record("voiceInput: すべて既定に戻した")
+    }
+
+    // MARK: - 入力の窓（docs/plans/always-on-voice-input.md Phase 3）
+
+    static let windowKey = "voiceInput.window"
+    /// **既定はコード側が正**。常時入力が合わないと分かったらここを変える
+    static var defaultWindow: VoiceInputWindow { .always }
+
+    /// AI のターン中も入力を開けるか。`turnGated` にすると 2026-07 の挙動
+    /// （自分のターンだけ聞く / 音声での割り込みなし）へ丸ごと戻る。
+    var window: VoiceInputWindow {
+        guard let raw = defaults.string(forKey: Self.windowKey),
+              let stored = VoiceInputWindow(rawValue: raw) else { return Self.defaultWindow }
+        return stored
+    }
+
+    func setWindow(_ value: VoiceInputWindow) {
+        guard value != window else { return }
+        if value == Self.defaultWindow {
+            defaults.removeObject(forKey: Self.windowKey)
+        } else {
+            defaults.set(value.rawValue, forKey: Self.windowKey)
+        }
+        DiagnosticsLog.record("voiceInput: 入力の窓 → \(value.rawValue)")
+    }
+
+    // MARK: - 送信猶予（docs/plans/voice-input-admin-followups.md Step 3）
+
+    static let commitGraceKey = "voiceInput.commitGrace"
+    /// 0 = 従来どおりの即送信 〜 2.5 秒。
+    static let commitGraceRange = 0.0...2.5
+    /// **既定はコード側が正**（`TurnCommitGrace()` の標準値）。
+    static var defaultCommitGrace: Double { TurnCommitGrace().standard }
+
+    /// 発話終端から Claude へ投げるまでの猶予（標準値）。長短は標準からの固定比で導くので、
+    /// **画面に出すのはこの 1 つだけ**。
+    var commitGrace: Double {
+        guard let stored = defaults.object(forKey: Self.commitGraceKey) as? Double else {
+            return Self.defaultCommitGrace
+        }
+        return Self.normalizedCommitGrace(stored)
+    }
+
+    func setCommitGrace(_ value: Double) {
+        let clamped = Self.normalizedCommitGrace(value)
+        guard clamped != commitGrace else { return }
+        if clamped == Self.defaultCommitGrace {
+            defaults.removeObject(forKey: Self.commitGraceKey)
+        } else {
+            defaults.set(clamped, forKey: Self.commitGraceKey)
+        }
+        DiagnosticsLog.record("voiceInput: 送信猶予 → \(Self.formatCommitGrace(clamped))")
+    }
+
+    /// セッションへ渡す送信猶予（標準値だけ差し替え、長短の比は既定のまま）。
+    func commitGraceSettings() -> TurnCommitGrace {
+        var grace = TurnCommitGrace()
+        grace.standard = commitGrace
+        return grace
+    }
+
+    /// Stepper の加算誤差を落としてから範囲へ収める。
+    static func normalizedCommitGrace(_ value: Double) -> Double {
+        let rounded = (value * 100).rounded() / 100
+        return min(max(rounded, commitGraceRange.lowerBound), commitGraceRange.upperBound)
+    }
+
+    static func formatCommitGrace(_ value: Double) -> String {
+        value == 0 ? "0 秒（即送信）" : String(format: "%.1f 秒", value)
     }
 
     // MARK: - 最小語数（相槌フィルタ）
@@ -367,6 +470,12 @@ final class VoiceInputSettingsStore {
         }
         if minimumTurnWordCount != BackchannelFilter.defaultMinimumTurnWordCount {
             parts.append("minimumTurnWordCount=\(minimumTurnWordCount)")
+        }
+        if commitGrace != Self.defaultCommitGrace {
+            parts.append("commitGrace=\(Self.formatCommitGrace(commitGrace))")
+        }
+        if window != Self.defaultWindow {
+            parts.append("window=\(window.rawValue)")
         }
         return parts.isEmpty ? "既定" : parts.joined(separator: " ")
     }

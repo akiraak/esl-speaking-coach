@@ -248,7 +248,26 @@ final class TurnBasedVoiceSession: VoiceSession {
     private func confirmBargeInIfSentence(_ partial: String) {
         guard isPendingBargeIn, isAssistantTurnInFlight else { return }
         guard BackchannelFilter.startsSentence(partial) else { return }
+        // 自分の読み上げで自分を止めない（Phase 5）。ただし partial は数語しか無いので、
+        // ここで捕まえられるのは既に数語ぶん一致しているエコーだけ。一次防衛は
+        // 読み上げ中のしきい値（そもそも VAD を鳴らさない）側にある
+        guard !isAssistantEcho(partial) else {
+            eventContinuation.yield(.info("AI 発話のエコーなので割り込みにしません「\(partial)」"))
+            return
+        }
         confirmBargeIn(trigger: partial)
+    }
+
+    /// 読み上げに重なって始まったセグメントのテキストが、AI 自身の発話の反射か。
+    private func isAssistantEcho(_ text: String) -> Bool {
+        guard currentSegmentStartedDuringPlayback else { return false }
+        return AssistantEchoFilter.isEcho(
+            transcript: text, spokenText: spokenAssistantTextForEcho)
+    }
+
+    /// 実際に音が出たテキストだけを、エコー判定の参照へ足す。
+    private func appendSpokenTextForEcho(_ text: String) {
+        spokenAssistantTextForEcho += spokenAssistantTextForEcho.isEmpty ? text : " " + text
     }
 
     /// 割り込みを確定して AI のターンを止める。
@@ -371,9 +390,17 @@ final class TurnBasedVoiceSession: VoiceSession {
     private var pendingSegments = 0
     /// まだ Claude に投げていない確定済みテキスト（短いポーズで複数セグメントに割れた発話を結合する）
     private var pendingTurnText = ""
-    /// 確定テキスト待ちセグメントの音量統計（speech_stopped で積み、確定 / 失敗で取り出す）。
-    /// 計測できなかったセグメントは nil で積んで採用側へ倒す
-    private var pendingSegmentLevels: [SpeechSegmentLevels?] = []
+    /// 確定テキスト待ちのセグメント 1 件（speech_stopped で積み、確定 / 失敗で取り出す）。
+    private struct PendingSegment {
+        /// 音量統計。計測できなかったセグメントは nil で積んで採用側へ倒す
+        var levels: SpeechSegmentLevels?
+        /// **発話開始の時点で AI が読み上げ中だった**（＝ エコーでありうる）。
+        /// 終端ではなく開始で見るのは、エコーの終端は読み上げが止まってから
+        /// `silenceDuration` ぶん遅れて来る（＝そのときにはもう listening）ため
+        var startedDuringPlayback: Bool
+    }
+
+    private var pendingSegmentLevels: [PendingSegment] = []
     /// 発話終端で入力の窓が閉じたが、終了ジングルはまだ鳴らしていない。
     /// 確定テキストが空（ノイズだけで VAD が発火した）なら鳴らさずに取り消す
     /// （docs/plans/empty-segment-no-cue.md）
@@ -384,6 +411,13 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// AI のターン中に発話を検知したが、まだ割り込みとして確定していない（Phase 4）。
     /// この間は読み上げをダッキングして「聞こえてるよ」だけ返す（非破壊）
     private var isPendingBargeIn = false
+    /// 進行中セグメントが**読み上げ中に始まった**か（エコー判定の適用条件。Phase 5）。
+    /// 読み上げが終わってから始まった発話は、AI の言い回しをそのまま真似ていても
+    /// 学習者の意図的な発話（単語練習のリピート等）なのでエコー判定に掛けない
+    private var currentSegmentStartedDuringPlayback = false
+    /// 読み上げ**済み**の AI テキスト（エコー判定の参照）。ターン開始で仕切り直し、
+    /// ターンが終わっても直後に届く確定テキストのために保持する
+    private var spokenAssistantTextForEcho = ""
     /// システム音量（KVO）由来の再生ゲイン。ダッキングと掛け合わせて出す
     private var systemPlaybackGain: Float = 1
     /// 送信猶予のタイマー（走っている間は listening のまま追加発話を待つ）
@@ -757,7 +791,10 @@ final class TurnBasedVoiceSession: VoiceSession {
             // （VAD の無音待ち自体は計測に含まれない）
             isUserSpeaking = false
             pendingSegments += 1
-            pendingSegmentLevels.append(microphone.router.endLevelSegment())
+            pendingSegmentLevels.append(PendingSegment(
+                levels: microphone.router.endLevelSegment(),
+                startedDuringPlayback: currentSegmentStartedDuringPlayback))
+            currentSegmentStartedDuringPlayback = false
             // 入力の窓が閉じたことを知らせるジングルは、確定テキストが空でないと分かってから鳴らす
             // （ノイズ誤検知のターンを無音で通すため。テキスト送信ターンでは元々鳴らない）
             pendingInputEndCue = true
@@ -790,23 +827,35 @@ final class TurnBasedVoiceSession: VoiceSession {
             // AI のターン中に話したぶんは、進行中の AI ターンの計測へ書き込まない
             if !metricsAwaitsAssistantTurn { metrics.transcriptFinalizedAt = Date() }
             finishSegmentProbe(final: transcript)
-            let levels = dequeueSegmentLevels()
+            let segment = dequeuePendingSegment()
+            let levels = segment?.levels
             let verdict = SpeechLevelGate.verdict(for: levels, thresholds: configuration.levelGate)
             let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            // 閾値を実機で追い込めるよう、採否と実測値は毎セグメント残す（トーク画面には出さない。
-            // 会話ログの 1 行と管理画面「音声入力」の一覧に使う）
-            eventContinuation.yield(.segmentMeasured(SpeechSegmentMeasurement(
-                levels: levels, verdict: verdict, transcript: trimmed, measuredAt: Date())))
+            let startedDuringPlayback = segment?.startedDuringPlayback == true
+            var discardReason: SegmentDiscardReason?
             if !verdict.isAccepted {
                 // 部屋の暗騒音と大差ない音量だった。空セグメントと同じ扱いにする
             } else if STTHallucinationFilter.isPromptEcho(
                 transcript: trimmed, prompt: configuration.transcription.prompt)
             {
                 // 非発話セグメントで STT が prompt をエコーした。空セグメントと同じ扱いにする
-                eventContinuation.yield(.info("STT プロンプトのエコーを破棄しました"))
+                discardReason = .promptEcho
+            } else if startedDuringPlayback,
+                      AssistantEchoFilter.isEcho(
+                        transcript: trimmed, spokenText: spokenAssistantTextForEcho)
+            {
+                // AI 自身の読み上げがマイクへ回り込んだ（Phase 5）。空セグメントと同じ扱いにする
+                discardReason = .assistantEcho
             } else if !trimmed.isEmpty {
                 pendingTurnText = pendingTurnText.isEmpty ? trimmed : pendingTurnText + " " + trimmed
             }
+            // 閾値を実機で追い込めるよう、採否と実測値は毎セグメント残す（トーク画面には出さない。
+            // 会話ログの 1 行と管理画面「音声入力」の一覧に使う）。**破棄の判定が済んでから**
+            // 組み立てて、「なぜ消えたか」を一覧だけで追えるようにする
+            // （docs/plans/voice-input-admin-followups.md Step 1）
+            eventContinuation.yield(.segmentMeasured(SpeechSegmentMeasurement(
+                levels: levels, verdict: verdict, transcript: trimmed, measuredAt: Date(),
+                discardReason: discardReason, startedDuringPlayback: startedDuringPlayback)))
             resolvePendingBargeInAfterFinal()
             commitPendingTurnIfReady()
 
@@ -822,7 +871,7 @@ final class TurnBasedVoiceSession: VoiceSession {
 
         case .transcriptFailed(let message):
             pendingSegments = max(0, pendingSegments - 1)
-            _ = dequeueSegmentLevels()
+            _ = dequeuePendingSegment()
             finishSegmentProbe(final: nil, note: "認識失敗")
             eventContinuation.yield(.info("認識に失敗したセグメントがあります: \(message)"))
             resolvePendingBargeInAfterFinal()
@@ -839,6 +888,8 @@ final class TurnBasedVoiceSession: VoiceSession {
     /// barge-in: サーバ VAD がユーザーの発話開始を検知した。応答の生成・再生中なら即座に止める。
     private func handleSpeechStarted() {
         isUserSpeaking = true
+        // エコー判定はこのセグメントが「読み上げに重なって始まったか」で出し分ける（Phase 5）
+        currentSegmentStartedDuringPlayback = state == .speaking
         // 実測（Phase 2）: ここを起点に partial delta の到達と commit / final の時刻を並べる。
         // 終端を見ないまま次の発話が始まったら、前のぶんはその場で畳む（通常は起きない）
         if let stale = segmentProbe {
@@ -911,9 +962,10 @@ final class TurnBasedVoiceSession: VoiceSession {
         }
     }
 
-    /// 確定テキストに対応するセグメントの音量統計を取り出す。
-    /// 対応が崩れた場合（再接続直後など）は nil を返し、レベル判定を諦めて採用側へ倒す。
-    private func dequeueSegmentLevels() -> SpeechSegmentLevels? {
+    /// 確定テキストに対応するセグメントを取り出す。
+    /// 対応が崩れた場合（再接続直後など）は nil を返し、レベル判定・エコー判定を諦めて
+    /// 採用側へ倒す。
+    private func dequeuePendingSegment() -> PendingSegment? {
         guard !pendingSegmentLevels.isEmpty else { return nil }
         return pendingSegmentLevels.removeFirst()
     }
@@ -1073,6 +1125,8 @@ final class TurnBasedVoiceSession: VoiceSession {
         speaker.beginTurn()
         turnUtterances = []
         scriptEndDetected = false
+        // エコー判定の参照は 1 ターンぶんで仕切り直す（前のターンの語まで持つと誤検知が増える）
+        spokenAssistantTextForEcho = ""
         let stream = client.streamReply(
             apiKey: apiKey, system: configuration.sessionKind.systemPrompt, messages: history)
 
@@ -1140,6 +1194,8 @@ final class TurnBasedVoiceSession: VoiceSession {
                 let joined = last.text + " " + sentence.text
                 turnUtterances[turnUtterances.count - 1].text = joined
                 if last.hasBegun {
+                    // 読み上げ開始済みの吹き出しへの追記 = これも音になる
+                    appendSpokenTextForEcho(sentence.text)
                     eventContinuation.yield(.assistantUtteranceUpdated(id: last.id, text: joined))
                 }
             } else {
@@ -1233,6 +1289,8 @@ final class TurnBasedVoiceSession: VoiceSession {
               !turnUtterances[index].hasBegun else { return }
         turnUtterances[index].hasBegun = true
         let utterance = turnUtterances[index]
+        // ここから実際に音が出る = エコーとして戻ってきうるテキスト（Phase 5）
+        appendSpokenTextForEcho(utterance.text)
         eventContinuation.yield(.assistantUtteranceBegan(
             id: utterance.id, speaker: utterance.speaker, text: utterance.text))
     }

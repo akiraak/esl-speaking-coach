@@ -89,11 +89,42 @@ struct SpeechSegmentMeasurement: Sendable, Equatable, Codable {
     /// 確定テキスト（前後の空白は除去済み。棄却されたセグメントの中身も残す）
     var transcript: String
     var measuredAt: Date
+    /// レベルゲート**以外**の理由で捨てたときの内訳（採用したなら nil。
+    /// docs/plans/voice-input-admin-followups.md Step 1）。
+    /// **Optional なのは保存済みデータとの互換のため** — 合成 Codable は非 Optional の
+    /// 新フィールドを旧 JSON から読めず、直近 20 件が黙って消える
+    var discardReason: SegmentDiscardReason?
+    /// AI の読み上げ中に始まったセグメントか（＝ 厳しいしきい値とエコー判定が掛かった対象）。
+    /// 同上の理由で Optional
+    var startedDuringPlayback: Bool?
+
+    /// 最終的にターン候補として採用されたか。
+    var isAccepted: Bool { verdict.isAccepted && discardReason == nil }
+
+    /// 採否の理由（採用なら nil）。レベルゲートの棄却理由とそれ以外を 1 本にまとめる。
+    var outcomeReason: String? { discardReason?.label ?? verdict.reason }
 
     /// 会話ログに残す 1 行。**閾値を後から見直すために数値を残す**のが目的。
     var logLine: String {
-        "STT セグメント \(verdict.reason ?? "採用"): "
+        let context = startedDuringPlayback == true ? "（読み上げ中）" : ""
+        return "STT セグメント \(outcomeReason ?? "採用")\(context): "
             + "\(levels?.summaryLine ?? "レベル計測なし") 「\(transcript)」"
+    }
+}
+
+/// 音量以外の理由でセグメントを捨てたときの内訳。
+/// **rawValue は保存データのキーなので変えない。**
+enum SegmentDiscardReason: String, Sendable, Equatable, Codable {
+    /// 非発話セグメントで STT が認識バイアス prompt をそのまま返した
+    case promptEcho
+    /// AI 自身の読み上げがマイクへ回り込んだ（`AssistantEchoFilter`）
+    case assistantEcho
+
+    var label: String {
+        switch self {
+        case .promptEcho: return "STT プロンプトのエコー"
+        case .assistantEcho: return "AI 発話のエコー"
+        }
     }
 }
 

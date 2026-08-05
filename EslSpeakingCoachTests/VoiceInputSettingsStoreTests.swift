@@ -100,7 +100,95 @@ final class VoiceInputSettingsStoreTests: XCTestCase {
                 "voiceInput.minimumPeak", "voiceInput.snrRatio", "voiceInput.unconditionalPeak",
                 "voiceInput.minimumSpeechDuration", "voiceInput.silenceDuration",
                 "voiceInput.lookbackDuration", "voiceInput.maxSegmentDuration",
+                "voiceInput.assistantTurnPeakMultiplier", "voiceInput.assistantTurnSpeechDuration",
             ])
+        XCTAssertEqual(VoiceInputSettingsStore.minimumTurnWordCountKey,
+                       "voiceInput.minimumTurnWordCount")
+        XCTAssertEqual(VoiceInputSettingsStore.windowKey, "voiceInput.window")
+    }
+
+    /// AI のターン中のしきい値も同じ導線で保存される（既定は実測値の ×1.5 / 0.30 秒）。
+    func testAssistantTurnThresholdsFollowTheSamePath() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.value(for: .assistantTurnPeakMultiplier), 1.5)
+        XCTAssertEqual(store.value(for: .assistantTurnSpeechDuration), 0.3)
+
+        store.setValue(2.0, for: .assistantTurnPeakMultiplier)
+        XCTAssertEqual(store.thresholds().assistantTurnPeakMultiplier, 2.0)
+        // 派生も追従する（読み上げ中に実際に効く値）
+        XCTAssertEqual(store.thresholds().assistantTurnDerived.minimumPeak, 0.02, accuracy: 0.0001)
+    }
+
+    // MARK: - 送信猶予（docs/plans/voice-input-admin-followups.md Step 3）
+
+    /// 既定はコード側（`TurnCommitGrace`）が正。0 にすると即送信へ戻せる
+    func testCommitGraceIsStoredClampedAndReset() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.commitGrace, TurnCommitGrace().standard)
+        XCTAssertEqual(store.commitGraceSettings(), TurnCommitGrace())
+        XCTAssertFalse(store.hasAnyOverride)
+
+        store.setCommitGrace(0)
+        XCTAssertEqual(store.commitGrace, 0)
+        XCTAssertEqual(store.commitGraceSettings().standard, 0)
+        XCTAssertTrue(store.hasAnyOverride)
+        XCTAssertEqual(store.diagnosticsSummary, "commitGrace=0 秒（即送信）")
+
+        store.setCommitGrace(99)
+        XCTAssertEqual(store.commitGrace, VoiceInputSettingsStore.commitGraceRange.upperBound)
+
+        store.resetToDefaults()
+        XCTAssertEqual(store.commitGrace, TurnCommitGrace().standard)
+        XCTAssertFalse(store.hasAnyOverride)
+    }
+
+    /// 猶予の長短の比は既定のまま（画面に出すのは標準値だけ）。
+    func testCommitGraceKeepsDerivedRatios() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        store.setCommitGrace(2.0)
+        let grace = store.commitGraceSettings()
+        XCTAssertEqual(grace.standard, 2.0)
+        XCTAssertEqual(
+            grace.decide(for: "I went to the").duration,
+            2.0 * TurnCommitGrace.continuingScale, accuracy: 0.001)
+        XCTAssertEqual(
+            grace.decide(for: "That was fun.").duration,
+            2.0 * TurnCommitGrace.completedScale, accuracy: 0.001)
+    }
+
+    // MARK: - プリセット（docs/plans/voice-input-admin-followups.md Step 2）
+
+    /// プリセットは**全項目**を持つ（欠けると適用でその項目が黙って既定へ戻る）。
+    func testPresetsCoverEveryParameter() {
+        for preset in VoiceInputPreset.allCases {
+            XCTAssertEqual(
+                Set(preset.values.keys), Set(VoiceInputParameter.allCases),
+                "プリセット「\(preset.rawValue)」に欠けている項目がある")
+        }
+    }
+
+    /// 適用したらチェックが付く（現在値がプリセットと一致する）。
+    func testApplyingPresetMatchesEveryParameter() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        store.apply(.outdoors)
+        XCTAssertEqual(store.matchingPreset, .outdoors)
+        XCTAssertEqual(store.value(for: .assistantTurnPeakMultiplier), 2.0)
+        XCTAssertEqual(store.thresholds().assistantTurnMinimumSpeechDuration, 0.35)
+    }
+
+    /// 入力の窓は既定と違うときだけ保存する（既定が変われば追従する）。
+    func testWindowIsStoredOnlyWhenNotDefault() {
+        let store = VoiceInputSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.window, VoiceInputSettingsStore.defaultWindow)
+
+        store.setWindow(.turnGated)
+        XCTAssertEqual(store.window, .turnGated)
+        XCTAssertTrue(store.hasAnyOverride)
+        XCTAssertEqual(store.diagnosticsSummary, "window=ターン制")
+
+        store.setWindow(VoiceInputSettingsStore.defaultWindow)
+        XCTAssertNil(defaults.object(forKey: VoiceInputSettingsStore.windowKey))
+        XCTAssertFalse(store.hasAnyOverride)
     }
 
     /// 全項目がどちらかのグループにちょうど 1 回だけ現れる（画面から辿れない項目を作らない）。
@@ -223,6 +311,34 @@ final class VoiceInputSettingsStoreTests: XCTestCase {
             measurement.logLine,
             "STT セグメント 暗騒音との差が小さい: "
             + "peak 0.0123 / mean 0.0045 / floor 0.0060 / 比 2.0 / 8 buf 「thank you」")
+    }
+
+    // MARK: - 破棄理由（docs/plans/voice-input-admin-followups.md Step 1）
+
+    /// **新フィールドを足しても、保存済みの実測がデコードできること。**
+    /// 非 Optional で足すと旧 JSON から読めず、直近 20 件が黙って消える
+    func testOldMeasurementJSONStillDecodes() throws {
+        let json = """
+        [{"verdict":"accepted","transcript":"hello","measuredAt":760000000,
+          "levels":{"peak":0.05,"mean":0.02,"noiseFloor":0.005,"sampleCount":12}}]
+        """
+        let decoded = try JSONDecoder().decode(
+            [SpeechSegmentMeasurement].self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertNil(decoded[0].discardReason)
+        XCTAssertNil(decoded[0].startedDuringPlayback)
+        XCTAssertTrue(decoded[0].isAccepted)
+    }
+
+    /// 音量では通ったが後段で捨てた場合、理由は破棄側を出す（読み上げ中かも添える）。
+    func testLogLineShowsDiscardReason() {
+        var measurement = self.measurement(transcript: "what do you usually do before bed")
+        measurement.discardReason = .assistantEcho
+        measurement.startedDuringPlayback = true
+        XCTAssertFalse(measurement.isAccepted)
+        XCTAssertEqual(measurement.outcomeReason, "AI 発話のエコー")
+        XCTAssertTrue(measurement.logLine.hasPrefix("STT セグメント AI 発話のエコー（読み上げ中）: "),
+                      measurement.logLine)
     }
 
     func testClearMeasurements() {
