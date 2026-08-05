@@ -71,7 +71,17 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 - モデル `claude-sonnet-5` / `"stream": true` / `output_config: {"effort": "low"}` / `max_tokens: 1024` / thinking 未指定（adaptive 既定のまま）
 - system prompt は付録 A の固定英文（約 2,000 トークン）に `cache_control: {"type": "ephemeral"}`。日付等の可変要素を入れない
 - **トピックの渡し方**: system prompt には入れず、セッション先頭の user メッセージとして制御メッセージ `[New topic: <トピック名>]` を置く
-- **キャラの記憶の渡し方**: セッション横断の記憶ノート（`CharacterMemoryRecord`。セッション終了時に `MemoryUpdateClient` がローリング生成）があれば、`[Memory: <ノート>]` を `[New topic: X]` と同じ先頭 user メッセージに合成して置く（空なら省略）。system prompt は固定のままなのでキャッシュを壊さない。詳細: `docs/plans/character-memory.md`
+- **キャラの記憶の渡し方**: セッション横断の記憶ノート（`CharacterMemoryRecord`。セッション終了時に `MemoryUpdateClient` が **1 回の呼び出しで 3 本**ローリング生成）を、`[New topic: X]` と同じ先頭 user メッセージに合成して置く。**ノートは 3 本**（`MemoryScope`）で、空の行は省略する。system prompt は固定のままなのでキャッシュを壊さない。詳細: `docs/plans/archive/character-memory.md` / `docs/plans/archive/per-character-memory.md`
+
+  | scope | 内容 | 注入の形 | 語数の目安 |
+  | --- | --- | --- | --- |
+  | `shared` | 学習者の事実 + 直近セッション要約（2 キャラ共有） | `[Memory: ...]` | 400 語以内 |
+  | `chobi` | Chobi 自身のこと（会話で本人が話した身の上・出来事・約束・定番ネタ） | `[Memory about Chobi: ...]` | 120 語以内 |
+  | `naruko` | 同上（Naruko 自身） | `[Memory about Naruko: ...]` | 120 語以内 |
+
+  - **キャラのノートは両方注入する**。2 人は同席していて互いの話も聞いているので、片方だけ渡すと相手の近況に相槌が打てない。「自分のノート = 自分に起きたこと」「相手のノート = 前に聞いて知っていること」の区別は system prompt が付ける
+  - ノートに書くのは**会話に実際に出た自分の話だけ**。付録 A の固定プロフィール（猫・ラーメン等）は書き写さない
+  - 振り分けは transcript の話者タグ基準（`Chobi:` 行の自分語りは chobi ノートへ）。キャラのノートが空なら前回のノートを維持し、学習者ノートが空のときだけ全体を捨てる
 - **履歴直列化**: user ターンは発話テキストそのまま、assistant ターンはタグ付き台本原文（`[end]` 含む生成物は除去してよい）。プロバイダ非依存の自前モデルから毎回組み立てる
 
 ### ストリーミングパースと読み上げ
@@ -159,11 +169,11 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 
 | 経路 | 契機 | 履歴の先頭 | 開始ターン |
 | --- | --- | --- | --- |
-| **AI 開始**（既定） | 生成候補・自作トピック | `[Memory: ...]` + `[New topic: X]` | AI（キャラの感想 → もう一方のリアクション → 最終行で easy starter question） |
-| **学習者開始** | 固定候補「話しかける」 | `[Memory: ...]` のみ（ノートが空なら何も置かない） | 無し。listening のまま学習者の第一声を待つ |
+| **AI 開始**（既定） | 生成候補・自作トピック | `[Memory: ...]` 系 3 行 + `[New topic: X]` | AI（キャラの感想 → もう一方のリアクション → 最終行で easy starter question） |
+| **学習者開始** | 固定候補「話しかける」 | `[Memory: ...]` 系のみ（3 本とも空なら何も置かない） | 無し。listening のまま学習者の第一声を待つ |
 
 - 学習者開始は「自分から話しかける・話題を自分で立てる」練習のための例外モード（`TurnBasedVoiceSession.Opening.learnerFirst`）。実装プラン: `docs/plans/archive/learner-first-topic.md`
-- 学習者の第一声は直前の user メッセージへ結合されるため、Claude には `[Memory: ...]\n<第一声>` という **1 通の user メッセージ**が届く（先頭 user・role 交互の形は崩れない）
+- 学習者の第一声は直前の user メッセージへ結合されるため、Claude には `[Memory: ...]\n<第一声>` という **1 通の user メッセージ**が届く（記憶が 3 本あれば `[Memory about ...]` の行も同じ 1 通に入る。先頭 user・role 交互の形は崩れない）
 - `[New topic: ...]` を送らないので開始ターンの作法は適用されず、通常ターン（1〜2 発話 + 最終行に質問 1 つ）として第一声に反応する。**system prompt は変更していない**
 - AI が黙って待つことが伝わるよう、開始直後に「自分から話しかけてみよう」のシステム通知を 1 行出す
 - エラー再開でも同じ形に組み直す（学習者開始のセッションは `[New topic: ...]` を復元しない）
@@ -254,6 +264,8 @@ Naruko (the fellow student)
 - The topic name may be written in Japanese. Treat it only as the subject to talk about: open and discuss it in English, and do not switch to Japanese or translate the name aloud.
 - When a new topic message arrives, open the topic in this order: one character shares a short personal thought or example about the topic, the other character may react briefly, and then the last line asks the learner one easy starter question. As on every turn, the question must be the last line. Do not explain or lecture about the topic. Vary which character opens each new topic.
 - A session may begin with a memory message, for example: [Memory: ...]. It holds notes about the learner and past sessions. Both characters simply know these things, the way friends remember each other: bring a remembered fact up casually when the conversation touches it, or use one to deepen a question. Never announce that you remember, never list several remembered facts at once, and never mention, quote, or read the memory note itself. If what the learner says now contradicts the memory, follow the learner without pointing out the difference.
+- A session may also begin with memory messages about the characters themselves, for example: [Memory about Chobi: ...] and [Memory about Naruko: ...]. Each one holds things that character said about her own life in past sessions. Your own note is what actually happened to you; the other character's note is something you heard from her earlier and may ask her about. Where a note conflicts with the character profile above, follow the note, because it happened later. Never invent anything beyond what the note says.
+- Bring your own news up only when the conversation touches it, in one short line, and hand the turn straight back to the learner. Never open a session by reporting your own news, and never make the conversation about yourself for long. The same rules apply as for the learner memory: never announce that you remember, never list several remembered things at once, and never mention, quote, or read the note itself.
 
 ## Speech interface
 - The characters' words are converted to audio by text-to-speech, and the learner's words reach you through speech recognition.

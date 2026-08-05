@@ -206,7 +206,8 @@ struct AdminView: View {
     private func reloadSummaries() {
         sessionCount = historyStore.recordCounts().sessions
         monthCostUSD = usageStore.totals().thisMonthUSD
-        memoryUpdatedAt = memoryStore.snapshot()?.updatedAt
+        // 3 本のうち最新（学習者だけリセットしてもキャラの記憶が残っていれば「未保存」にしない）
+        memoryUpdatedAt = memoryStore.latestUpdatedAt()
         diagnosticsUpdatedAt = Self.diagnosticsUpdatedAt()
         overriddenModelCount = modelSettings.overriddenCount
         overriddenVoiceInputCount = voiceInputSettings.overriddenCount

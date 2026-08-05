@@ -75,7 +75,7 @@ final class ClaudeModelSelectionTests: XCTestCase {
     func testMemoryBodyUsesSelectedModel() throws {
         let body = try json(
             MemoryUpdateClient.makeRequestBody(
-                model: .opus5, previousMemory: nil, topic: "Trip", transcript: "Learner: hi"))
+                model: .opus5, previousNotes: .empty, topic: "Trip", transcript: "Learner: hi"))
         XCTAssertEqual(body["model"] as? String, "claude-opus-5")
         XCTAssertEqual(try outputConfig(body)["effort"] as? String, "medium")
     }

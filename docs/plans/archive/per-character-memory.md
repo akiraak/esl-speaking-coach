@@ -123,8 +123,47 @@
 
 ## Phase / Step
 
-- [ ] Phase 1: 保存（`MemoryScope` + `scopeRawValue` + scope 付きストア API + 既存レコードのマイグレーション確認）
-- [ ] Phase 2: 生成（3 フィールド structured outputs + 振り分け / 語数プロンプト + `saveAll`）
-- [ ] Phase 3: 注入（`MemoryNotes` + 3 ブロック合成 + `rebuildHistory` + system prompt 追記 + spec 同期）
-- [ ] Phase 4: 管理画面（scope Picker + 個別リセット / 全リセット）
-- [ ] Phase 5: シミュレータ E2E + 実機確認 + ドキュメント同期（ai-cost-map.md / conversation-design.md）
+- [x] Phase 1: 保存（`MemoryScope` + `scopeRawValue` + scope 付きストア API + 既存レコードのマイグレーション確認）2026-08-05
+- [x] Phase 2: 生成（3 フィールド structured outputs + 振り分け / 語数プロンプト + `saveAll`）2026-08-05
+- [x] Phase 3: 注入（`MemoryNotes` + 3 ブロック合成 + `rebuildHistory` + system prompt 追記 + spec 同期）2026-08-05
+- [x] Phase 4: 管理画面（scope Picker + 個別リセット / 全リセット）2026-08-05
+- [x] Phase 5: シミュレータ E2E + 実機確認 + ドキュメント同期（ai-cost-map.md / conversation-design.md）2026-08-05
+
+## 実装結果（2026-08-05）
+
+プラン通り。差分は以下だけ。
+
+- `MemoryUpdateClient.parseResult` の戻りは専用の値型 `MemoryUpdateClient.UpdatedNotes`（learner は非 optional、キャラは nil = 前回維持）。注入側の `MemoryNotes` とは別型にして「生成の出力」と「注入の入力」を混ぜない
+- 管理画面のサマリ（項目一覧の「記憶」行）は `snapshot()?.updatedAt` から `latestUpdatedAt()`（3 本の最新）へ。学習者ノートだけ個別リセットしても「未保存」にならないように
+- 診断ログに `memory: 更新 learner=N字 chobi=N字 naruko=N字` を 1 行足した（実機で 3 本に分かれて書けたかを確認するため。`前回維持` も出る）
+
+### シミュレータ E2E の結果
+
+2 セッション通し（`-start-conversation -send-text ...`）。
+
+1 回目（"Chobi, do you have any pets at home right now?" / "Naruko, what did you do last weekend?"）の終了後、SwiftData に 3 レコード。**既存の 1 本ノート（`scopeRawValue` が nil の Z_PK=1）はそのまま学習者ノートとして上書きされ**、chobi / naruko が新規に増えた（マイグレーション確認）。
+
+```
+scope=(nil=shared)  About the learner / - Name is Akira, works as a software engineer in Tokyo. …
+scope=chobi         - Has two cats at home that keep her busy.
+scope=naruko        - Went to karaoke with a friend last weekend, followed by ramen.
+```
+
+2 回目（"Chobi, how are your cats doing today?" / "Naruko, did Chobi ever tell you about her cats?"）で狙いどおりの引き継ぎになった。
+
+```
+user:   Hello again! Chobi, how are your cats doing today?
+chobi:  My cats are doing great, thank you for asking, Akira! They were extra playful this morning, actually.
+chobi:  So, how has your week been going so far?
+user:   Naruko, did Chobi ever tell you about her cats? And how was your karaoke?
+naruko: Yeah, she talks about them sometimes, they sound so cute! My karaoke was so much fun, I sang way too many songs.
+naruko: What kind of songs do you like to sing, Akira?
+```
+
+- Chobi は自分のノートを「自分に起きたこと」として答え、Naruko は相手のノートを「前に聞いて知っていること」として受けた（"she talks about them sometimes"）
+- 近況は 1 行で、どのターンも最終行が学習者への質問（語りすぎていない）
+- 2 回目終了後もノートは scope をまたがず更新され、レコードは 3 本のまま（学習者ノートは最古のセッション要約を 1 行落として長さを保った）
+
+### 実機確認
+
+2026-08-05。記憶の引き継ぎ・近況を語りすぎないことともに問題なし。これで確定。

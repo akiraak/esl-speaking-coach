@@ -202,8 +202,9 @@ final class ChatRoomStore {
     /// 次のトピックカードへ持ち越す候補（今回のセッションで選ばなかったぶん）。
     /// メモリ上のみ = 再起動したら持ち越し無しで 3 件生成に戻る
     private var carryOverCandidates: [TopicCandidate] = []
-    /// 現在セッションの開始時に読み込んだ記憶ノート（エラー再開の rebuildHistory でも同じものを使う）
-    private var activeMemoryNote: String?
+    /// 現在セッションの開始時に読み込んだ記憶ノート 3 本
+    /// （エラー再開の rebuildHistory でも同じものを使う）
+    private var activeMemoryNotes: MemoryNotes = .empty
     /// 翻訳の生成対象（タイムライン末尾のセッション区切り以降の発話 ID）。
     /// 表示はこれより広く、保存済みの訳があればどのセッションの吹き出しでも出す
     private var translationTargetIDs: Set<UUID> = []
@@ -688,7 +689,7 @@ final class ChatRoomStore {
             UtteranceAudioCache.default.purge(keepingSessionID: sessionID)
         }
         // 単語・クイズでは記憶ノートを注入しない（終了時の更新もしないので対称）
-        activeMemoryNote = kind.usesMemoryNote ? memoryStore.currentNote() : nil
+        activeMemoryNotes = kind.usesMemoryNote ? memoryStore.currentNotes() : .empty
         historyStore.beginSession(
             id: sessionID, topicTitle: trimmed, topicGenre: genre, kind: kind)
         // 単語・クイズは常に Chobi の導入ターンから始める（学習者ファーストは使わない）
@@ -761,7 +762,7 @@ final class ChatRoomStore {
         configuration.opening = opening
         // UI の練習モードではなくセッションの種別（クイズ中は word / quiz と食い違う）
         configuration.sessionKind = activeSessionKind
-        configuration.memoryNote = activeMemoryNote
+        configuration.memoryNotes = activeMemoryNotes
         configuration.initialHistory = initialHistory
         configuration.voiceInputEnabled = inputMode == .voice && !isVoicePaused
         let newSession = TurnBasedVoiceSession(
@@ -817,7 +818,7 @@ final class ChatRoomStore {
             let endedKind = activeSessionKind
             activeTopicTitle = nil
             activeSessionID = nil
-            activeMemoryNote = nil
+            activeMemoryNotes = .empty
             historyStore.endActiveSession()
             DiagnosticsLog.record("end: 履歴セッションを閉じた session=\(endedSessionID?.uuidString ?? "-")")
             // フィードバックカード → 次のトピックカードの順で投稿する（screen-layout.md のセッションの流れ）。
@@ -916,28 +917,42 @@ final class ChatRoomStore {
 
     // MARK: - キャラの記憶
 
-    /// セッション正常終了時に記憶ノートをローリング更新する（docs/plans/character-memory.md）。
+    /// セッション正常終了時に記憶ノート 3 本をローリング更新する
+    /// （docs/plans/archive/character-memory.md / docs/plans/archive/per-character-memory.md）。
     /// フィードバックと同じく学習者の発話 2 未満はスキップ。失敗は best effort
-    /// （前回ノートが残るだけで壊れず、次回終了時の生成でカバーされる）。
+    /// （3 本とも前回ノートが残るだけで壊れず、次回終了時の生成でカバーされる）。
     private func updateCharacterMemory(topic: String, sessionID: UUID?) {
         let (transcript, learnerTurnCount) = sessionTranscript()
         guard learnerTurnCount >= 2 else { return }
         guard let apiKey = readKey(KeychainStore.anthropicAPIKeyAccount) else { return }
-        let previousMemory = memoryStore.currentNote()
+        let previousNotes = memoryStore.currentNotes()
         Task {
             do {
                 let client = MemoryUpdateClient(model: modelSettings.model(for: .memoryUpdate))
-                let (memory, usage) = try await client.updateMemory(
-                    apiKey: apiKey, previousMemory: previousMemory,
+                let (notes, usage) = try await client.updateMemory(
+                    apiKey: apiKey, previousNotes: previousNotes,
                     topic: topic, transcript: transcript)
                 if let usage {
                     usageStore.record(usage, sessionID: sessionID)
                 }
-                memoryStore.save(text: memory, sourceSessionID: sessionID)
+                // キャラノートが nil（今回自分の話をしなかった）なら前回のノートを維持する
+                memoryStore.saveAll(
+                    learner: notes.learner, chobi: notes.chobi, naruko: notes.naruko,
+                    sourceSessionID: sessionID)
+                // 3 本が期待どおり分かれて書けたかを実機でも確かめられるようにする
+                DiagnosticsLog.record(
+                    "memory: 更新 learner=\(notes.learner.count)字 "
+                    + "chobi=\(Self.noteLength(notes.chobi)) naruko=\(Self.noteLength(notes.naruko))")
             } catch {
+                DiagnosticsLog.record("!! memory: 更新に失敗 \(error.localizedDescription)")
                 Self.logger.error("記憶ノートの更新に失敗: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// 診断ログ用: キャラノートの長さ（nil = 前回のノートを維持した）。
+    private static func noteLength(_ note: String?) -> String {
+        note.map { "\($0.count)字" } ?? "前回維持"
     }
 
     private func findFeedbackCard(_ cardID: UUID) -> FeedbackCard? {
@@ -980,8 +995,8 @@ final class ChatRoomStore {
 
     /// タイムラインの現在セッション区間（最後の区切り以降）から API 用の会話履歴を組み立てる。
     /// 連続する AI 発話は 1 つのタグ付き台本メッセージへ再直列化する。
-    /// 先頭はセッション開始時と同じ合成メッセージ（[Memory: ...] + [New topic: X]）にする。
-    /// 学習者ファーストのセッションでは開始時と同じく [Memory: ...] だけ（無ければ何も置かない）。
+    /// 先頭はセッション開始時と同じ合成メッセージ（[Memory: ...] 系 3 行 + [New topic: X]）にする。
+    /// 学習者ファーストのセッションでは開始時と同じく [Memory: ...] 系だけ（無ければ何も置かない）。
     /// 単語・クイズは開始時と同じく [New word: X] / [Quiz words: X] の 1 行だけ
     /// （学習者ファーストにはならない）。UI の練習モードではなく開始時のセッション種別で
     /// 組み立てる（クイズ中のエラー再開が [New word:] にならないように）。
@@ -993,16 +1008,16 @@ final class ChatRoomStore {
         }
         var history: [ConversationMessage] = []
         if activeSessionKind == .conversation, Self.isLearnerFirstTopic(topic) {
-            if let memoryLine = SessionOpeningMessage.composeMemoryOnly(
-                memoryNote: activeMemoryNote)
+            if let memoryLines = SessionOpeningMessage.composeMemoryOnly(
+                memoryNotes: activeMemoryNotes)
             {
-                history.append(ConversationMessage(role: .user, text: memoryLine))
+                history.append(ConversationMessage(role: .user, text: memoryLines))
             }
         } else {
             history.append(ConversationMessage(
                 role: .user,
                 text: SessionOpeningMessage.compose(
-                    kind: activeSessionKind, topic: topic, memoryNote: activeMemoryNote)))
+                    kind: activeSessionKind, topic: topic, memoryNotes: activeMemoryNotes)))
         }
         var pendingScript: [String] = []
         func flushScript() {

@@ -83,9 +83,10 @@ final class TurnBasedVoiceSession: VoiceSession {
         /// セッションの種別（会話 / 単語 / クイズ）。system prompt・開始の制御メッセージ・
         /// [end] の扱いが変わる（docs/specs/word-practice.md）
         var sessionKind: SessionKind = .conversation
-        /// セッション横断の記憶ノート。開始メッセージに [Memory: ...] として合成する
-        /// （空なら省略。docs/plans/character-memory.md）
-        var memoryNote: String?
+        /// セッション横断の記憶ノート 3 本（学習者 / Chobi / Naruko）。開始メッセージに
+        /// [Memory: ...] / [Memory about Chobi: ...] / [Memory about Naruko: ...] として
+        /// 合成する（空の行は省略。docs/plans/archive/per-character-memory.md）
+        var memoryNotes: MemoryNotes = .empty
         /// 開始時点の音声入力（STT + マイク）の有効 / 無効
         var voiceInputEnabled = true
         /// 途中再開用の会話履歴（エラー後の立て直しで使う）
@@ -1074,7 +1075,7 @@ final class TurnBasedVoiceSession: VoiceSession {
     // MARK: - Turn commit → Claude
 
     /// ready 直後に開始のしかた（Configuration.opening）を一度だけ適用する。
-    /// 記憶ノートがあれば [Memory: ...] を先頭の user メッセージに合成する
+    /// 記憶ノートがあれば [Memory: ...] 系の行を先頭の user メッセージに合成する
     /// （messages 先頭で不変にし、system prompt のキャッシュを壊さない）。
     private func startOpeningIfNeeded() {
         guard let opening = pendingOpening else { return }
@@ -1085,15 +1086,15 @@ final class TurnBasedVoiceSession: VoiceSession {
             metrics = TurnMetricsBuilder()
             appendUserMessage(SessionOpeningMessage.compose(
                 kind: configuration.sessionKind,
-                topic: topic, memoryNote: configuration.memoryNote))
+                topic: topic, memoryNotes: configuration.memoryNotes))
             startClaudeTurn()
         case .learnerFirst:
             // Claude ターンは起こさず listening のまま待つ。記憶ノートだけ先に積んでおくと、
             // 学習者の第一声が appendUserMessage で結合され 1 通の user メッセージとして届く
-            if let memoryLine = SessionOpeningMessage.composeMemoryOnly(
-                memoryNote: configuration.memoryNote)
+            if let memoryLines = SessionOpeningMessage.composeMemoryOnly(
+                memoryNotes: configuration.memoryNotes)
             {
-                appendUserMessage(memoryLine)
+                appendUserMessage(memoryLines)
             }
         case .resume:
             break
