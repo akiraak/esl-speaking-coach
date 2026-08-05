@@ -18,3 +18,33 @@ final class AdminViewTests: XCTestCase {
             ["会話", "記憶", "料金", "診断", "容量", "モデル", "音声入力"])
     }
 }
+
+/// 管理画面「記憶」のノート分量表示（語数の上限は生成プロンプトの指示で、コード側の強制ではない）。
+@MainActor
+final class MemoryAdminViewTests: XCTestCase {
+    /// 箇条書きのハイフンは語として数えない（英数字を含まないトークンを外す）。
+    func testWordCountIgnoresBulletHyphens() {
+        XCTAssertEqual(MemoryAdminView.wordCount("- Name is Akira."), 3)
+        XCTAssertEqual(MemoryAdminView.wordCount("- Has two cats.\n- Likes coffee."), 5)
+        XCTAssertEqual(MemoryAdminView.wordCount("   \n  -  \n"), 0)
+        XCTAssertEqual(MemoryAdminView.wordCount(""), 0)
+    }
+
+    /// 上限は scope ごと（学習者 400 語 / キャラ 120 語）。
+    func testSizeUsesScopeWordLimit() {
+        let text = "- Name is Akira."
+        XCTAssertEqual(
+            MemoryAdminView.size(of: text, scope: .shared),
+            MemoryAdminView.NoteSize(characters: 16, words: 3, limit: 400))
+        XCTAssertEqual(
+            MemoryAdminView.size(of: text, scope: .character(.chobi)).limit, 120)
+    }
+
+    /// 上限ちょうどは超過にしない（越えたときだけ色を変える）。
+    func testIsOverLimitOnlyWhenAboveLimit() {
+        let words = Array(repeating: "word", count: 120).joined(separator: " ")
+        XCTAssertFalse(MemoryAdminView.size(of: words, scope: .character(.chobi)).isOverLimit)
+        XCTAssertTrue(
+            MemoryAdminView.size(of: words + " more", scope: .character(.chobi)).isOverLimit)
+    }
+}

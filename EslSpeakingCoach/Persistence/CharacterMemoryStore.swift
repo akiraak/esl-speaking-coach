@@ -43,6 +43,16 @@ enum MemoryScope: Hashable, Sendable, Identifiable, CaseIterable {
         }
     }
 
+    /// 生成プロンプト（`MemoryUpdateClient.systemPrompt`）がモデルへ指示している語数上限。
+    /// **コード側では切り詰めていない**（指示が守られる保証はないので、管理画面で実際の長さを
+    /// 見るための目安として使う）。プロンプトを変えたらここも合わせる。
+    var wordLimit: Int {
+        switch self {
+        case .shared: return 400
+        case .character: return 120
+        }
+    }
+
     /// 開始メッセージに積むときの制御メッセージのキー
     /// （`[Memory: ...]` / `[Memory about Chobi: ...]`）。
     var openingControlKey: String {

@@ -30,6 +30,15 @@ struct MemoryAdminView: View {
                     LabeledContent(
                         "更新日時",
                         value: snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    let size = Self.size(of: snapshot.text, scope: scope)
+                    LabeledContent("文字数", value: "\(size.characters) 字")
+                    LabeledContent("語数") {
+                        Text("\(size.words) 語 / 約 \(size.limit) 語")
+                            .foregroundStyle(size.isOverLimit ? Color.orange : Color.secondary)
+                    }
+                } footer: {
+                    Text("ノートは毎ターンの先頭に積まれるので、長いほど会話ターンの料金が増えます。"
+                        + "語数の上限は生成プロンプトでの指示だけで、超えても自動では削られません。")
                 }
                 Section("記憶ノート") {
                     Text(snapshot.text)
@@ -83,6 +92,27 @@ struct MemoryAdminView: View {
             }
             Button("キャンセル", role: .cancel) {}
         }
+    }
+
+    /// ノートの分量。上限は `MemoryScope.wordLimit` = 生成プロンプトがモデルへ指示している値で、
+    /// コード側の強制ではない（超えていたら生成プロンプトを詰める合図）。
+    struct NoteSize: Equatable {
+        let characters: Int
+        let words: Int
+        let limit: Int
+
+        var isOverLimit: Bool { words > limit }
+    }
+
+    static func size(of text: String, scope: MemoryScope) -> NoteSize {
+        NoteSize(
+            characters: text.count, words: wordCount(text), limit: scope.wordLimit)
+    }
+
+    /// 空白区切りの語数。英数字を 1 文字も含まないトークン（箇条書きの "-" など）は数えない。
+    static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: \.isWhitespace)
+            .count { $0.contains { $0.isLetter || $0.isNumber } }
     }
 
     /// どのノートを見ているかの説明（学習者ノートは 2 キャラ共有）。
