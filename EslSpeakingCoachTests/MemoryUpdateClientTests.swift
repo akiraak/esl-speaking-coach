@@ -60,6 +60,18 @@ final class MemoryUpdateClientTests: XCTestCase {
         }
     }
 
+    /// 予算は**行数**で切る（docs/plans/archive/memory-note-length.md）。語数だけの指示は効かず、
+    /// 605 語のノートが 622 語に増えた。行数の予算を消す編集を黙って通さないための番人。
+    func testSystemPromptBudgetsSectionsInLines() {
+        let prompt = MemoryUpdateClient.systemPrompt
+        XCTAssertTrue(prompt.contains("at most sixteen lines"), "About the learner の行数予算が無い")
+        XCTAssertTrue(prompt.contains("at most six lines"), "Recent sessions / キャラの行数予算が無い")
+        XCTAssertTrue(
+            prompt.contains("The line budgets are hard limits"), "行数が上限であることの明示が無い")
+        // 上限を超えたノートを渡されたときに戻す規定（一度太ると自力で戻らないため）
+        XCTAssertTrue(prompt.contains("do not carry the overflow forward"), "超過ノートの回復規定が無い")
+    }
+
     func testParseResultDecodesThreeNotes() throws {
         let text = #"""
         {"learner":"About the learner\n- Name is Akira.\n\nRecent sessions\n- Talked about ramen shops.",\#

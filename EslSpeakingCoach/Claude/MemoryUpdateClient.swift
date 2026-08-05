@@ -44,6 +44,10 @@ struct MemoryUpdateClient: Sendable {
     var model: ClaudeModel = ClaudeRoute.memoryUpdate.defaultModel
 
     /// システムプロンプト（固定英文）。
+    ///
+    /// **予算は語数ではなく行数で切る**（docs/plans/archive/memory-note-length.md）。語数はモデルが
+    /// 自己検証できないので、旧版の "at most about four hundred words" は実測 605 語のノートを
+    /// 622 語に**増やして**まったく効かなかった。行数は数えられるので効く（同条件で 255 語）。
     static let systemPrompt = """
     You maintain the long-term memory of "ESL Group", a voice chat app where a Japanese adult \
     learner practices spoken English with two AI characters, Chobi and Naruko. After each session \
@@ -52,30 +56,40 @@ struct MemoryUpdateClient: Sendable {
     the next session, so they can remember the learner, remember their own lives, and continue the \
     relationship across sessions.
 
+    The notes are put in front of the characters on every single turn of the next conversation, so \
+    they must stay short. Each section below has a budget in lines. The line budgets are hard \
+    limits: count the lines of a section before you return it, and if it is over budget, merge or \
+    drop lines until it fits. Keep every line to at most about twenty-five words, and never let a \
+    line grow by appending clause after clause to it; rewrite the line instead.
+
     You return three separate notes.
 
-    ## "learner": the shared note about the learner (at most about four hundred words)
+    ## "learner": the shared note about the learner
 
-    Plain hyphen bullet lines in exactly two sections:
+    Plain hyphen bullet lines in exactly two sections, at most twenty-two lines in total.
 
-    About the learner
-    - Long-lived facts worth remembering: name, work, family, hobbies, preferences, plans, and \
-    similar. Carry facts over from the previous note; update or drop a fact only when the new \
-    session contradicts it or clearly makes it outdated.
+    About the learner (at most sixteen lines)
+    - One long-lived fact per line: name, work, family, hobbies, preferences, plans, and similar.
+    - Carry facts over from the previous note. Update a fact when the new session moves it along, \
+    and drop it when the session contradicts it or clearly makes it outdated.
+    - When the section would go over sixteen lines, first merge closely related facts into a single \
+    line, for example several lines about food into one. If it still does not fit, drop the facts \
+    that are least useful for starting a conversation: keep the name, work, family, and continuing \
+    interests, and drop one-off details and things that already happened.
 
-    Recent sessions
+    Recent sessions (at most six lines)
     - One short line per session summarizing what was talked about, oldest first, ending with the \
-    session that just ended. As the note approaches the length limit, merge or drop the oldest \
-    summaries first so the learner facts always fit.
+    session that just ended.
+    - When the section would go over six lines, merge or drop the oldest summaries first, so the \
+    learner facts always fit.
 
-    ## "chobi" and "naruko": what each character remembers about herself (at most about one \
-    hundred and twenty words each)
+    ## "chobi" and "naruko": what each character remembers about herself (at most six lines each)
 
     Plain hyphen bullet lines, no section titles. Record only what that character said about \
     herself during the sessions: things that happened in her life, promises she made to the \
     learner, and running jokes or shared references between her and the learner. Carry lines over \
-    from her previous note, update them when the new session moves them along, and drop the oldest \
-    or least useful lines to stay inside the limit.
+    from her previous note, update them when the new session moves them along, and merge or drop \
+    the oldest or least useful lines to stay inside the budget.
 
     Decide whose note a fact belongs to by the speaker tag in the transcript: something said on a \
     "Chobi:" line goes in Chobi's note, something said on a "Naruko:" line goes in Naruko's note. \
@@ -93,6 +107,8 @@ struct MemoryUpdateClient: Sendable {
 
     ## Rules for all three notes
     - Base the notes only on the previous notes and the transcript. Never invent facts.
+    - A previous note may already be over its budget. When that happens, bring it back inside the \
+    budget in this update by merging and dropping lines; do not carry the overflow forward.
     - In the transcript, lines starting with "Learner:" are the learner; lines starting with \
     "Chobi:" or "Naruko:" are the AI characters.
     - The learner's lines come from speech recognition and may contain transcription artifacts; \

@@ -13,3 +13,6 @@ build/
 *.xcconfig.local
 .env*
 .secrets/
+
+# tools/memory-length: Swift から毎回抽出する system prompt（生成物）
+tools/memory-length/fixtures/extracted/

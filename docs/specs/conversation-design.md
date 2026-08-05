@@ -73,11 +73,13 @@ CLAUDE.md の規約に従う。会話ターン固有の仕様:
 - **トピックの渡し方**: system prompt には入れず、セッション先頭の user メッセージとして制御メッセージ `[New topic: <トピック名>]` を置く
 - **キャラの記憶の渡し方**: セッション横断の記憶ノート（`CharacterMemoryRecord`。セッション終了時に `MemoryUpdateClient` が **1 回の呼び出しで 3 本**ローリング生成）を、`[New topic: X]` と同じ先頭 user メッセージに合成して置く。**ノートは 3 本**（`MemoryScope`）で、空の行は省略する。system prompt は固定のままなのでキャッシュを壊さない。詳細: `docs/plans/archive/character-memory.md` / `docs/plans/archive/per-character-memory.md`
 
-  | scope | 内容 | 注入の形 | 語数の目安 |
+  | scope | 内容 | 注入の形 | 予算（行数） |
   | --- | --- | --- | --- |
-  | `shared` | 学習者の事実 + 直近セッション要約（2 キャラ共有） | `[Memory: ...]` | 400 語以内 |
-  | `chobi` | Chobi 自身のこと（会話で本人が話した身の上・出来事・約束・定番ネタ） | `[Memory about Chobi: ...]` | 120 語以内 |
-  | `naruko` | 同上（Naruko 自身） | `[Memory about Naruko: ...]` | 120 語以内 |
+  | `shared` | 学習者の事実 + 直近セッション要約（2 キャラ共有） | `[Memory: ...]` | 事実 16 行 + 要約 6 行（≈ 350 語） |
+  | `chobi` | Chobi 自身のこと（会話で本人が話した身の上・出来事・約束・定番ネタ） | `[Memory about Chobi: ...]` | 6 行 |
+  | `naruko` | 同上（Naruko 自身） | `[Memory about Naruko: ...]` | 6 行 |
+
+  - **予算は語数ではなく行数で切る**（2026-08-05）。「400 語以内」のような語数の指示はモデルが自己検証できず効かない（実測: 605 語のノートが 622 語に**増えた**）。行数は数えられるので効く（同条件で 270〜357 語）。管理画面が橙で警告する語数（`MemoryScope.wordLimit`）は、行数予算が埋まりきったときの実測に余裕を持たせた表示用の閾値で、コード側での切り詰めはしない。検証: `docs/plans/archive/memory-note-length.md` / `tools/memory-length/`
 
   - **キャラのノートは両方注入する**。2 人は同席していて互いの話も聞いているので、片方だけ渡すと相手の近況に相槌が打てない。「自分のノート = 自分に起きたこと」「相手のノート = 前に聞いて知っていること」の区別は system prompt が付ける
   - ノートに書くのは**会話に実際に出た自分の話だけ**。付録 A の固定プロフィール（猫・ラーメン等）は書き写さない
