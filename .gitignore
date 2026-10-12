@@ -1,6 +1,3 @@
-vibeboard/dist/
-vibeboard/node_modules/
-
 # Xcode (XcodeGen 生成物・ローカル状態)
 *.xcodeproj
 xcuserdata/
